@@ -1,0 +1,24 @@
+# macOS / editors
+.DS_Store
+.ipynb_checkpoints/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# build artefacts
+dist/
+build/
+*.whl
+
+# figures written by the example scripts
+examples/**/*.png
+
+# local scratch
+scratch/
+.research_workspace/

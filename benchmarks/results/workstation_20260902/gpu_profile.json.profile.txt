@@ -1,0 +1,104 @@
+=== pepper_cu_2n_matrix ===
+         122203 function calls (122150 primitive calls) in 51.813 seconds
+
+   Ordered by: cumulative time
+   List reduced from 544 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   51.813   51.813 <repo>/benchmarks/workloads/workloads.py:20(<lambda>)
+        1    0.000    0.000   51.813   51.813 <repo>/torchspin/pepper.py:747(pepper)
+        1    0.002    0.002   51.813   51.813 <repo>/torchspin/pepper.py:832(_pepper_single)
+        2    0.000    0.000   51.578   25.789 <repo>/torchspin/pepper.py:1010(_resonances)
+        2    0.069    0.034   51.578   25.789 <repo>/torchspin/resfields_batch.py:38(resfields_batch)
+       25   51.399    2.056   51.399    2.056 {built-in method torch._C._linalg.linalg_eigh}
+        6    0.003    0.000   37.478    6.246 <repo>/torchspin/resfields_batch.py:217(_f_at)
+        7    0.013    0.002    1.414    0.202 <repo>/torchspin/resfields_batch.py:116(_diag_at)
+      384    0.002    0.000    0.076    0.000 <repo>/torchspin/pepper.py:380(_interp_slot)
+      192    0.004    0.000    0.060    0.000 <repo>/torchspin/pepper.py:46(_interp_sph)
+        1    0.005    0.005    0.051    0.051 <repo>/torchspin/pepper.py:519(_preselect_pairs)
+      192    0.050    0.000    0.050    0.000 <repo>/torchspin/pepper.py:565(_projectzones)
+      192    0.004    0.000    0.046    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:790(__init__)
+        7    0.012    0.002    0.025    0.004 <repo>/torchspin/resfields_batch.py:128(_relevant)
+      176    0.000    0.000    0.023    0.000 <env>/lib/python3.12/site-packages/torch/_tensor.py:33(wrapped)
+      384    0.005    0.000    0.022    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:18(prepare_input)
+       38    0.022    0.001    0.022    0.001 {built-in method torch.where}
+      192    0.002    0.000    0.021    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:149(__init__)
+        1    0.000    0.000    0.019    0.019 <repo>/torchspin/ham.py:39(ham)
+       29    0.017    0.001    0.017    0.001 {method 'pow' of 'torch._C.TensorBase' objects}
+       29    0.016    0.001    0.016    0.001 {method 'sum' of 'torch._C.TensorBase' objects}
+        2    0.016    0.008    0.016    0.008 {built-in method torch._C._linalg.linalg_eigvals}
+       26    0.015    0.001    0.015    0.001 {built-in method torch.argsort}
+      192    0.007    0.000    0.013    0.000 <repo>/torchspin/pepper.py:359(_interp_l3)
+        1    0.005    0.005    0.013    0.013 <repo>/torchspin/ham_hf.py:24(ham_hf)
+
+
+
+=== pepper_mn_S52_matrix ===
+         1060045 function calls in 134.751 seconds
+
+   Ordered by: cumulative time
+   List reduced from 371 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000  134.751  134.751 <repo>/benchmarks/workloads/workloads.py:26(<lambda>)
+        1    0.001    0.001  134.751  134.751 <repo>/torchspin/pepper.py:747(pepper)
+        1    0.003    0.003  134.751  134.751 <repo>/torchspin/pepper.py:832(_pepper_single)
+       19    0.002    0.000  128.287    6.752 <repo>/torchspin/pepper.py:1010(_resonances)
+       19    0.111    0.006  128.285    6.752 <repo>/torchspin/resfields_batch.py:38(resfields_batch)
+      124  128.029    1.032  128.029    1.032 {built-in method torch._C._linalg.linalg_eigh}
+       57    0.015    0.000   94.163    1.652 <repo>/torchspin/resfields_batch.py:217(_f_at)
+      146    5.625    0.039    5.722    0.039 <repo>/torchspin/pepper.py:639(_projecttriangles)
+       38    0.004    0.000    2.516    0.066 <repo>/torchspin/resfields_batch.py:116(_diag_at)
+      292    0.002    0.000    0.674    0.002 <repo>/torchspin/pepper.py:380(_interp_slot)
+      292    0.045    0.000    0.669    0.002 <repo>/torchspin/pepper.py:289(_interp_grid)
+     4964    0.045    0.000    0.329    0.000 <repo>/torchspin/pepper.py:311(_row)
+      295    0.005    0.000    0.266    0.001 <repo>/torchspin/sphgrid.py:43(sphgrid)
+      867    0.018    0.000    0.220    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:790(__init__)
+   558573    0.100    0.000    0.110    0.000 {built-in method builtins.sorted}
+      296    0.104    0.000    0.107    0.000 <repo>/torchspin/sphgrid.py:100(_sphgrid_core)
+     1734    0.021    0.000    0.107    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:18(prepare_input)
+      867    0.010    0.000    0.104    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:149(__init__)
+      988    0.101    0.000    0.101    0.000 {built-in method torch.tensor}
+       19    0.072    0.004    0.072    0.004 {built-in method torch._C._linalg.linalg_eigvals}
+     4964    0.032    0.000    0.047    0.000 <env>/lib/python3.12/site-packages/numpy/_core/function_base.py:27(linspace)
+      632    0.043    0.000    0.043    0.000 {built-in method torch.sin}
+        1    0.018    0.018    0.042    0.042 <repo>/torchspin/pepper.py:184(_transition_slots)
+      816    0.001    0.000    0.034    0.000 <env>/lib/python3.12/site-packages/scipy/linalg/_basic.py:763(solve_banded)
+      816    0.007    0.000    0.033    0.000 <env>/lib/python3.12/site-packages/scipy/_lib/_util.py:1149(wrapper)
+
+
+
+=== pepper_strain_summation ===
+         661758 function calls in 7.740 seconds
+
+   Ordered by: cumulative time
+   List reduced from 398 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    7.740    7.740 <repo>/benchmarks/workloads/workloads.py:39(<lambda>)
+        1    0.008    0.008    7.740    7.740 <repo>/torchspin/pepper.py:747(pepper)
+        1    0.031    0.031    7.732    7.732 <repo>/torchspin/pepper.py:832(_pepper_single)
+      190    0.024    0.000    4.254    0.022 <repo>/torchspin/pepper.py:1010(_resonances)
+      190    1.054    0.006    4.231    0.022 <repo>/torchspin/resfields_batch.py:38(resfields_batch)
+        7    2.263    0.323    2.939    0.420 <repo>/torchspin/pepper.py:261(_gaussian_bins)
+      190    1.072    0.006    2.076    0.011 <repo>/torchspin/strainwidth.py:182(compute_strain_widths_batch)
+     3150    0.582    0.000    0.582    0.000 {built-in method torch.erf}
+       21    0.000    0.000    0.307    0.015 <repo>/torchspin/pepper.py:380(_interp_slot)
+     1340    0.299    0.000    0.299    0.000 {built-in method torch._C._linalg.linalg_eigh}
+      570    0.106    0.000    0.250    0.000 <repo>/torchspin/resfields_batch.py:217(_f_at)
+    14840    0.016    0.000    0.220    0.000 <env>/lib/python3.12/site-packages/torch/_tensor.py:33(wrapped)
+    13427    0.114    0.000    0.190    0.000 <env>/lib/python3.12/site-packages/torch/_tensor.py:1030(__rdiv__)
+    26482    0.180    0.000    0.180    0.000 {built-in method torch.abs}
+        7    0.006    0.001    0.170    0.024 <repo>/torchspin/pepper.py:46(_interp_sph)
+    15533    0.157    0.000    0.157    0.000 {built-in method torch.stack}
+    16103    0.138    0.000    0.138    0.000 {built-in method torch.where}
+       14    0.017    0.001    0.137    0.010 <repo>/torchspin/pepper.py:289(_interp_grid)
+      380    0.039    0.000    0.136    0.000 <repo>/torchspin/resfields_batch.py:116(_diag_at)
+    13828    0.133    0.000    0.133    0.000 {built-in method torch.zeros}
+     4426    0.127    0.000    0.127    0.000 {method 'sum' of 'torch._C.TensorBase' objects}
+        1    0.023    0.023    0.118    0.118 <repo>/torchspin/pepper.py:184(_transition_slots)
+       17    0.001    0.000    0.113    0.007 <repo>/torchspin/sphgrid.py:43(sphgrid)
+    13997    0.109    0.000    0.109    0.000 {built-in method torch.zeros_like}
+      413    0.009    0.000    0.102    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:790(__init__)
+
+

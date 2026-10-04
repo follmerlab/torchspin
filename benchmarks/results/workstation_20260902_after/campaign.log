@@ -1,0 +1,51 @@
+torch 2.5.1+cu121 cuda 12.1 NVIDIA GeForce RTX 4090
+........s                                                                [100%]
+8 passed, 1 skipped in 0.93s
+pepper_cu_2n_matrix                   5.46 s
+pepper_mn_S52_matrix                  5.25 s
+pepper_perturb_dense_grid             0.06 s
+pepper_strain_summation               3.67 s
+pepper_fit_loop_20                    2.54 s
+chili_nitroxide_2nuc                  0.55 s
+chili_powder_potential                3.14 s
+saffron_hyscore_512                   3.94 s
+cardamom_diffusion_200x1000          25.13 s
+pepper_cu_2n_matrix                   1.25 s
+pepper_mn_S52_matrix                  1.71 s
+pepper_perturb_dense_grid             0.07 s
+pepper_strain_summation               2.14 s
+pepper_fit_loop_20                    2.47 s
+chili_nitroxide_2nuc                  0.60 s
+chili_powder_potential                3.17 s
+saffron_hyscore_512                   1.11 s
+cardamom_diffusion_200x1000          25.23 s
+pepper_cu_2n_matrix                   1.05 s
+pepper_mn_S52_matrix                  1.38 s
+pepper_perturb_dense_grid             0.08 s
+pepper_strain_summation               3.01 s
+pepper_fit_loop_20                    2.64 s
+chili_nitroxide_2nuc                  0.42 s
+chili_powder_potential                3.20 s
+saffron_hyscore_512                   0.80 s
+cardamom_diffusion_200x1000          23.57 s
+pepper_cu_2n_matrix                   0.89 s
+pepper_mn_S52_matrix                  1.31 s
+pepper_perturb_dense_grid             0.15 s
+pepper_strain_summation               5.00 s
+pepper_fit_loop_20                    3.03 s
+chili_nitroxide_2nuc                  0.42 s
+chili_powder_potential                3.10 s
+saffron_hyscore_512                   0.74 s
+cardamom_diffusion_200x1000          24.17 s
+pepper_fit_loop_20 with 4 processes x 1 threads: 2.61 s
+pepper_fit_loop_20 with 16 processes x 1 threads: 2.50 s
+pepper_fit_loop_20 with 64 processes x 1 threads: 4.28 s
+pepper_cu_2n_matrix                   1.01 s
+pepper_mn_S52_matrix                  1.54 s
+cardamom_diffusion_200x1000          24.05 s
+chili_nitroxide_2nuc                  0.69 s
+chili_powder_potential                4.01 s
+pepper_cu_2n_matrix                   1.20 s
+pepper_mn_S52_matrix                  1.46 s
+pepper_strain_summation               4.62 s
+campaign done: benchmarks/results/workstation_20260902_after

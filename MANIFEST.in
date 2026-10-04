@@ -1,0 +1,22 @@
+# Files to include in the sdist beyond auto-discovered package files.
+include LICENSE.md
+include README.md
+include CHANGELOG.md
+include CITATION.cff
+include pyproject.toml
+
+# Package runtime data shipped inside torchspin/.
+recursive-include torchspin/data *.txt
+include torchspin/py.typed
+
+# Keep the sdist small: reference data, notebooks and benchmarks are repo-only.
+prune tests
+prune docs
+prune examples
+prune benchmarks
+prune .github
+global-exclude *.m
+global-exclude *.mat
+global-exclude *.png
+global-exclude *.ipynb
+global-exclude .DS_Store

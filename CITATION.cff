@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use torchspin in your research, please cite both torchspin and the upstream EasySpin paper."
+title: "torchspin: Differentiable PyTorch port of EasySpin for EPR spectroscopy"
+type: software
+version: "0.3.0"
+date-released: "2026-10-04"
+license: MIT
+authors:
+  - family-names: "Follmer"
+    given-names: "Alec"
+    email: "ahfollmer@ucdavis.edu"
+repository-code: "https://github.com/follmerlab/torchspin"
+url: "https://github.com/follmerlab/torchspin"
+keywords:
+  - "EPR"
+  - "ESR"
+  - "spectroscopy"
+  - "spin-Hamiltonian"
+  - "pytorch"
+  - "autograd"
+  - "magnetic resonance"
+  - "EasySpin"
+
+references:
+  - type: article
+    title: "EasySpin, a comprehensive software package for spectral simulation and analysis in EPR"
+    authors:
+      - family-names: "Stoll"
+        given-names: "Stefan"
+      - family-names: "Schweiger"
+        given-names: "Arthur"
+    journal: "Journal of Magnetic Resonance"
+    volume: 178
+    issue: 1
+    start: 42
+    end: 55
+    year: 2006
+    doi: "10.1016/j.jmr.2005.08.013"

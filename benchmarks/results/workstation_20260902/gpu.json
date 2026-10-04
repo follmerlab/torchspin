@@ -1,0 +1,21 @@
+{
+  "meta": {
+    "host": "workstation",
+    "python": "3.12.13",
+    "torch": "2.5.1+cu121",
+    "threads": 64,
+    "device": "cuda",
+    "gpu": "NVIDIA GeForce RTX 4090"
+  },
+  "seconds": {
+    "pepper_cu_2n_matrix": 51.67691017899779,
+    "pepper_mn_S52_matrix": 133.20894187501108,
+    "pepper_perturb_dense_grid": 0.5907261170068523,
+    "pepper_strain_summation": 7.1554014420107706,
+    "pepper_fit_loop_20": 19.2984461140004,
+    "chili_nitroxide_2nuc": 0.7821365470008459,
+    "chili_powder_potential": 9.259256904988433,
+    "saffron_hyscore_512": 0.7267143979988759,
+    "cardamom_diffusion_200x1000": 174.83593741399818
+  }
+}

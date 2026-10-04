@@ -1,0 +1,770 @@
+{
+  "meta": {
+    "host": "workstation",
+    "python": "3.12.13",
+    "torch": "2.5.1+cu121",
+    "torch_cuda": "12.1",
+    "numpy": "2.4.3",
+    "requested_device": "cuda",
+    "device": "cuda",
+    "threads": 32,
+    "torch_num_threads": 32,
+    "torch_num_interop_threads": 64,
+    "thread_env": {
+      "OMP_NUM_THREADS": "32",
+      "MKL_NUM_THREADS": "32",
+      "OPENBLAS_NUM_THREADS": "32",
+      "NUMEXPR_NUM_THREADS": "32"
+    },
+    "native_threadpools": [
+      {
+        "user_api": "blas",
+        "internal_api": "openblas",
+        "num_threads": 32,
+        "prefix": "libscipy_openblas",
+        "filepath": "<env>/lib/python3.12/site-packages/numpy.libs/libscipy_openblas64_-ff84a88b.so",
+        "version": "0.3.31.dev",
+        "threading_layer": "pthreads",
+        "architecture": "Haswell"
+      },
+      {
+        "user_api": "openmp",
+        "internal_api": "openmp",
+        "num_threads": 32,
+        "prefix": "libgomp",
+        "filepath": "<env>/lib/python3.12/site-packages/torch/lib/libgomp-a34b3233.so.1",
+        "version": null
+      },
+      {
+        "user_api": "blas",
+        "internal_api": "openblas",
+        "num_threads": 32,
+        "prefix": "libscipy_openblas",
+        "filepath": "<env>/lib/python3.12/site-packages/scipy.libs/libscipy_openblas-6cdc3b4a.so",
+        "version": "0.3.30",
+        "threading_layer": "pthreads",
+        "architecture": "Haswell"
+      }
+    ],
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31
+    ],
+    "n_affinity_cpus": 32,
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "cuda_visible_devices": "0",
+    "torchspin_commit": "420cbc9e2256b11b857e1fa086033d212df52053",
+    "torchspin_status": "M benchmarks/workloads/matlab_workloads.m\n M benchmarks/workloads/run_workloads.py\n M benchmarks/workloads/workloads.py\n M examples/notebooks/08_pepper_playground.ipynb\n M examples/notebooks/09_fit_gui.ipynb\n?? benchmarks/cluster/run_workstation_verified.sh\n?? benchmarks/results/workstation_20260904_verified/\n?? benchmarks/results/workstation_after2_campaign.log\n?? benchmarks/results/workstation_after_campaign.log\n?? benchmarks/results/workstation_campaign.log\n?? benchmarks/results/workstation_verified_campaign.log\n?? benchmarks/workloads/matlab_workloads.json\n?? examples/notebooks/ahf/",
+    "warmup": 1,
+    "repeat": 5,
+    "protocol": "median of replicates; every replicate saved",
+    "started": "2026-09-04 07:11:46 PDT",
+    "finished": "2026-09-04 07:13:25 PDT"
+  },
+  "seconds": {
+    "pepper_cu_2n_matrix": 0.6738604010024574,
+    "pepper_mn_S52_matrix": 0.9540082460152917,
+    "pepper_perturb_dense_grid": 0.16168443698552437,
+    "pepper_strain_summation": 1.2323771119990852,
+    "pepper_fit_loop_20": 1.7686557540146168,
+    "saffron_hyscore_512": 0.2281715810240712
+  },
+  "replicates": {
+    "pepper_cu_2n_matrix": [
+      0.6827922060037963,
+      0.6661271690099966,
+      0.6738604010024574,
+      0.6503243769984692,
+      0.6778334509872366
+    ],
+    "pepper_mn_S52_matrix": [
+      0.972844008996617,
+      0.94675539698801,
+      0.9540082460152917,
+      0.9535875169967767,
+      0.9621252919896506
+    ],
+    "pepper_perturb_dense_grid": [
+      0.16168443698552437,
+      0.16084809100721031,
+      0.1615649999876041,
+      0.1673691339965444,
+      0.16172673701657914
+    ],
+    "pepper_strain_summation": [
+      1.2323771119990852,
+      1.219984012976056,
+      1.2446382720081601,
+      1.2540138040203601,
+      1.1900098079931922
+    ],
+    "pepper_fit_loop_20": [
+      1.7654998159850948,
+      1.7686557540146168,
+      1.767026490997523,
+      1.7689634380221833,
+      1.7703464049845934
+    ],
+    "saffron_hyscore_512": [
+      0.2278496200160589,
+      0.22833029201137833,
+      0.22877483401680365,
+      0.2281715810240712,
+      0.22813412902178243
+    ]
+  },
+  "stats": {
+    "pepper_cu_2n_matrix": {
+      "n": 5,
+      "median": 0.6738604010024574,
+      "q1": 0.6582257730042329,
+      "q3": 0.6803128284955164,
+      "iqr": 0.022087055491283536,
+      "min": 0.6503243769984692,
+      "max": 0.6827922060037963,
+      "mean": 0.6701875208003912,
+      "stdev": 0.012667471381804801
+    },
+    "pepper_mn_S52_matrix": {
+      "n": 5,
+      "median": 0.9540082460152917,
+      "q1": 0.9501714569923934,
+      "q3": 0.9674846504931338,
+      "iqr": 0.017313193500740454,
+      "min": 0.94675539698801,
+      "max": 0.972844008996617,
+      "mean": 0.9578640921972692,
+      "stdev": 0.009988937449282718
+    },
+    "pepper_perturb_dense_grid": {
+      "n": 5,
+      "median": 0.16168443698552437,
+      "q1": 0.1612065454974072,
+      "q3": 0.16454793550656177,
+      "iqr": 0.0033413900091545656,
+      "min": 0.16084809100721031,
+      "max": 0.1673691339965444,
+      "mean": 0.16263867979869245,
+      "stdev": 0.0026682584422815414
+    },
+    "pepper_strain_summation": {
+      "n": 5,
+      "median": 1.2323771119990852,
+      "q1": 1.204996910484624,
+      "q3": 1.2493260380142601,
+      "iqr": 0.044329127529636025,
+      "min": 1.1900098079931922,
+      "max": 1.2540138040203601,
+      "mean": 1.2282046017993706,
+      "stdev": 0.02489985256824022
+    },
+    "pepper_fit_loop_20": {
+      "n": 5,
+      "median": 1.7686557540146168,
+      "q1": 1.766263153491309,
+      "q3": 1.7696549215033883,
+      "iqr": 0.0033917680120794103,
+      "min": 1.7654998159850948,
+      "max": 1.7703464049845934,
+      "mean": 1.7680983808008022,
+      "stdev": 0.0018717697827496074
+    },
+    "saffron_hyscore_512": {
+      "n": 5,
+      "median": 0.2281715810240712,
+      "q1": 0.22799187451892067,
+      "q3": 0.228552563014091,
+      "iqr": 0.000560688495170325,
+      "min": 0.2278496200160589,
+      "max": 0.22877483401680365,
+      "mean": 0.2282520912180189,
+      "stdev": 0.00033976294575810867
+    }
+  },
+  "audit": {
+    "pepper_cu_2n_matrix": {
+      "requested_device": "cuda",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "gpu_before": [
+        {
+          "index": 0,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ],
+      "cuda_kernels_observed": true,
+      "cuda_kernel_events": 806,
+      "cuda_kernel_seconds": 0.03459207099999823,
+      "profiled_wall_seconds": 1.0178665090061259,
+      "cuda_kernel_fraction_of_wall": 0.03398487983829523,
+      "memcpy_dtoh_events": 114,
+      "memcpy_htod_events": 22,
+      "eigh": {
+        "by_device_dim_batch": [
+          {
+            "device": "cpu",
+            "dim": 72,
+            "batch": 1,
+            "calls": 10
+          },
+          {
+            "device": "cpu",
+            "dim": 72,
+            "batch": 4,
+            "calls": 1
+          },
+          {
+            "device": "cpu",
+            "dim": 72,
+            "batch": 5,
+            "calls": 1
+          },
+          {
+            "device": "cpu",
+            "dim": 72,
+            "batch": 6,
+            "calls": 2
+          },
+          {
+            "device": "cpu",
+            "dim": 72,
+            "batch": 8,
+            "calls": 19
+          },
+          {
+            "device": "cpu",
+            "dim": 72,
+            "batch": 9,
+            "calls": 49
+          },
+          {
+            "device": "cpu",
+            "dim": 72,
+            "batch": 15,
+            "calls": 30
+          },
+          {
+            "device": "cpu",
+            "dim": 72,
+            "batch": 139,
+            "calls": 1
+          },
+          {
+            "device": "cpu",
+            "dim": 72,
+            "batch": 142,
+            "calls": 31
+          }
+        ],
+        "cpu_calls": 144,
+        "cpu_calls_dim_gt_32": 144,
+        "cuda_calls": 0
+      },
+      "cpu_routed_eigh_dim_gt_32": true,
+      "consistency_vs_cpu": {
+        "comparable": true,
+        "n_values": 4096,
+        "max_abs_deviation": 2.0250467969162855e-11,
+        "max_abs_over_max_ref": 5.6251299914341267e-14,
+        "nrmse": 6.5154188709330724e-15
+      },
+      "effective_mode": "hybrid",
+      "gpu_after": [
+        {
+          "index": 0,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 2706.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ]
+    },
+    "pepper_mn_S52_matrix": {
+      "requested_device": "cuda",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "gpu_before": [
+        {
+          "index": 0,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 2706.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ],
+      "cuda_kernels_observed": true,
+      "cuda_kernel_events": 766,
+      "cuda_kernel_seconds": 0.03615367700000094,
+      "profiled_wall_seconds": 0.9602640660014004,
+      "cuda_kernel_fraction_of_wall": 0.03764972394577578,
+      "memcpy_dtoh_events": 614,
+      "memcpy_htod_events": 18,
+      "eigh": {
+        "by_device_dim_batch": [
+          {
+            "device": "cpu",
+            "dim": 36,
+            "batch": 1,
+            "calls": 10
+          },
+          {
+            "device": "cpu",
+            "dim": 36,
+            "batch": 16,
+            "calls": 1
+          },
+          {
+            "device": "cpu",
+            "dim": 36,
+            "batch": 20,
+            "calls": 1
+          },
+          {
+            "device": "cpu",
+            "dim": 36,
+            "batch": 24,
+            "calls": 31
+          },
+          {
+            "device": "cpu",
+            "dim": 36,
+            "batch": 30,
+            "calls": 31
+          },
+          {
+            "device": "cpu",
+            "dim": 36,
+            "batch": 64,
+            "calls": 1
+          },
+          {
+            "device": "cpu",
+            "dim": 36,
+            "batch": 66,
+            "calls": 31
+          },
+          {
+            "device": "cpu",
+            "dim": 36,
+            "batch": 597,
+            "calls": 1
+          },
+          {
+            "device": "cpu",
+            "dim": 36,
+            "batch": 603,
+            "calls": 31
+          }
+        ],
+        "cpu_calls": 138,
+        "cpu_calls_dim_gt_32": 138,
+        "cuda_calls": 0
+      },
+      "cpu_routed_eigh_dim_gt_32": true,
+      "consistency_vs_cpu": {
+        "comparable": true,
+        "n_values": 4096,
+        "max_abs_deviation": 2.4385826691286638e-11,
+        "max_abs_over_max_ref": 6.773840747579622e-14,
+        "nrmse": 1.1895226618076242e-14
+      },
+      "effective_mode": "hybrid",
+      "gpu_after": [
+        {
+          "index": 0,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 5046.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ]
+    },
+    "pepper_perturb_dense_grid": {
+      "requested_device": "cuda",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "gpu_before": [
+        {
+          "index": 0,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 5046.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ],
+      "cuda_kernels_observed": true,
+      "cuda_kernel_events": 269,
+      "cuda_kernel_seconds": 0.000590563000000082,
+      "profiled_wall_seconds": 0.33610083599342033,
+      "cuda_kernel_fraction_of_wall": 0.0017571006577670135,
+      "memcpy_dtoh_events": 8386,
+      "memcpy_htod_events": 16,
+      "eigh": {
+        "by_device_dim_batch": [],
+        "cpu_calls": 0,
+        "cpu_calls_dim_gt_32": 0,
+        "cuda_calls": 0
+      },
+      "cpu_routed_eigh_dim_gt_32": false,
+      "consistency_vs_cpu": {
+        "comparable": true,
+        "n_values": 8192,
+        "max_abs_deviation": 5.904610134166433e-11,
+        "max_abs_over_max_ref": 5.361086207981318e-14,
+        "nrmse": 3.361311850030886e-14
+      },
+      "effective_mode": "hybrid",
+      "gpu_after": [
+        {
+          "index": 0,
+          "utilization_pct": 7.0,
+          "memory_used_mib": 5078.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ]
+    },
+    "pepper_strain_summation": {
+      "requested_device": "cuda",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "gpu_before": [
+        {
+          "index": 0,
+          "utilization_pct": 6.0,
+          "memory_used_mib": 5078.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ],
+      "cuda_kernels_observed": true,
+      "cuda_kernel_events": 2521,
+      "cuda_kernel_seconds": 0.05084604899999951,
+      "profiled_wall_seconds": 1.36272760501015,
+      "cuda_kernel_fraction_of_wall": 0.03731196815347466,
+      "memcpy_dtoh_events": 7610,
+      "memcpy_htod_events": 13,
+      "eigh": {
+        "by_device_dim_batch": [
+          {
+            "device": "cpu",
+            "dim": 6,
+            "batch": 1,
+            "calls": 10
+          },
+          {
+            "device": "cuda",
+            "dim": 6,
+            "batch": 7564,
+            "calls": 1
+          },
+          {
+            "device": "cuda",
+            "dim": 6,
+            "batch": 9455,
+            "calls": 1
+          },
+          {
+            "device": "cuda",
+            "dim": 6,
+            "batch": 13237,
+            "calls": 2
+          }
+        ],
+        "cpu_calls": 10,
+        "cpu_calls_dim_gt_32": 0,
+        "cuda_calls": 4
+      },
+      "cpu_routed_eigh_dim_gt_32": false,
+      "consistency_vs_cpu": {
+        "comparable": true,
+        "n_values": 4096,
+        "max_abs_deviation": 3.631299705375568e-10,
+        "max_abs_over_max_ref": 1.0375142015358766e-12,
+        "nrmse": 1.7041939533742768e-13
+      },
+      "effective_mode": "hybrid",
+      "gpu_after": [
+        {
+          "index": 0,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 5084.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ]
+    },
+    "pepper_fit_loop_20": {
+      "requested_device": "cuda",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "gpu_before": [
+        {
+          "index": 0,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 5084.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ],
+      "cuda_kernels_observed": true,
+      "cuda_kernel_events": 20560,
+      "cuda_kernel_seconds": 0.21340813399998357,
+      "profiled_wall_seconds": 2.3492401060066186,
+      "cuda_kernel_fraction_of_wall": 0.09084134629505697,
+      "memcpy_dtoh_events": 30660,
+      "memcpy_htod_events": 200,
+      "eigh": {
+        "by_device_dim_batch": [
+          {
+            "device": "cpu",
+            "dim": 6,
+            "batch": 1,
+            "calls": 200
+          },
+          {
+            "device": "cuda",
+            "dim": 6,
+            "batch": 1984,
+            "calls": 20
+          },
+          {
+            "device": "cuda",
+            "dim": 6,
+            "batch": 2480,
+            "calls": 20
+          },
+          {
+            "device": "cuda",
+            "dim": 6,
+            "batch": 3472,
+            "calls": 20
+          }
+        ],
+        "cpu_calls": 200,
+        "cpu_calls_dim_gt_32": 0,
+        "cuda_calls": 60
+      },
+      "cpu_routed_eigh_dim_gt_32": false,
+      "consistency_vs_cpu": {
+        "comparable": true,
+        "n_values": 20480,
+        "max_abs_deviation": 3.8477310226880945e-09,
+        "max_abs_over_max_ref": 3.2821904212387653e-12,
+        "nrmse": 2.207609248999382e-12
+      },
+      "effective_mode": "hybrid",
+      "gpu_after": [
+        {
+          "index": 0,
+          "utilization_pct": 9.0,
+          "memory_used_mib": 5084.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ]
+    },
+    "chili_nitroxide_2nuc": {
+      "requested_device": "cuda",
+      "supported_devices": [
+        "cpu"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "unsupported",
+      "cuda_kernels_observed": false,
+      "note": "chili has no cuda implementation; not timed on cuda"
+    },
+    "chili_powder_potential": {
+      "requested_device": "cuda",
+      "supported_devices": [
+        "cpu"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "unsupported",
+      "cuda_kernels_observed": false,
+      "note": "chili has no cuda implementation; not timed on cuda"
+    },
+    "saffron_hyscore_512": {
+      "requested_device": "cuda",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "gpu_before": [
+        {
+          "index": 0,
+          "utilization_pct": 9.0,
+          "memory_used_mib": 5084.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ],
+      "cuda_kernels_observed": true,
+      "cuda_kernel_events": 14083,
+      "cuda_kernel_seconds": 0.06791227199999948,
+      "profiled_wall_seconds": 0.40907457598950714,
+      "cuda_kernel_fraction_of_wall": 0.16601440418468208,
+      "memcpy_dtoh_events": 460,
+      "memcpy_htod_events": 204,
+      "eigh": {
+        "by_device_dim_batch": [
+          {
+            "device": "cuda",
+            "dim": 6,
+            "batch": 1,
+            "calls": 182
+          }
+        ],
+        "cpu_calls": 0,
+        "cpu_calls_dim_gt_32": 0,
+        "cuda_calls": 182
+      },
+      "cpu_routed_eigh_dim_gt_32": false,
+      "consistency_vs_cpu": {
+        "comparable": true,
+        "n_values": 1575936,
+        "max_abs_deviation": 4.9112713895738125e-11,
+        "max_abs_over_max_ref": 2.3831872173238687e-15,
+        "nrmse": 2.2214965459786965e-15
+      },
+      "effective_mode": "hybrid",
+      "gpu_after": [
+        {
+          "index": 0,
+          "utilization_pct": 42.0,
+          "memory_used_mib": 9182.0,
+          "memory_total_mib": 24564.0
+        },
+        {
+          "index": 1,
+          "utilization_pct": 0.0,
+          "memory_used_mib": 4.0,
+          "memory_total_mib": 24564.0
+        }
+      ]
+    },
+    "cardamom_diffusion_200x1000": {
+      "requested_device": "cuda",
+      "supported_devices": [
+        "cpu"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": true,
+      "effective_mode": "unsupported",
+      "cuda_kernels_observed": false,
+      "note": "cardamom has no cuda implementation; not timed on cuda"
+    }
+  }
+}

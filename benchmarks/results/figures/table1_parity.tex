@@ -1,0 +1,21 @@
+\begin{table}[h]
+\centering
+\caption{MATLAB EasySpin parity across validated torchspin simulators. Cosine similarity is the shape-match metric; amplitude refers to absolute-intensity agreement.}
+\label{tab:parity}
+\begin{tabular}{lllc}
+\toprule
+Module & Physics & Cosine & Amplitude \\
+\midrule
+\texttt{pepper} & CW EPR powder & $>0.999$ & $\sim$15\% (correction factors) \\
+\texttt{garlic} & CW solution / fast motion & 1.0000 & exact \\
+\texttt{chili} & Slow-motion SLE & 0.92--0.997 & matches in regime \\
+\texttt{salt} & ENDOR powder & $>0.92$ & matches in regime \\
+\texttt{endorfrq} & ENDOR single orientation & $\pm 1$ MHz peaks & exact \\
+\texttt{saffron} & Pulse EPR (ESEEM/HYSCORE) & 1.0000 & matches \\
+\texttt{curry} & Magnetometry (χ, M-T) & analytical & exact (SI units) \\
+\texttt{blochsteady} & Bloch steady-state & analytical & exact \\
+\texttt{spidyan} & Arbitrary pulse (internal) & self-consistent & n/a \\
+\texttt{cardamom} & Trajectory-based (internal) & self-consistent & n/a \\
+\bottomrule
+\end{tabular}
+\end{table}

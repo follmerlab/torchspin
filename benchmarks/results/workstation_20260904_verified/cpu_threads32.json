@@ -1,0 +1,369 @@
+{
+  "meta": {
+    "host": "workstation",
+    "python": "3.12.13",
+    "torch": "2.5.1+cu121",
+    "torch_cuda": "12.1",
+    "numpy": "2.4.3",
+    "requested_device": "cpu",
+    "device": "cpu",
+    "threads": 32,
+    "torch_num_threads": 32,
+    "torch_num_interop_threads": 64,
+    "thread_env": {
+      "OMP_NUM_THREADS": "32",
+      "MKL_NUM_THREADS": "32",
+      "OPENBLAS_NUM_THREADS": "32",
+      "NUMEXPR_NUM_THREADS": "32"
+    },
+    "native_threadpools": [
+      {
+        "user_api": "blas",
+        "internal_api": "openblas",
+        "num_threads": 32,
+        "prefix": "libscipy_openblas",
+        "filepath": "<env>/lib/python3.12/site-packages/numpy.libs/libscipy_openblas64_-ff84a88b.so",
+        "version": "0.3.31.dev",
+        "threading_layer": "pthreads",
+        "architecture": "Haswell"
+      },
+      {
+        "user_api": "openmp",
+        "internal_api": "openmp",
+        "num_threads": 32,
+        "prefix": "libgomp",
+        "filepath": "<env>/lib/python3.12/site-packages/torch/lib/libgomp-a34b3233.so.1",
+        "version": null
+      },
+      {
+        "user_api": "blas",
+        "internal_api": "openblas",
+        "num_threads": 32,
+        "prefix": "libscipy_openblas",
+        "filepath": "<env>/lib/python3.12/site-packages/scipy.libs/libscipy_openblas-6cdc3b4a.so",
+        "version": "0.3.30",
+        "threading_layer": "pthreads",
+        "architecture": "Haswell"
+      }
+    ],
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31
+    ],
+    "n_affinity_cpus": 32,
+    "gpu": null,
+    "cuda_visible_devices": null,
+    "torchspin_commit": "420cbc9e2256b11b857e1fa086033d212df52053",
+    "torchspin_status": "M benchmarks/workloads/matlab_workloads.m\n M benchmarks/workloads/run_workloads.py\n M benchmarks/workloads/workloads.py\n M examples/notebooks/08_pepper_playground.ipynb\n M examples/notebooks/09_fit_gui.ipynb\n?? benchmarks/cluster/run_workstation_verified.sh\n?? benchmarks/results/workstation_20260904_verified/\n?? benchmarks/results/workstation_after2_campaign.log\n?? benchmarks/results/workstation_after_campaign.log\n?? benchmarks/results/workstation_campaign.log\n?? benchmarks/results/workstation_verified_campaign.log\n?? benchmarks/workloads/matlab_workloads.json\n?? examples/notebooks/ahf/",
+    "warmup": 1,
+    "repeat": 5,
+    "protocol": "median of replicates; every replicate saved",
+    "started": "2026-09-04 07:20:48 PDT",
+    "finished": "2026-09-04 07:23:05 PDT"
+  },
+  "seconds": {
+    "pepper_cu_2n_matrix": 0.8472749310021754,
+    "pepper_mn_S52_matrix": 1.0729571350093465,
+    "pepper_perturb_dense_grid": 0.07552663699607365,
+    "pepper_strain_summation": 1.1688512369873933,
+    "pepper_fit_loop_20": 5.276726089010481,
+    "chili_nitroxide_2nuc": 0.1572533089783974,
+    "chili_powder_potential": 3.0940703219966963,
+    "saffron_hyscore_512": 0.7524488629715052,
+    "cardamom_diffusion_200x1000": 10.394008885981748
+  },
+  "replicates": {
+    "pepper_cu_2n_matrix": [
+      0.8767396659823135,
+      0.8737526340119075,
+      0.8472749310021754,
+      0.8284576949954499,
+      0.8001518759992905
+    ],
+    "pepper_mn_S52_matrix": [
+      1.0833243149972986,
+      1.0729571350093465,
+      1.0653203709807713,
+      1.083423389995005,
+      1.055888072005473
+    ],
+    "pepper_perturb_dense_grid": [
+      0.07475468298071064,
+      0.07545255598961376,
+      0.07568670899490826,
+      0.11534399201627821,
+      0.07552663699607365
+    ],
+    "pepper_strain_summation": [
+      1.1359035939967725,
+      1.1721823730040342,
+      1.2234216049837414,
+      1.1688512369873933,
+      1.1206159259891137
+    ],
+    "pepper_fit_loop_20": [
+      5.1120336430030875,
+      5.355227409978397,
+      5.276726089010481,
+      5.1789977209991775,
+      5.573277725983644
+    ],
+    "chili_nitroxide_2nuc": [
+      0.17452317097922787,
+      0.1570312280091457,
+      0.1572533089783974,
+      0.15801232800004072,
+      0.15687906998209655
+    ],
+    "chili_powder_potential": [
+      3.092689540993888,
+      3.0926725439785514,
+      3.111308116989676,
+      3.0940703219966963,
+      3.094623203010997
+    ],
+    "saffron_hyscore_512": [
+      0.752876164013287,
+      0.7510753209935501,
+      0.7527132350078318,
+      0.7504652040079236,
+      0.7524488629715052
+    ],
+    "cardamom_diffusion_200x1000": [
+      10.394008885981748,
+      10.549579282000195,
+      9.658695468999213,
+      10.202728525997372,
+      10.461395307997009
+    ]
+  },
+  "stats": {
+    "pepper_cu_2n_matrix": {
+      "n": 5,
+      "median": 0.8472749310021754,
+      "q1": 0.8143047854973702,
+      "q3": 0.8752461499971105,
+      "iqr": 0.0609413644997403,
+      "min": 0.8001518759992905,
+      "max": 0.8767396659823135,
+      "mean": 0.8452753603982274,
+      "stdev": 0.032108871962660906
+    },
+    "pepper_mn_S52_matrix": {
+      "n": 5,
+      "median": 1.0729571350093465,
+      "q1": 1.0606042214931222,
+      "q3": 1.0833738524961518,
+      "iqr": 0.022769631003029644,
+      "min": 1.055888072005473,
+      "max": 1.083423389995005,
+      "mean": 1.072182656597579,
+      "stdev": 0.011871129968691767
+    },
+    "pepper_perturb_dense_grid": {
+      "n": 5,
+      "median": 0.07552663699607365,
+      "q1": 0.0751036194851622,
+      "q3": 0.09551535050559323,
+      "iqr": 0.020411731020431034,
+      "min": 0.07475468298071064,
+      "max": 0.11534399201627821,
+      "mean": 0.0833529153955169,
+      "stdev": 0.01788711559278922
+    },
+    "pepper_strain_summation": {
+      "n": 5,
+      "median": 1.1688512369873933,
+      "q1": 1.1282597599929431,
+      "q3": 1.1978019889938878,
+      "iqr": 0.06954222900094464,
+      "min": 1.1206159259891137,
+      "max": 1.2234216049837414,
+      "mean": 1.164194946992211,
+      "stdev": 0.03966361290137408
+    },
+    "pepper_fit_loop_20": {
+      "n": 5,
+      "median": 5.276726089010481,
+      "q1": 5.1455156820011325,
+      "q3": 5.4642525679810205,
+      "iqr": 0.31873688597988803,
+      "min": 5.1120336430030875,
+      "max": 5.573277725983644,
+      "mean": 5.299252517794957,
+      "stdev": 0.17905485647023858
+    },
+    "chili_nitroxide_2nuc": {
+      "n": 5,
+      "median": 0.1572533089783974,
+      "q1": 0.15695514899562113,
+      "q3": 0.1662677494896343,
+      "iqr": 0.009312600494013168,
+      "min": 0.15687906998209655,
+      "max": 0.17452317097922787,
+      "mean": 0.16073982118978164,
+      "stdev": 0.007717428023401695
+    },
+    "chili_powder_potential": {
+      "n": 5,
+      "median": 3.0940703219966963,
+      "q1": 3.0926810424862197,
+      "q3": 3.1029656600003364,
+      "iqr": 0.01028461751411669,
+      "min": 3.0926725439785514,
+      "max": 3.111308116989676,
+      "mean": 3.0970727453939615,
+      "stdev": 0.008003668876200774
+    },
+    "saffron_hyscore_512": {
+      "n": 5,
+      "median": 0.7524488629715052,
+      "q1": 0.7507702625007369,
+      "q3": 0.7527946995105594,
+      "iqr": 0.0020244370098225772,
+      "min": 0.7504652040079236,
+      "max": 0.752876164013287,
+      "mean": 0.7519157573988196,
+      "stdev": 0.001078539689204718
+    },
+    "cardamom_diffusion_200x1000": {
+      "n": 5,
+      "median": 10.394008885981748,
+      "q1": 9.930711997498292,
+      "q3": 10.505487294998602,
+      "iqr": 0.5747752975003095,
+      "min": 9.658695468999213,
+      "max": 10.549579282000195,
+      "mean": 10.253281494195107,
+      "stdev": 0.356018286505162
+    }
+  },
+  "audit": {
+    "pepper_cu_2n_matrix": {
+      "requested_device": "cpu",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "cpu",
+      "cuda_kernels_observed": false
+    },
+    "pepper_mn_S52_matrix": {
+      "requested_device": "cpu",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "cpu",
+      "cuda_kernels_observed": false
+    },
+    "pepper_perturb_dense_grid": {
+      "requested_device": "cpu",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "cpu",
+      "cuda_kernels_observed": false
+    },
+    "pepper_strain_summation": {
+      "requested_device": "cpu",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "cpu",
+      "cuda_kernels_observed": false
+    },
+    "pepper_fit_loop_20": {
+      "requested_device": "cpu",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "cpu",
+      "cuda_kernels_observed": false
+    },
+    "chili_nitroxide_2nuc": {
+      "requested_device": "cpu",
+      "supported_devices": [
+        "cpu"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "cpu",
+      "cuda_kernels_observed": false
+    },
+    "chili_powder_potential": {
+      "requested_device": "cpu",
+      "supported_devices": [
+        "cpu"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "cpu",
+      "cuda_kernels_observed": false
+    },
+    "saffron_hyscore_512": {
+      "requested_device": "cpu",
+      "supported_devices": [
+        "cpu",
+        "cuda"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": false,
+      "effective_mode": "cpu",
+      "cuda_kernels_observed": false
+    },
+    "cardamom_diffusion_200x1000": {
+      "requested_device": "cpu",
+      "supported_devices": [
+        "cpu"
+      ],
+      "torch_num_threads": 32,
+      "stochastic": true,
+      "effective_mode": "cpu",
+      "cuda_kernels_observed": false
+    }
+  }
+}

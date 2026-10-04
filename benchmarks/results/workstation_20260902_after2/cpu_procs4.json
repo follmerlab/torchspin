@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "host": "workstation",
+    "python": "3.12.13",
+    "torch": "2.5.1+cu121",
+    "threads": 1,
+    "device": "cpu",
+    "gpu": null
+  },
+  "seconds": {
+    "pepper_fit_loop_20_procs4": 3.9324481679941528
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "host": "workstation",
+    "python": "3.12.13",
+    "torch": "2.5.1+cu121",
+    "threads": 32,
+    "device": "cpu",
+    "gpu": null
+  },
+  "seconds": {
+    "pepper_cu_2n_matrix": 1.007117148998077,
+    "pepper_mn_S52_matrix": 1.540259615998366,
+    "cardamom_diffusion_200x1000": 24.04779418799444,
+    "chili_nitroxide_2nuc": 0.6913739930023439,
+    "chili_powder_potential": 4.013499730994226
+  }
+}

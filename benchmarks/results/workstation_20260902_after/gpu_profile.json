@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "host": "workstation",
+    "python": "3.12.13",
+    "torch": "2.5.1+cu121",
+    "threads": 64,
+    "device": "cuda",
+    "gpu": "NVIDIA GeForce RTX 4090"
+  },
+  "seconds": {
+    "pepper_cu_2n_matrix": 1.1969727380055701,
+    "pepper_mn_S52_matrix": 1.4612954930053093,
+    "pepper_strain_summation": 4.61738508300914
+  }
+}

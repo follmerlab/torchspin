@@ -1,0 +1,174 @@
+=== pepper_cu_2n_matrix ===
+         143030 function calls (142029 primitive calls) in 1.004 seconds
+
+   Ordered by: cumulative time
+   List reduced from 617 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+      140    0.001    0.000    1.431    0.010 <env>/lib/python3.12/concurrent/futures/_base.py:612(result_iterator)
+      134    0.000    0.000    0.802    0.006 <env>/lib/python3.12/concurrent/futures/_base.py:314(_result_or_cancel)
+      2/1    0.000    0.000    0.698    0.698 <repo>/benchmarks/workloads/workloads.py:20(<lambda>)
+      2/1    0.000    0.000    0.698    0.698 <repo>/torchspin/pepper.py:941(pepper)
+      2/1    0.003    0.001    0.697    0.697 <repo>/torchspin/pepper.py:1026(_pepper_single)
+      2/1    0.026    0.013    0.574    0.574 <repo>/torchspin/pepper.py:1204(_resonances)
+      134    0.000    0.000    0.570    0.004 <env>/lib/python3.12/concurrent/futures/_base.py:428(result)
+  266/213    0.002    0.000    0.564    0.003 <env>/lib/python3.12/threading.py:323(wait)
+      2/1    0.318    0.159    0.547    0.547 <repo>/torchspin/resfields_batch.py:39(resfields_batch)
+     11/6    0.000    0.000    0.375    0.063 <repo>/torchspin/_linalg.py:50(eigh)
+     11/6    0.000    0.000    0.337    0.056 <repo>/torchspin/_linalg.py:34(_pooled)
+     10/5    0.052    0.005    0.277    0.055 <repo>/torchspin/resfields_batch.py:119(_diag_at)
+    136/6    0.001    0.000    0.177    0.030 <env>/lib/python3.12/concurrent/futures/thread.py:54(run)
+   145/16    0.327    0.002    0.170    0.011 {built-in method torch._C._linalg.linalg_eigh}
+      384    0.002    0.000    0.086    0.000 <repo>/torchspin/pepper.py:404(_interp_slot)
+      192    0.004    0.000    0.068    0.000 <repo>/torchspin/pepper.py:46(_interp_sph)
+      192    0.004    0.000    0.052    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:790(__init__)
+       40    0.039    0.001    0.039    0.001 {built-in method torch.cat}
+      384    0.005    0.000    0.025    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:18(prepare_input)
+      192    0.002    0.000    0.024    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:149(__init__)
+        1    0.000    0.000    0.019    0.019 <repo>/torchspin/ham.py:39(ham)
+      192    0.011    0.000    0.017    0.000 <repo>/torchspin/pepper.py:841(_projectzones)
+        1    0.004    0.004    0.016    0.016 <repo>/torchspin/pepper.py:543(_preselect_pairs)
+      192    0.008    0.000    0.015    0.000 <repo>/torchspin/pepper.py:383(_interp_l3)
+        1    0.004    0.004    0.013    0.013 <repo>/torchspin/ham_hf.py:24(ham_hf)
+
+
+
+=== pepper_mn_S52_matrix ===
+         521334 function calls (520865 primitive calls) in 1.538 seconds
+
+   Ordered by: cumulative time
+   List reduced from 429 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    1.538    1.538 <repo>/benchmarks/workloads/workloads.py:26(<lambda>)
+        1    0.000    0.000    1.538    1.538 <repo>/torchspin/pepper.py:941(pepper)
+        1    0.003    0.003    1.538    1.538 <repo>/torchspin/pepper.py:1026(_pepper_single)
+      132    0.000    0.000    0.711    0.005 <env>/lib/python3.12/concurrent/futures/_base.py:612(result_iterator)
+        1    0.029    0.029    0.670    0.670 <repo>/torchspin/pepper.py:1204(_resonances)
+      292    0.002    0.000    0.661    0.002 <repo>/torchspin/pepper.py:404(_interp_slot)
+      292    0.041    0.000    0.657    0.002 <repo>/torchspin/pepper.py:313(_interp_grid)
+        1    0.385    0.385    0.641    0.641 <repo>/torchspin/resfields_batch.py:39(resfields_batch)
+      128    0.000    0.000    0.630    0.005 <env>/lib/python3.12/concurrent/futures/_base.py:314(_result_or_cancel)
+      128    0.000    0.000    0.375    0.003 <env>/lib/python3.12/concurrent/futures/_base.py:428(result)
+       20    0.000    0.000    0.371    0.019 <env>/lib/python3.12/threading.py:323(wait)
+     4964    0.040    0.000    0.320    0.000 <repo>/torchspin/pepper.py:335(_row)
+      295    0.005    0.000    0.271    0.001 <repo>/torchspin/sphgrid.py:43(sphgrid)
+      867    0.018    0.000    0.220    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:790(__init__)
+        4    0.000    0.000    0.150    0.038 <repo>/torchspin/_linalg.py:50(eigh)
+      146    0.034    0.000    0.139    0.001 <repo>/torchspin/pepper.py:888(_projecttriangles)
+        4    0.000    0.000    0.109    0.027 <repo>/torchspin/_linalg.py:34(_pooled)
+     1734    0.022    0.000    0.106    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:18(prepare_input)
+      867    0.010    0.000    0.103    0.000 <env>/lib/python3.12/site-packages/scipy/interpolate/_cubic.py:149(__init__)
+      296    0.098    0.000    0.100    0.000 <repo>/torchspin/sphgrid.py:100(_sphgrid_core)
+      934    0.090    0.000    0.090    0.000 {built-in method torch.tensor}
+      292    0.055    0.000    0.076    0.000 <repo>/torchspin/pepper.py:771(_ramp_bins)
+        1    0.052    0.052    0.052    0.052 {built-in method torch._C._linalg.linalg_eigvals}
+     4964    0.030    0.000    0.044    0.000 <env>/lib/python3.12/site-packages/numpy/_core/function_base.py:27(linspace)
+       21    0.043    0.002    0.043    0.002 {built-in method torch.cat}
+
+
+
+=== cardamom_diffusion_200x1000 ===
+         1199975 function calls in 24.047 seconds
+
+   Ordered by: cumulative time
+   List reduced from 195 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   24.047   24.047 <repo>/benchmarks/workloads/workloads.py:79(<lambda>)
+        1    0.120    0.120   24.047   24.047 <repo>/torchspin/cardamom.py:91(cardamom)
+      100    4.631    0.046   17.549    0.175 <repo>/torchspin/_cardamom_propagatedm.py:25(propagate_fast)
+      200    0.002    0.000    9.567    0.048 <repo>/torchspin/_cardamom_propagatedm.py:198(_rotate_tensor_lab)
+      200    0.005    0.000    9.565    0.048 <env>/lib/python3.12/site-packages/numpy/_core/einsumfunc.py:1244(einsum)
+      400    7.102    0.018    9.534    0.024 <env>/lib/python3.12/site-packages/numpy/_core/einsumfunc.py:1146(bmm_einsum)
+      100    0.002    0.000    5.915    0.059 <repo>/torchspin/cardamom.py:315(_generate_local_trajectory)
+      100    0.038    0.000    5.913    0.059 <repo>/torchspin/stochtraj_diffusion.py:53(stochtraj_diffusion)
+      100    4.951    0.050    5.383    0.054 <repo>/torchspin/stochtraj_diffusion.py:184(_propagate)
+     1503    0.002    0.000    2.430    0.002 <env>/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:48(_wrapfunc)
+     1200    0.001    0.000    2.430    0.002 <env>/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:207(reshape)
+     1707    2.427    0.001    2.427    0.001 {method 'reshape' of 'numpy.ndarray' objects}
+      100    2.084    0.021    2.169    0.022 <repo>/torchspin/_cardamom_propagatedm.py:135(_build_hf_propagator)
+      200    0.529    0.003    0.806    0.004 <repo>/torchspin/stochtraj_diffusion.py:468(_quat_to_rotmat_batch)
+     1001    0.548    0.001    0.548    0.001 {built-in method numpy.zeros}
+   100104    0.491    0.000    0.491    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+      100    0.367    0.004    0.367    0.004 {built-in method numpy.ascontiguousarray}
+   100001    0.068    0.000    0.352    0.000 <env>/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:2304(sum)
+      103    0.001    0.000    0.331    0.003 <env>/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3699(mean)
+      103    0.004    0.000    0.330    0.003 <env>/lib/python3.12/site-packages/numpy/_core/_methods.py:115(_mean)
+   100001    0.093    0.000    0.271    0.000 <env>/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:66(_wrapreduction)
+      200    0.003    0.000    0.255    0.001 <repo>/torchspin/_cardamom_utils.py:14(tensor_traj)
+      400    0.239    0.001    0.239    0.001 {built-in method torch.bmm}
+      300    0.072    0.000    0.072    0.000 {built-in method torch.tensor}
+   399705    0.067    0.000    0.067    0.000 {method 'ravel' of 'numpy.ndarray' objects}
+
+
+
+=== chili_nitroxide_2nuc ===
+         402490 function calls (402102 primitive calls) in 0.687 seconds
+
+   Ordered by: cumulative time
+   List reduced from 549 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.687    0.687 <repo>/benchmarks/workloads/workloads.py:60(<lambda>)
+        1    0.000    0.000    0.687    0.687 <repo>/torchspin/chili.py:524(chili)
+        1    0.002    0.002    0.685    0.685 <repo>/torchspin/chili_sle.py:910(chili_sle)
+        1    0.069    0.069    0.424    0.424 <repo>/torchspin/chili_sle.py:868(chili_lanczos)
+      274    0.000    0.000    0.359    0.001 <env>/lib/python3.12/site-packages/scipy/sparse/_base.py:919(__matmul__)
+      274    0.000    0.000    0.358    0.001 <env>/lib/python3.12/site-packages/scipy/sparse/_base.py:788(_matmul_dispatch)
+      210    0.001    0.000    0.353    0.002 <env>/lib/python3.12/site-packages/scipy/sparse/_compressed.py:387(_matmul_vector)
+      210    0.334    0.002    0.334    0.002 {built-in method scipy.sparse._sparsetools.csr_matvec}
+        1    0.006    0.006    0.098    0.098 <repo>/torchspin/chili_sle.py:147(jjjsymbol)
+     6342    0.031    0.000    0.090    0.000 <repo>/torchspin/angmom.py:66(wigner3j)
+        1    0.001    0.001    0.079    0.079 <repo>/torchspin/chili_sle.py:318(rbos)
+      117    0.003    0.000    0.056    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_construct.py:728(kron)
+       52    0.000    0.000    0.056    0.001 <repo>/torchspin/chili_sle.py:362(<lambda>)
+       52    0.000    0.000    0.055    0.001 <repo>/torchspin/chili_sle.py:311(hil2liouv)
+      339    0.002    0.000    0.050    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_compressed.py:1189(_binopt)
+1485/1484    0.006    0.000    0.049    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_compressed.py:30(__init__)
+      232    0.000    0.000    0.046    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_base.py:740(__add__)
+    46252    0.046    0.000    0.046    0.000 <repo>/torchspin/angmom.py:49(_logfact)
+        1    0.000    0.000    0.045    0.045 <repo>/torchspin/chili_sle.py:520(liouvhamiltonian)
+      232    0.000    0.000    0.042    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_compressed.py:257(_add_sparse)
+  611/376    0.003    0.000    0.040    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_coo.py:32(__init__)
+     2528    0.004    0.000    0.028    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_base.py:1525(_get_index_dtype)
+        1    0.000    0.000    0.024    0.024 <repo>/torchspin/chili_sle.py:501(_kron_blocks)
+     2626    0.016    0.000    0.024    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_sputils.py:264(get_index_dtype)
+      611    0.003    0.000    0.021    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_coo.py:204(_check)
+
+
+
+=== chili_powder_potential ===
+         3443122 function calls (3438530 primitive calls) in 4.011 seconds
+
+   Ordered by: cumulative time
+   List reduced from 396 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    4.011    4.011 <repo>/benchmarks/workloads/workloads.py:67(<lambda>)
+        1    0.000    0.000    4.011    4.011 <repo>/torchspin/chili.py:524(chili)
+        1    0.020    0.020    4.011    4.011 <repo>/torchspin/chili_sle.py:910(chili_sle)
+       19    0.120    0.006    1.879    0.099 <repo>/torchspin/chili_sle.py:868(chili_lanczos)
+     2622    0.002    0.000    1.760    0.001 <env>/lib/python3.12/site-packages/scipy/sparse/_base.py:919(__matmul__)
+     2622    0.002    0.000    1.750    0.001 <env>/lib/python3.12/site-packages/scipy/sparse/_base.py:788(_matmul_dispatch)
+     2590    0.006    0.000    1.744    0.001 <env>/lib/python3.12/site-packages/scipy/sparse/_compressed.py:387(_matmul_vector)
+     2590    1.730    0.001    1.730    0.001 {built-in method scipy.sparse._sparsetools.csr_matvec}
+       19    0.008    0.000    0.992    0.052 <repo>/torchspin/chili_sle.py:318(rbos)
+     2277    0.046    0.000    0.769    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_construct.py:728(kron)
+      988    0.002    0.000    0.742    0.001 <repo>/torchspin/chili_sle.py:362(<lambda>)
+      988    0.004    0.000    0.728    0.001 <repo>/torchspin/chili_sle.py:311(hil2liouv)
+       19    0.006    0.000    0.585    0.031 <repo>/torchspin/chili_sle.py:520(liouvhamiltonian)
+11788/7215    0.046    0.000    0.542    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_coo.py:32(__init__)
+     3867    0.022    0.000    0.495    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_compressed.py:1189(_binopt)
+16898/16879    0.056    0.000    0.470    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_compressed.py:30(__init__)
+     2846    0.003    0.000    0.469    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_base.py:740(__add__)
+     2846    0.002    0.000    0.428    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_compressed.py:257(_add_sparse)
+       19    0.008    0.000    0.369    0.019 <repo>/torchspin/chili_sle.py:501(_kron_blocks)
+    35886    0.040    0.000    0.300    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_base.py:1525(_get_index_dtype)
+    11788    0.049    0.000    0.275    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_coo.py:204(_check)
+    38000    0.176    0.000    0.254    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_sputils.py:264(get_index_dtype)
+     2315    0.006    0.000    0.241    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_coo.py:349(tocsr)
+     4573    0.016    0.000    0.240    0.000 <env>/lib/python3.12/site-packages/scipy/sparse/_compressed.py:986(tocoo)
+     8457    0.074    0.000    0.226    0.000 <repo>/torchspin/angmom.py:66(wigner3j)
+
+

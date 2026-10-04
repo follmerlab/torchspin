@@ -1,0 +1,10 @@
+pepper_cu_2n_matrix                   2.05 s
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+pepper_mn_S52_matrix                  2.41 s
+pepper_perturb_dense_grid             0.19 s
+pepper_strain_summation               1.01 s
+pepper_fit_loop_20                    2.85 s
+chili_nitroxide_2nuc                  1.27 s
+chili_powder_potential                5.07 s
+saffron_hyscore_512                   1.14 s
+cardamom_diffusion_200x1000          20.83 s

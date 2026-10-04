@@ -1,0 +1,69 @@
+torch 2.5.1+cu121 cuda 12.1 NVIDIA GeForce RTX 4090
+........s                                                                [100%]
+8 passed, 1 skipped in 1.79s
+pepper_cu_2n_matrix                  15.62 s
+pepper_mn_S52_matrix                 16.37 s
+pepper_perturb_dense_grid             0.50 s
+pepper_strain_summation               7.89 s
+pepper_fit_loop_20                   12.56 s
+chili_nitroxide_2nuc                  0.77 s
+chili_powder_potential                9.16 s
+saffron_hyscore_512                   4.78 s
+cardamom_diffusion_200x1000         175.82 s
+pepper_cu_2n_matrix                  10.76 s
+pepper_mn_S52_matrix                 16.89 s
+pepper_perturb_dense_grid             0.51 s
+pepper_strain_summation               3.19 s
+pepper_fit_loop_20                   13.30 s
+chili_nitroxide_2nuc                  0.76 s
+chili_powder_potential                9.18 s
+saffron_hyscore_512                   1.11 s
+cardamom_diffusion_200x1000         174.09 s
+pepper_cu_2n_matrix                  11.33 s
+pepper_mn_S52_matrix                 18.42 s
+pepper_perturb_dense_grid             0.53 s
+pepper_strain_summation               3.44 s
+pepper_fit_loop_20                   14.13 s
+chili_nitroxide_2nuc                  0.76 s
+chili_powder_potential                9.25 s
+saffron_hyscore_512                   0.76 s
+cardamom_diffusion_200x1000         175.78 s
+pepper_cu_2n_matrix                  51.68 s
+pepper_mn_S52_matrix                133.21 s
+pepper_perturb_dense_grid             0.59 s
+pepper_strain_summation               7.16 s
+pepper_fit_loop_20                   19.30 s
+chili_nitroxide_2nuc                  0.78 s
+chili_powder_potential                9.26 s
+saffron_hyscore_512                   0.73 s
+cardamom_diffusion_200x1000         174.84 s
+pepper_fit_loop_20 with 4 processes x 1 threads: 5.59 s
+pepper_fit_loop_20 with 16 processes x 1 threads: 3.55 s
+pepper_fit_loop_20 with 64 processes x 1 threads: 4.80 s
+pepper_cu_2n_matrix                  11.42 s
+pepper_mn_S52_matrix                 19.45 s
+cardamom_diffusion_200x1000         174.76 s
+chili_nitroxide_2nuc                  1.51 s
+pepper_cu_2n_matrix                  51.82 s
+pepper_mn_S52_matrix                134.75 s
+pepper_strain_summation               7.74 s
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+{Error using chili (line 495)
+Sys.Potential is given. Please provide basis set information (Opt.LLMK etc).
+
+Error in compisoloop (line 84)
+    [x,spec_,info_] = simfcn(Sys_,Exp,Opt);
+                      ^^^^^^^^^^^^^^^^^^^^
+Error in chili (line 130)
+  [xAxis,spec,info] = compisoloop(@chili,Sys,Exp,Opt,SweepAutoRange,thirdOutput,separateComponentSpectra);
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error in matlab_workloads>@()chili(Sys,Exp,Opt0) (line 36)
+res.chili_powder_potential = tm(@() chili(Sys,Exp,Opt0));
+                                    ^^^^^^^^^^^^^^^^^^^
+Error in matlab_workloads>tm (line 5)
+function t = tm(f), tic; f(); t = toc; end
+                         ^^^
+Error in matlab_workloads (line 36)
+res.chili_powder_potential = tm(@() chili(Sys,Exp,Opt0));
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+} 

@@ -1,0 +1,108 @@
+[2026-09-04 06:09:11] stage env -> benchmarks/results/workstation_20260904_verified/env.txt
+[2026-09-04 06:09:18] stage gpu-consistency tests
+[2026-09-04 06:09:21] stage cpu threads=1
+pepper_cu_2n_matrix                  5.228 s  (median of 5, IQR 5.219-5.258, mode=cpu)
+pepper_mn_S52_matrix                 4.961 s  (median of 5, IQR 4.901-5.015, mode=cpu)
+pepper_perturb_dense_grid            0.062 s  (median of 5, IQR 0.061-0.079, mode=cpu)
+pepper_strain_summation              3.397 s  (median of 5, IQR 3.392-3.412, mode=cpu)
+pepper_fit_loop_20                   1.686 s  (median of 5, IQR 1.651-1.696, mode=cpu)
+chili_nitroxide_2nuc                 0.158 s  (median of 5, IQR 0.157-0.173, mode=cpu)
+chili_powder_potential               3.155 s  (median of 5, IQR 3.099-3.232, mode=cpu)
+saffron_hyscore_512                  4.008 s  (median of 5, IQR 3.990-4.173, mode=cpu)
+cardamom_diffusion_200x1000         19.661 s  (median of 5, IQR 19.488-19.940, mode=cpu)
+[2026-09-04 06:13:38] stage cpu threads=8
+pepper_cu_2n_matrix                  1.173 s  (median of 5, IQR 1.141-1.283, mode=cpu)
+pepper_mn_S52_matrix                 1.425 s  (median of 5, IQR 1.404-1.516, mode=cpu)
+pepper_perturb_dense_grid            0.070 s  (median of 5, IQR 0.070-0.089, mode=cpu)
+pepper_strain_summation              1.052 s  (median of 5, IQR 0.988-1.187, mode=cpu)
+pepper_fit_loop_20                   1.351 s  (median of 5, IQR 1.305-1.480, mode=cpu)
+chili_nitroxide_2nuc                 0.158 s  (median of 5, IQR 0.158-0.171, mode=cpu)
+chili_powder_potential               3.161 s  (median of 5, IQR 3.107-3.327, mode=cpu)
+saffron_hyscore_512                  1.089 s  (median of 5, IQR 1.074-1.145, mode=cpu)
+cardamom_diffusion_200x1000         11.135 s  (median of 5, IQR 11.023-11.190, mode=cpu)
+[2026-09-04 06:15:44] stage cpu threads=32
+pepper_cu_2n_matrix                  0.822 s  (median of 5, IQR 0.799-0.886, mode=cpu)
+pepper_mn_S52_matrix                 1.089 s  (median of 5, IQR 1.067-1.109, mode=cpu)
+pepper_perturb_dense_grid            0.075 s  (median of 5, IQR 0.073-0.093, mode=cpu)
+pepper_strain_summation              1.159 s  (median of 5, IQR 1.134-1.223, mode=cpu)
+pepper_fit_loop_20                   5.254 s  (median of 5, IQR 4.953-5.396, mode=cpu)
+chili_nitroxide_2nuc                 0.160 s  (median of 5, IQR 0.159-0.171, mode=cpu)
+chili_powder_potential               3.133 s  (median of 5, IQR 3.111-3.161, mode=cpu)
+saffron_hyscore_512                  0.790 s  (median of 5, IQR 0.788-0.802, mode=cpu)
+cardamom_diffusion_200x1000         10.251 s  (median of 5, IQR 9.873-10.313, mode=cpu)
+[2026-09-04 06:18:03] stage matlab (warmup 1, nrep 5)
+pepper_cu_2n_matrix                   0.30 s  (median of 5, IQR 0.23-0.37)
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+pepper_mn_S52_matrix                  3.09 s  (median of 5, IQR 3.05-3.13)
+pepper_perturb_dense_grid             0.08 s  (median of 5, IQR 0.08-0.08)
+pepper_strain_summation               0.81 s  (median of 5, IQR 0.81-0.82)
+pepper_fit_loop_20                    2.53 s  (median of 5, IQR 2.52-2.53)
+chili_nitroxide_2nuc                  1.15 s  (median of 5, IQR 1.14-1.16)
+chili_powder_potential                4.56 s  (median of 5, IQR 4.56-4.58)
+saffron_hyscore_512                   0.66 s  (median of 5, IQR 0.53-0.66)
+cardamom_diffusion_200x1000          19.85 s  (median of 5, IQR 19.83-20.06)
+[2026-09-04 06:21:29] campaign stages [env cpu matlab] done: benchmarks/results/workstation_20260904_verified
+[2026-09-04 07:11:44] stage cuda (GPU 0, host threads 32)
+pepper_cu_2n_matrix                  0.674 s  (median of 5, IQR 0.658-0.680, mode=hybrid)
+pepper_mn_S52_matrix                 0.954 s  (median of 5, IQR 0.950-0.967, mode=hybrid)
+pepper_perturb_dense_grid            0.162 s  (median of 5, IQR 0.161-0.165, mode=hybrid)
+pepper_strain_summation              1.232 s  (median of 5, IQR 1.205-1.249, mode=hybrid)
+pepper_fit_loop_20                   1.769 s  (median of 5, IQR 1.766-1.770, mode=hybrid)
+chili_nitroxide_2nuc             unsupported on cuda (CPU-only implementation) - skipped
+chili_powder_potential           unsupported on cuda (CPU-only implementation) - skipped
+saffron_hyscore_512                  0.228 s  (median of 5, IQR 0.228-0.229, mode=hybrid)
+cardamom_diffusion_200x1000      unsupported on cuda (CPU-only implementation) - skipped
+[2026-09-04 07:13:26] campaign stages [gpu] done: benchmarks/results/workstation_20260904_verified
+[2026-09-04 07:14:32] stage gpu-consistency tests
+[2026-09-04 07:14:36] stage cpu threads=1
+pepper_cu_2n_matrix                  5.260 s  (median of 5, IQR 5.253-5.289, mode=cpu)
+pepper_mn_S52_matrix                 4.975 s  (median of 5, IQR 4.952-5.000, mode=cpu)
+pepper_perturb_dense_grid            0.062 s  (median of 5, IQR 0.061-0.080, mode=cpu)
+pepper_strain_summation              3.406 s  (median of 5, IQR 3.402-3.410, mode=cpu)
+pepper_fit_loop_20                   1.650 s  (median of 5, IQR 1.642-1.666, mode=cpu)
+chili_nitroxide_2nuc                 0.157 s  (median of 5, IQR 0.157-0.158, mode=cpu)
+chili_powder_potential               3.079 s  (median of 5, IQR 3.070-3.083, mode=cpu)
+saffron_hyscore_512                  4.001 s  (median of 5, IQR 3.990-4.031, mode=cpu)
+cardamom_diffusion_200x1000         19.275 s  (median of 5, IQR 19.210-19.395, mode=cpu)
+[2026-09-04 07:18:50] stage cpu threads=8
+pepper_cu_2n_matrix                  1.142 s  (median of 5, IQR 1.137-1.148, mode=cpu)
+pepper_mn_S52_matrix                 1.405 s  (median of 5, IQR 1.397-1.414, mode=cpu)
+pepper_perturb_dense_grid            0.068 s  (median of 5, IQR 0.066-0.087, mode=cpu)
+pepper_strain_summation              0.994 s  (median of 5, IQR 0.986-1.015, mode=cpu)
+pepper_fit_loop_20                   1.293 s  (median of 5, IQR 1.287-1.317, mode=cpu)
+chili_nitroxide_2nuc                 0.158 s  (median of 5, IQR 0.158-0.166, mode=cpu)
+chili_powder_potential               3.082 s  (median of 5, IQR 3.077-3.090, mode=cpu)
+saffron_hyscore_512                  1.056 s  (median of 5, IQR 1.050-1.061, mode=cpu)
+cardamom_diffusion_200x1000          9.971 s  (median of 5, IQR 9.906-10.063, mode=cpu)
+[2026-09-04 07:20:47] stage cpu threads=32
+pepper_cu_2n_matrix                  0.847 s  (median of 5, IQR 0.814-0.875, mode=cpu)
+pepper_mn_S52_matrix                 1.073 s  (median of 5, IQR 1.061-1.083, mode=cpu)
+pepper_perturb_dense_grid            0.076 s  (median of 5, IQR 0.075-0.096, mode=cpu)
+pepper_strain_summation              1.169 s  (median of 5, IQR 1.128-1.198, mode=cpu)
+pepper_fit_loop_20                   5.277 s  (median of 5, IQR 5.146-5.464, mode=cpu)
+chili_nitroxide_2nuc                 0.157 s  (median of 5, IQR 0.157-0.166, mode=cpu)
+chili_powder_potential               3.094 s  (median of 5, IQR 3.093-3.103, mode=cpu)
+saffron_hyscore_512                  0.752 s  (median of 5, IQR 0.751-0.753, mode=cpu)
+cardamom_diffusion_200x1000         10.394 s  (median of 5, IQR 9.931-10.505, mode=cpu)
+[2026-09-04 07:23:05] stage matlab (warmup 1, nrep 5)
+pepper_cu_2n_matrix                   0.29 s  (median of 5, IQR 0.23-0.35)
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+** Spectrum exceeds sweep range. Artifacts at lower limit possible.
+pepper_mn_S52_matrix                  3.03 s  (median of 5, IQR 3.03-3.14)
+pepper_perturb_dense_grid             0.08 s  (median of 5, IQR 0.07-0.08)
+pepper_strain_summation               0.81 s  (median of 5, IQR 0.81-0.82)
+pepper_fit_loop_20                    2.50 s  (median of 5, IQR 2.50-2.50)
+chili_nitroxide_2nuc                  1.15 s  (median of 5, IQR 1.14-1.16)
+chili_powder_potential                4.53 s  (median of 5, IQR 4.53-4.53)
+saffron_hyscore_512                   0.66 s  (median of 5, IQR 0.54-0.67)
+cardamom_diffusion_200x1000          20.37 s  (median of 5, IQR 20.35-20.39)
+[2026-09-04 07:26:34] campaign stages [cpu matlab] done: benchmarks/results/workstation_20260904_verified

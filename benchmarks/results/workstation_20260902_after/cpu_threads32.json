@@ -1,0 +1,21 @@
+{
+  "meta": {
+    "host": "workstation",
+    "python": "3.12.13",
+    "torch": "2.5.1+cu121",
+    "threads": 32,
+    "device": "cpu",
+    "gpu": null
+  },
+  "seconds": {
+    "pepper_cu_2n_matrix": 1.0533424539898988,
+    "pepper_mn_S52_matrix": 1.3762142780033173,
+    "pepper_perturb_dense_grid": 0.07554468400485348,
+    "pepper_strain_summation": 3.009641519005527,
+    "pepper_fit_loop_20": 2.636961541007622,
+    "chili_nitroxide_2nuc": 0.4209258050104836,
+    "chili_powder_potential": 3.195585036999546,
+    "saffron_hyscore_512": 0.7972640860098181,
+    "cardamom_diffusion_200x1000": 23.565348012998584
+  }
+}

@@ -1,0 +1,56 @@
+name: docs
+
+# Renders the tutorial notebooks (without executing them — they are committed executed)
+# and the docs index to a static site.  Deploys to GitHub Pages when Pages is enabled
+# for the repository; otherwise the site is kept as a workflow artifact.
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'docs/**', 'examples/notebooks/**', 'README.md', 'KNOWN_LIMITATIONS.md', 'CHANGELOG.md' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Render notebooks and index
+        run: |
+          pip install nbconvert markdown
+          mkdir -p site/notebooks
+          for nb in examples/notebooks/*.ipynb; do
+            jupyter nbconvert --to html --output-dir site/notebooks "$nb"
+          done
+          python - <<'PY'
+          import markdown, pathlib, re
+          src = pathlib.Path('docs/index.md').read_text()
+          src = re.sub(r'\(\.\./examples/notebooks/(\S+)\.ipynb\)', r'(notebooks/\1.html)', src)
+          src = re.sub(r'\(\.\./(README|KNOWN_LIMITATIONS|CHANGELOG)\.md\)', r'(https://github.com/follmerlab/torchspin/blob/main/\1.md)', src)
+          src = src.replace('(../benchmarks/results/BENCHMARK_REPORT.md)', '(https://github.com/follmerlab/torchspin/blob/main/benchmarks/results/BENCHMARK_REPORT.md)')
+          html = markdown.markdown(src, extensions=['tables'])
+          pathlib.Path('site/index.html').write_text('<!doctype html><meta charset="utf-8"><title>torchspin docs</title>'
+              '<style>body{max-width:900px;margin:2em auto;font-family:system-ui;line-height:1.5}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 8px}</style>' + html)
+          PY
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    continue-on-error: true   # Pages may not be enabled on a private repository
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

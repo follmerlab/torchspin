@@ -1,0 +1,43 @@
+torch 2.5.1+cu121 cuda 12.1 NVIDIA GeForce RTX 4090
+........s                                                                [100%]
+8 passed, 1 skipped in 0.94s
+pepper_cu_2n_matrix                   5.80 s
+pepper_mn_S52_matrix                  5.46 s
+pepper_perturb_dense_grid             0.07 s
+pepper_strain_summation               3.78 s
+pepper_fit_loop_20                    1.82 s
+chili_nitroxide_2nuc                  0.42 s
+chili_powder_potential                3.36 s
+saffron_hyscore_512                   4.25 s
+cardamom_diffusion_200x1000          20.95 s
+pepper_cu_2n_matrix                   1.21 s
+pepper_mn_S52_matrix                  1.49 s
+pepper_perturb_dense_grid             0.07 s
+pepper_strain_summation               1.00 s
+pepper_fit_loop_20                    1.86 s
+chili_nitroxide_2nuc                  0.63 s
+chili_powder_potential                3.43 s
+saffron_hyscore_512                   1.12 s
+cardamom_diffusion_200x1000          11.43 s
+pepper_cu_2n_matrix                   1.10 s
+pepper_mn_S52_matrix                  1.10 s
+pepper_perturb_dense_grid             0.08 s
+pepper_strain_summation               1.29 s
+pepper_fit_loop_20                    2.18 s
+chili_nitroxide_2nuc                  0.63 s
+chili_powder_potential                3.37 s
+saffron_hyscore_512                   0.81 s
+cardamom_diffusion_200x1000           9.82 s
+pepper_cu_2n_matrix                   0.83 s
+pepper_mn_S52_matrix                  1.01 s
+pepper_perturb_dense_grid             0.16 s
+pepper_strain_summation               1.36 s
+pepper_fit_loop_20                    2.04 s
+chili_nitroxide_2nuc                  0.44 s
+chili_powder_potential                3.34 s
+saffron_hyscore_512                   0.75 s
+cardamom_diffusion_200x1000          11.14 s
+pepper_fit_loop_20 with 4 processes x 1 threads: 3.93 s
+pepper_fit_loop_20 with 16 processes x 1 threads: 4.46 s
+pepper_fit_loop_20 with 64 processes x 1 threads: 6.26 s
+campaign done: benchmarks/results/workstation_20260902_after2
