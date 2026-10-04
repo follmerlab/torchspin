@@ -228,7 +228,7 @@ theory, automatic sweep ranging in pepper (garlic auto-ranges).
 
 ---
 
-## eprload — EasySpin oracle and native units (behaviour change, 2026-09-01)
+## eprload — EasySpin oracle and native units (behavior change, 2026-09-01)
 
 `eprload` is validated against EasySpin's output for every readable file in
 `tests/eprfiles` (75 files). To achieve parity the Bruker readers now return
@@ -338,7 +338,7 @@ The documented xfails are:
 3. `test_cardamom.py::test_fast_motion` — stochastic fast-motion narrowing
    needs more trajectories than the test budget
 
-The 4 skips are environment-dependent, not unimplemented behaviour:
+The 4 skips are environment-dependent, not unimplemented behavior:
 
 * 3 in `test_fitgui.py` — `ipywidgets` is absent (it ships in the `gui`
   extra, not `test`); install `torchspin[gui]` to run them.
