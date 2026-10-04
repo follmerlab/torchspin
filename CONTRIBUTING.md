@@ -24,8 +24,8 @@ the benchmark figures.
 # .mat files are in the repository, so no MATLAB installation is needed)
 pytest -q
 
-# What CI runs: skip slow stochastic tests and the MATLAB-data suite
-pytest -q -m "not slow and not requires_matlab_data"
+# Fast pass: skip the 5 slow stochastic tests and the cross-validation suite
+pytest -q -m "not slow" -k "not matlab_validation"
 
 # Only the GPU consistency suite (workstations with CUDA)
 pytest torchspin/tests/test_gpu_consistency.py -v
@@ -36,12 +36,16 @@ pytest -q -k matlab_validation
 
 A bare `pytest` picks up `testpaths = ["torchspin/tests"]` from
 `pyproject.toml`.  The top-level `tests/` directory holds reference data and
-the MATLAB scripts that generated it, not test code.
+the MATLAB scripts that generated it, not test code.  The cross-validation
+tests are selected by module name (`-k matlab_validation`); the
+`requires_matlab_data` marker is registered but not currently applied to any
+test, so filtering on it deselects nothing.
 
-The CI matrix (`.github/workflows/python-tests.yml`) covers Linux, macOS and
-Windows on Python 3.10-3.12, but deselects `requires_matlab_data`, so it does
-**not** exercise the cross-validation suite.  Run the full `pytest` locally
-before opening a PR that touches a simulator.
+CI (`.github/workflows/python-tests.yml`) runs a fast cross-platform matrix
+(Linux/macOS/Windows x Python 3.10-3.12, cross-validation deselected) plus one
+`full-suite` job on Linux/3.12 that runs everything with
+`TORCHSPIN_STRICT_REFS=1`, so a missing reference file fails the build instead
+of silently skipping.
 
 The full passing baseline is **2659 passed, 0 failed, 4 skipped, 3
 documented xfails** (see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)).

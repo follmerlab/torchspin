@@ -64,6 +64,6 @@ torchspin = ["data/*.txt", "py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["torchspin/tests"]
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"' or omit --run-slow flag)",
-    "requires_matlab_data: tests requiring MATLAB reference .mat files (repo checkout only)",
+    "slow: long-running stochastic tests; deselect with -m \"not slow\"",
+    "requires_matlab_data: reserved; not currently applied to any test. The MATLAB\n    reference .mat files ship with the repository, so the cross-validation suite\n    runs by default -- select it by name with -k matlab_validation.",
 ]
