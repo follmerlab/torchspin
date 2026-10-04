@@ -6,6 +6,11 @@ torchspin reimplements the core physics engine of EasySpin (MATLAB) in
 Python/PyTorch, with end-to-end autograd support, optional GPU execution,
 and a Python-native API.
 
+TorchSpin is a reimplementation, not a drop-in replacement for every EasySpin
+feature. See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) and
+[benchmarks/results/BENCHMARK_REPORT.md](benchmarks/results/BENCHMARK_REPORT.md)
+before using it for publication-critical calculations.
+
 - **2659 passing tests, 0 failures**, including 30 MATLAB-validation modules that compare
   against stored EasySpin outputs (cosine ≥ 0.999 for `pepper`, `garlic`,
   `chili`, `salt`/`endorfrq`, `saffron`, `curry`, `spidyan`; fitted `esfit`
@@ -26,11 +31,6 @@ and a Python-native API.
   polish) methods; population methods run in a process pool
   (`FitOptions(n_workers='auto')`; `pip install cloudpickle` for models defined in notebooks);
   `progress='text'` reports RMSD/evaluations/ETA live and a kernel interrupt returns the best fit so far
-
-TorchSpin is a reimplementation, not a drop-in replacement for every EasySpin
-feature. See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) and
-[benchmarks/results/BENCHMARK_REPORT.md](benchmarks/results/BENCHMARK_REPORT.md)
-before using it for publication-critical calculations.
 
 ---
 
