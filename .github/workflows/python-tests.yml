@@ -60,9 +60,15 @@ jobs:
     # tests the matrix deselects. This is the job that would have caught the
     # NumPy 2.0 and case-sensitive-filesystem breakage fixed in v0.3.0, so it
     # must stay in the required set even though it is the slow one.
+    #
+    # Measured at ~25 min on four pinned cores (22:06 for the fast markers plus
+    # 2:29 for the 5 slow stochastic tests), against 25:12 for the same suite on
+    # 64 cores -- it is single-threaded-bound, so runner core count barely moves
+    # it. The timeout is sized to fail fast on a hang, not to accommodate a slow
+    # runner.
     name: Full suite (Linux, 3.12, incl. MATLAB cross-validation)
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
