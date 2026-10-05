@@ -21,7 +21,13 @@ def test_curry_gradients_vs_finite_differences():
     assert chi.requires_grad
     J = torch.stack([torch.cat([v.reshape(-1) for v in torch.autograd.grad(chi, [ee, g], grad_outputs=torch.eye(chi.numel())[i], retain_graph=True)])
                      for i in range(chi.numel())])
-    h = 10.0
+    # chi is itself a field finite difference (delta_B=0.01), so the reference
+    # below is a difference of differences and its accuracy is dominated by
+    # round-off at small h. Measured relative error vs the autograd Jacobian:
+    # h=10 -> 4.4e-6, h=100 -> 9.9e-7, h=200 -> 5.4e-7, h=1000 -> 9.9e-6.
+    # h=10 left only a 2.3x margin and crossed 1e-5 on Windows; h=200 sits at
+    # the round-off/truncation optimum and leaves ~19x.
+    h = 200.0
     fd = (_run([-2 * 5 * 30e3 + h], [2.0023] * 3) - _run([-2 * 5 * 30e3 - h], [2.0023] * 3)) / (2 * h)
     assert float((J[:, 0] - fd).norm() / fd.norm()) < 1e-5
     h = 1e-3   # chi comes from a field finite difference; smaller steps amplify its round-off

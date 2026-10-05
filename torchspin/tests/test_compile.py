@@ -6,6 +6,7 @@ Verifies that:
 3. The public API (set_compile_enabled, is_compile_available) works.
 4. Decorated functions expose _original for introspection.
 """
+import functools
 import os
 
 import pytest
@@ -17,6 +18,41 @@ from torchspin._compile import (
     is_compile_available,
     _resolve_flag,
 )
+
+
+@functools.lru_cache(maxsize=1)
+def _compile_backend_works() -> bool:
+    """True only if torch.compile can actually build something.
+
+    ``is_compile_available()`` just checks ``hasattr(torch, "compile")``, which
+    is true on any PyTorch >= 2.0 even when the inductor backend has no usable
+    C++ toolchain -- the common case on Windows runners without MSVC, where
+    compiling raises ``InductorError: Compiler: cl is not found``.
+    """
+    if not is_compile_available():
+        return False
+    try:
+        torch.compile(lambda t: t + 1)(torch.zeros(1))
+    except Exception:
+        return False
+    return True
+
+
+@pytest.fixture(autouse=True)
+def _restore_compile_flag():
+    """Always restore the module-global compile flag, including on failure.
+
+    These tests flip a process-wide switch. If a test raises before restoring
+    it -- e.g. the compile backend is missing -- compilation stays enabled for
+    the rest of the session and every later test that touches a
+    ``@maybe_compile`` kernel fails too.
+    """
+    import torchspin._compile as mod
+    old = mod._compile_enabled
+    try:
+        yield
+    finally:
+        mod._compile_enabled = old
 
 
 class TestCompileUtility:
@@ -114,8 +150,8 @@ class TestCompiledKernelsMatchUncompiled:
 
 
 @pytest.mark.skipif(
-    not is_compile_available(),
-    reason="torch.compile not available (PyTorch < 2.0)"
+    not _compile_backend_works(),
+    reason="torch.compile has no usable C++ toolchain (e.g. MSVC 'cl' not on PATH)"
 )
 class TestCompileEnabled:
     """Test with compilation actually enabled."""

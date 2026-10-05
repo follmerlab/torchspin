@@ -609,19 +609,31 @@ class TestRelaxation:
 
 class TestAutograd:
     def test_sf_evolve_grad(self):
-        """sf_evolve should support autograd (gradient flows through eigenvalues)."""
+        """sf_evolve should support autograd (gradient flows through eigenvalues).
+
+        The two manifolds must differ (``free_l=[1]`` alpha, ``free_r=[2]`` beta).
+        With ``free_l == free_r`` the propagator is
+        ``UU[j,k] = exp(-2pi i E[j] dt) * exp(+2pi i E[k] dt)``, whose diagonal is
+        exactly 1, and the density ``G = 0.25*I`` is non-zero only on that
+        diagonal -- so the signal is the constant 0.5 and the analytic gradient
+        is zero. That earlier form only "passed" on the rounding noise of
+        ``exp(-x)*exp(+x) != 1`` (~5e-8); on a libm that returns exactly 1.0 it
+        gave exactly zero and failed. Here the gradient is ~1.97.
+        """
         N = 2
-        Ea = torch.tensor([0.0, 5.0], requires_grad=True)
-        Eb = torch.tensor([0.0, 3.0])
+        Ea = torch.tensor([0.0, 5.0], dtype=torch.float64, requires_grad=True)
+        Eb = torch.tensor([0.0, 3.0], dtype=torch.float64)
         G = torch.eye(N, dtype=torch.complex128) * 0.25
         D = torch.eye(N, dtype=torch.complex128)
 
-        sig = sf_evolve(1, [32], [0.01], [1], [1], Ea, Eb, G, D)
-        loss = sig.real.sum()
-        loss.backward()
+        sig = sf_evolve(1, [32], [0.01], [1], [2], Ea, Eb, G, D)
 
+        # The signal must actually depend on Ea, or the assertion below is vacuous.
+        assert float((sig.detach() - sig.detach()[0]).abs().max()) > 1e-3
+
+        sig.real.sum().backward()
         assert Ea.grad is not None
-        assert Ea.grad.abs().sum() > 0
+        assert float(Ea.grad.abs().sum()) > 1e-3
 
 
 # =====================================================================
