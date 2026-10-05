@@ -10,7 +10,7 @@ rounding and ``torch.autograd`` propagates gradients to ``g``, ``A``, ``D`` and
 ``lw_mT``.
 
 The two earlier stand-alone models are kept as ``method='broadband'`` (N-spin:
-diagonalise H(B) at every field point, soft Gaussian per transition and
+diagonalize H(B) at every field point, soft Gaussian per transition and
 orientation) and ``method='analytical'`` (S=1/2 closed-form resonance fields,
 Gaussian per orientation).  Both sum discrete orientations without
 interpolation or projection and therefore carry orientation-grid ripple at the
@@ -58,7 +58,7 @@ def _broadband_spectrum(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Broadband differentiable EPR spectrum for arbitrary spin systems.
 
-    Diagonalises H(B) at every field point for each powder orientation and
+    Diagonalizes H(B) at every field point for each powder orientation and
     accumulates transition intensities via a soft Gaussian kernel in frequency
     space.  The entire pipeline is on the PyTorch computation graph.
     """
@@ -84,7 +84,7 @@ def _broadband_spectrum(
     phi = phi_arr.to(device=_dev, dtype=dtype).detach()
     theta = theta_arr.to(device=_dev, dtype=dtype).detach()
     wt = weights_arr.to(device=_dev, dtype=dtype).detach()
-    wt = wt * (4.0 * math.pi / wt.sum())  # normalise to 4π
+    wt = wt * (4.0 * math.pi / wt.sum())  # normalize to 4π
     nOri = phi.shape[0]
 
     # ---- field axis ----
@@ -159,7 +159,7 @@ def _broadband_spectrum(
         # Boltzmann population factor
         if Temperature is not None and Temperature > 0:
             kT_MHz = BOLTZMANN * Temperature / (PLANCK * 1e6)  # kT in MHz
-            # populations: exp(-E/kT), normalised per B-point
+            # populations: exp(-E/kT), normalized per B-point
             E_shifted = E - E[:, 0:1]  # shift so lowest = 0
             pops = torch.exp(-E_shifted / kT_MHz)  # (nB, n)
             pops = pops / pops.sum(dim=1, keepdim=True)
@@ -182,14 +182,14 @@ def _broadband_spectrum(
         # Resonance deviation: ΔE(B) - mwFreq  (MHz)
         deviation = dE.real - mwFreq_MHz  # (nB, nTrans)
 
-        # Normalised Gaussian: G(x, σ) = exp(-x²/(2σ²)) / (σ√(2π))
+        # Normalized Gaussian: G(x, σ) = exp(-x²/(2σ²)) / (σ√(2π))
         gauss_norm = 1.0 / (sigma_freq * math.sqrt(2.0 * math.pi))
         gauss = torch.exp(-0.5 * (deviation / sigma_freq) ** 2) * gauss_norm
 
         # To match field-domain pepper output, multiply by dEdB to convert
         # from frequency-domain density to field-domain density:
         # S_field(B) = S_freq(ν) × |dν/dB|
-        # Combined with the 1/σ_freq in the Gaussian normalisation, the dEdB
+        # Combined with the 1/σ_freq in the Gaussian normalization, the dEdB
         # factors cancel, giving an effective field-domain Gaussian.
         contribution = intensity * gauss * dEdB  # (nB, nTrans)
 
@@ -233,7 +233,7 @@ def _legacy_differentiable_spectrum(
     Two internal paths:
 
     * **Analytical** (S=1/2 only, no nuclei/ZFS): fast closed-form B_res.
-    * **Broadband** (general): diagonalises H(B) at every field point,
+    * **Broadband** (general): diagonalizes H(B) at every field point,
       accumulates via soft Gaussian kernels — no root-finding.
 
     Parameters
@@ -300,7 +300,7 @@ def _legacy_differentiable_spectrum(
       because kernel samples alias between grid points. If you need very
       narrow lines with accurate gradients, increase ``nPoints``.
     * For the analytical S=1/2 path (``Nucs=None``, ``D=None``, ``S=0.5``)
-      this constraint does not apply — there's no kernel discretisation.
+      this constraint does not apply — there's no kernel discretization.
 
     Examples
     --------
@@ -384,7 +384,7 @@ def _legacy_differentiable_spectrum(
     phi     = phi_arr.to(device=_device, dtype=dtype).detach()
     theta   = theta_arr.to(device=_device, dtype=dtype).detach()
     weights = weights.to(device=_device, dtype=dtype).detach()
-    # Normalise weights to sum 4π (full-sphere equivalent)
+    # Normalize weights to sum 4π (full-sphere equivalent)
     weights = weights * (4.0 * math.pi / weights.sum())
 
     # --------------------------------------------------------- resonance field
@@ -418,7 +418,7 @@ def _legacy_differentiable_spectrum(
     # Pairwise field difference: shape (nOri, nPts)
     dB = B_axis.unsqueeze(0) - B_res.unsqueeze(1)
 
-    # Normalised Gaussian: G(dB) = exp(-0.5*(dB/σ)²) / (σ√(2π))
+    # Normalized Gaussian: G(dB) = exp(-0.5*(dB/σ)²) / (σ√(2π))
     gauss_norm = 1.0 / (sigma * math.sqrt(2.0 * math.pi))
     gauss = torch.exp(-0.5 * (dB / sigma) ** 2) * gauss_norm
 

@@ -21,7 +21,7 @@ Usage
 
 Units
 -----
-* g-tensor: dimensionless (eigenvalues of symmetrised g·gᵀ)
+* g-tensor: dimensionless (eigenvalues of symmetrized g·gᵀ)
 * D-tensor: MHz (converted from cm⁻¹)
 * A-tensor: MHz (read directly)
 * Q-tensor: MHz (converted from EFG in atomic units)
@@ -187,7 +187,7 @@ def _reference_q_isotope(element: str) -> Optional[tuple]:
 # Tensor processing utilities
 # ---------------------------------------------------------------------------
 def _symmetrize_g(g_raw: np.ndarray) -> np.ndarray:
-    """Symmetrise raw g-matrix: g_sym = sqrt(g_raw^T @ g_raw), then average."""
+    """Symmetrize raw g-matrix: g_sym = sqrt(g_raw^T @ g_raw), then average."""
     g2 = g_raw.T @ g_raw
     g_sym = np.real(sqrtm(g2))
     return (g_sym + g_sym.T) / 2
@@ -202,7 +202,7 @@ def _ensure_righthanded(V: np.ndarray) -> np.ndarray:
 
 
 def _diag_and_frame(M: np.ndarray) -> tuple:
-    """Diagonalise a real symmetric 3×3 matrix.
+    """Diagonalize a real symmetric 3×3 matrix.
 
     Returns (eigenvalues[3], euler_angles[3]).
     Enforces right-handed eigenvector frame.
@@ -227,7 +227,7 @@ def _efg_to_qtensor(efg_au: np.ndarray, element: str) -> Optional[tuple]:
     # Convert EFG to SI (V/m²)
     efg_si = efg_au * _EFG_AU_TO_SI
 
-    # Diagonalise
+    # Diagonalize
     eq_vals, R = np.linalg.eigh(efg_si)
 
     # Sort by |eigenvalue| (standard EFG convention)
@@ -249,7 +249,7 @@ def _efg_to_qtensor(efg_au: np.ndarray, element: str) -> Optional[tuple]:
 def _efg_pv_to_qtensor(efg_pv_si: np.ndarray, element_Z: int) -> np.ndarray:
     """Convert EFG principal values (SI, V/m²) to Q tensor principal values (MHz).
 
-    Used by the binary property parser where EFG is already diagonalised.
+    Used by the binary property parser where EFG is already diagonalized.
     Matches MATLAB's ``efg2Q`` function.
     """
     if element_Z < 1 or element_Z > len(_QREF_MASS_NO):
@@ -355,7 +355,7 @@ def _parse_mainoutput(filepath: Path) -> list:
         text = raw.decode('utf-8', errors='replace')
     all_lines = text.splitlines()
 
-    # Remove empty / single-char lines (match MATLAB behaviour)
+    # Remove empty / single-char lines (match MATLAB behavior)
     lines = [l for l in all_lines if len(l.strip()) > 1]
     nLines = len(lines)
 
@@ -530,7 +530,7 @@ def _parse_mainoutput(filepath: Path) -> list:
                 ki += 1
             D_raw_cm1 = _readmatrix(lines[ki + 1: ki + 4])
 
-            # Diagonalise (recalcVecs = true in MATLAB)
+            # Diagonalize (recalcVecs = true in MATLAB)
             D_vals_cm1, D_vecs = np.linalg.eigh(D_raw_cm1)
             D_vecs = _ensure_righthanded(D_vecs)
 
@@ -800,7 +800,7 @@ def _parse_propbin(filepath: Path) -> list:
     efg_list = [None] * nAtoms
 
     if atoms is not None:
-        # Build padded arrays matching MATLAB behaviour
+        # Build padded arrays matching MATLAB behavior
         nAtoms_A = max(Apv.keys()) + 1 if Apv else 0
         nAtoms_efg = max(efg.keys()) + 1 if efg else 0
 

@@ -25,7 +25,7 @@ __all__ = ['ordering_function', 'orifun_M2L']
 
 
 def ordering_function(ordering) -> Optional[Callable]:
-    """Normalise ``Experiment.Ordering`` to a 3-argument callable (EasySpin p_sampletype)."""
+    """Normalize ``Experiment.Ordering`` to a 3-argument callable (EasySpin p_sampletype)."""
     if ordering is None:
         return None
     if callable(ordering):

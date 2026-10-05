@@ -106,7 +106,7 @@ class TestGSymmetrize:
         np.testing.assert_allclose(g_sym, g, atol=1e-10)
 
     def test_asymmetric(self):
-        # An asymmetric g-matrix should be symmetrised
+        # An asymmetric g-matrix should be symmetrized
         g_raw = np.array([[2.003, 0.001, 0.0],
                           [0.0005, 2.006, 0.0],
                           [0.0, 0.0, 2.002]])

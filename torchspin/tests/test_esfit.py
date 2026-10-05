@@ -983,7 +983,7 @@ class TestNewOptimizationMethods:
         return x_data, model
 
     def test_grid_search_finds_minimum(self):
-        """Grid search: 1-D quadratic minimised to within search resolution."""
+        """Grid search: 1-D quadratic minimized to within search resolution."""
         x = np.linspace(0, 10, 200)
         y_data = 3.0 * np.exp(-((x - 5.0) / 0.5) ** 2)
 

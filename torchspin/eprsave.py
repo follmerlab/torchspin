@@ -62,7 +62,7 @@ def eprsave(
     Notes
     -----
     Data is written as big-endian IEEE 754 double precision (BSEQ=BIG,
-    IRFMT=D), which maximises compatibility with EasySpin and Xepr.
+    IRFMT=D), which maximizes compatibility with EasySpin and Xepr.
     """
     x = np.asarray(x, dtype=np.float64).ravel()
     is_complex = np.iscomplexobj(y)

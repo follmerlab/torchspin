@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarise a workstation campaign directory (benchmarks/cluster/run_workstation.sh) as Markdown.
+"""Summarize a workstation campaign directory (benchmarks/cluster/run_workstation.sh) as Markdown.
 
     python benchmarks/analysis/workstation_report.py benchmarks/results/workstation_20260902 [--after DIR]
 

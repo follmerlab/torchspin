@@ -16,7 +16,7 @@ START, LB, UB = [120.0, 130.0, 40.0], [80.0, 50.0, 10.0], [180.0, 180.0, 60.0]
 
 
 def _model(p):
-    """Two Gaussians (centre, separation, width); amplitude/baseline come from esfit's autoscale."""
+    """Two Gaussians (center, separation, width); amplitude/baseline come from esfit's autoscale."""
     c, d, w = p
     return np.exp(-((X - c) / w) ** 2) - 0.6 * np.exp(-((X - c - d) / (1.4 * w)) ** 2)
 

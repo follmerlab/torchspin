@@ -33,7 +33,7 @@ def _case_names():
 
 LOOSE = {
     # EasySpin's matrix path interpolates eigenvectors linearly across the field segment;
-    # for 63Cu+14N its intensities differ from exact diagonalisation (and from its own
+    # for 63Cu+14N its intensities differ from exact diagonalization (and from its own
     # perturb2 spectrum, cosine 0.951). torchspin (exact) agrees with EasySpin perturb2 at 0.988.
     'septrans_CuN_matrix': (0.93, 0.15),
     'autorange_field': (0.999, 0.03),   # same system as ext2 'fieldrange_Q' (amplitude 0.976, documented)

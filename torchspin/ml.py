@@ -16,7 +16,7 @@ plumbing around that for training and inference workflows:
   (``pepper``, ``garlic``, ``salt``, ``saffron``, ``curry`` or a callable),
   ``(N, nPoints)`` output, optional process pool for no-grad data generation.
 * :class:`SpectrumDataset` — an :class:`torch.utils.data.IterableDataset`
-  sampling parameters from ranges (or a callable), simulating, normalising,
+  sampling parameters from ranges (or a callable), simulating, normalizing,
   resampling to a fixed axis and adding noise, deterministic for a given seed.
 * :func:`cosine_loss`, :func:`rmsd`, :func:`normalize`, :func:`resample` —
   torch operations, so a network's parameter prediction can be refined through
@@ -304,8 +304,8 @@ class SpectrumDataset(torch.utils.data.IterableDataset):
 
     Parameters are drawn with :meth:`ParamSpec.sample` (or ``sampler(n, generator)``
     when given), simulated with ``simulator`` under ``torch.no_grad``, resampled to
-    ``x_out`` if given, normalised (``normalize``), and corrupted with Gaussian
-    noise of standard deviation ``noise`` (relative to the normalised scale) plus
+    ``x_out`` if given, normalized (``normalize``), and corrupted with Gaussian
+    noise of standard deviation ``noise`` (relative to the normalized scale) plus
     an optional random polynomial baseline of degree ``baseline_degree`` and
     amplitude ``baseline``.  Deterministic for a given ``seed`` (per worker of a
     ``DataLoader``, the worker id is folded into the seed).  ``n`` items per

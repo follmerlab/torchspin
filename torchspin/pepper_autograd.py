@@ -1,7 +1,7 @@
 """Differentiable ``pepper``: pepper's forward path on the autograd graph.
 
 ``pepper_autograd(sys, exp, opt)`` computes the same rigid-limit powder spectrum as
-:func:`torchspin.pepper.pepper` for the matrix-diagonalisation path without strain,
+:func:`torchspin.pepper.pepper` for the matrix-diagonalization path without strain,
 using the *same* stages -- resonance-field search with transition tracking
 (:func:`torchspin.resfields_batch.resfields_batch`), EasySpin grid interpolation,
 SOPHE triangle/zone projection, and EasySpin's sampled-kernel convolution and
@@ -54,7 +54,7 @@ _F64 = torch.float64
 # =============================================================================
 
 def _gaussian_t(x: torch.Tensor, x0: float, fwhm, deriv: int) -> torch.Tensor:
-    """Area-normalised Gaussian (absorption) and its derivatives, torch port of
+    """Area-normalized Gaussian (absorption) and its derivatives, torch port of
     :func:`torchspin.lineshape.gaussian` (phase 0)."""
     fwhm = torch.as_tensor(fwhm, dtype=x.dtype, device=x.device)
     sig = fwhm / math.sqrt(8.0 * math.log(2.0))
@@ -74,7 +74,7 @@ def _gaussian_t(x: torch.Tensor, x0: float, fwhm, deriv: int) -> torch.Tensor:
 
 
 def _lorentzian_t(x: torch.Tensor, x0: float, fwhm, deriv: int) -> torch.Tensor:
-    """Area-normalised Lorentzian (absorption) and derivatives, torch port of
+    """Area-normalized Lorentzian (absorption) and derivatives, torch port of
     :func:`torchspin.lineshape.lorentzian` (phase 0)."""
     fwhm = torch.as_tensor(fwhm, dtype=x.dtype, device=x.device)
     gamma = fwhm / math.sqrt(3.0)
@@ -566,7 +566,7 @@ def pepper_autograd(sys: SpinSystem, exp: Experiment, opt: Optional[Options] = N
         spec = dens * (2.0 * math.pi)
     else:
         # Strain: per-facet Gaussian lines (EasySpin pepper.m summation branch):
-        # facet centre position, mean intensity × solid angle, mean width smoothed
+        # facet center position, mean intensity × solid angle, mean width smoothed
         # by the facet's field spread (Opt.Smoothing = 2), accumulated as
         # bin-integrated Gaussians (lisum1i).
         if tri is None:

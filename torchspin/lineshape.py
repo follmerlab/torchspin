@@ -90,7 +90,7 @@ def gaussian(
     x : array_like
         Abscissa values (any units).
     x0 : float
-        Centre of the lineshape.
+        Center of the lineshape.
     fwhm : float
         Full width at half maximum (same units as *x*). Must be > 0.
     diff : int, optional
@@ -121,7 +121,7 @@ def gaussian(
     if diff < -1 or diff != int(diff):
         raise ValueError("diff must be -1, 0, 1, 2, …")
 
-    # sig = standard deviation; k = normalised coordinate
+    # sig = standard deviation; k = normalized coordinate
     sig = fwhm / math.sqrt(8 * math.log(2))   # = fwhm / (2*sqrt(2*ln2))
     k = (x - x0) / (sig * math.sqrt(2))
 
@@ -188,7 +188,7 @@ def lorentzian(
     x : array_like
         Abscissa values.
     x0 : float
-        Centre.
+        Center.
     fwhm : float
         Full width at half maximum. Must be > 0.
     diff : int, optional
@@ -209,7 +209,7 @@ def lorentzian(
     if diff not in (-1, 0, 1, 2):
         raise ValueError("diff must be -1, 0, 1, or 2 for Lorentzian")
 
-    # gamma = distance from centre to inflection point
+    # gamma = distance from center to inflection point
     gamma = fwhm / math.sqrt(3)
     pre = 2.0 / (math.pi * math.sqrt(3))
     z = (x - x0) / gamma
@@ -257,7 +257,7 @@ def voigtian(
     x : array_like
         Abscissa values (must be uniformly spaced for the convolution).
     x0 : float
-        Centre of the lineshape.
+        Center of the lineshape.
     fwhmGL : array_like, length 2
         ``[fwhm_Gauss, fwhm_Lorentz]``.  Both ≥ 0; at least one > 0.
     diff : int, optional
@@ -283,7 +283,7 @@ def voigtian(
 
     fwhmG, fwhmL = float(fwhmGL[0]), float(fwhmGL[1])
 
-    # Centre of x array for the narrower lineshape (to avoid positional shift)
+    # Center of x array for the narrower lineshape (to avoid positional shift)
     x0center = x[len(x) // 2]
 
     # Apply diff/phase to the wider lineshape; convolve with the narrow one
@@ -354,7 +354,7 @@ def apowin(type_str: str, n: int, alpha: float = None) -> np.ndarray:
     Returns
     -------
     w : ndarray, shape (n,)
-        Window values normalised so that max(w) = 1.
+        Window values normalized so that max(w) = 1.
     """
     if not isinstance(type_str, str) or len(type_str) < 3 or len(type_str) > 4:
         raise ValueError("type_str must be a 3- or 4-character string")
@@ -552,7 +552,7 @@ def deriv(y_or_x: np.ndarray, y: np.ndarray = None) -> np.ndarray:
     dx = np.diff(x_arr)[:, np.newaxis]
     slopes = dy / dx
 
-    # Average neighbouring slopes (central difference at interior points)
+    # Average neighboring slopes (central difference at interior points)
     # endpoints use one-sided
     dydx = (np.concatenate([slopes[:1], slopes], axis=0) +
             np.concatenate([slopes, slopes[-1:]], axis=0)) / 2.0
@@ -584,7 +584,7 @@ def lshape(
     x : array_like
         Abscissa values (any units).
     x0 : float
-        Centre of the lineshape.  Default 0.
+        Center of the lineshape.  Default 0.
     fwhm : float or [float, float]
         Full width at half maximum (same units as *x*).
 
@@ -611,7 +611,7 @@ def lshape(
     Returns
     -------
     y : ndarray
-        Lineshape values.  Area-normalised when ``diff=0`` and ``phase=0``.
+        Lineshape values.  Area-normalized when ``diff=0`` and ``phase=0``.
 
     Notes
     -----
@@ -645,14 +645,14 @@ def lshape(
 
     # --- Gaussian component ---
     def _g_abs(xx, fw):
-        """Area-normalised Gaussian absorption."""
+        """Area-normalized Gaussian absorption."""
         if fw == 0:
             return np.where(xx == 0, np.inf, 0.0)
         sigma = fw / (2.0 * math.sqrt(2.0 * math.log(2.0)))
         return np.exp(-xx**2 / (2.0 * sigma**2)) / (sigma * math.sqrt(2.0 * math.pi))
 
     def _g_disp(xx, fw):
-        """Normalised Gaussian dispersion (Hilbert transform of _g_abs)."""
+        """Normalized Gaussian dispersion (Hilbert transform of _g_abs)."""
         if fw == 0:
             return np.zeros_like(xx)
         sigma = fw / (2.0 * math.sqrt(2.0 * math.log(2.0)))
@@ -661,14 +661,14 @@ def lshape(
         return -math.sqrt(2.0 / math.pi) / sigma * dawsn(t)
 
     def _l_abs(xx, fw):
-        """Area-normalised Lorentzian absorption."""
+        """Area-normalized Lorentzian absorption."""
         if fw == 0:
             return np.where(xx == 0, np.inf, 0.0)
         gamma = fw / 2.0
         return (gamma / math.pi) / (xx**2 + gamma**2)
 
     def _l_disp(xx, fw):
-        """Normalised Lorentzian dispersion."""
+        """Normalized Lorentzian dispersion."""
         if fw == 0:
             return np.zeros_like(xx)
         gamma = fw / 2.0

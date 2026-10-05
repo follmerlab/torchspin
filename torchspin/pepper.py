@@ -91,7 +91,7 @@ def _interp_sph(
     For D2h-type triangular SOPHE grids, uses MATLAB's G3 structured interpolation:
     first a row-by-row cubic spline along phi (converting triangular→rectangular),
     then a 2-D bicubic spline in (theta, phi) space.  This matches EasySpin's
-    ``gridinterp(..., 'G3')`` and eliminates the quantization artefacts that arise
+    ``gridinterp(..., 'G3')`` and eliminates the quantization artifacts that arise
     from unstructured 2-D scattered interpolation.
 
     For Dinfh grids (1-D meridional), uses a cubic spline in cos(theta).
@@ -298,7 +298,7 @@ def _gaussian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np.n
     the sum over points equals ``amp`` (a spectral density after the final
     1/ΔB). Widths below ``min_fwhm`` (ΔB/100, lisum1i's clip) are clipped.
 
-    Every line is evaluated only inside a window of ±7σ√2 around its centre
+    Every line is evaluated only inside a window of ±7σ√2 around its center
     (erfc(7) ≈ 4e-23, i.e. the omitted bins are zero to double precision);
     lines are sorted by width and processed in chunks of 256 (cache-sized:
     larger chunks are 3-4× slower per line) with a tight common window; on the
@@ -334,7 +334,7 @@ def _gaussian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np.n
         start = ((p - half_all[sl, None] - x0) / dx).floor().to(torch.long) - 1
         idx = start + ar[None, :nw]
         idxc = idx.clamp(0, n - 1)
-        z = (xr[idxc] - p) / sg                                   # bin centres
+        z = (xr[idxc] - p) / sg                                   # bin centers
         d = (0.5 * dx) / sg                                       # half bin in σ√2 units
         vals = (0.5 * a) * (torch.erf(z + d) - torch.erf(z - d))
         vals = torch.where((idx >= 0) & (idx < n), vals, torch.zeros((), dtype=torch.float64, device=dev))
@@ -467,7 +467,7 @@ def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
         # EasySpin: with NaNs in Pdat the interpolation switches to linear
         # ('L1'/'L3' → linear here) so that the NaNs propagate and the facets
         # touching knots without a resonance are dropped, instead of being
-        # filled from neighbouring knots.
+        # filled from neighboring knots.
         if symmetry == 'Dinfh':
             return _interp_l3(vals, N_f)          # EasySpin: 'L3' for axial grids with NaNs
         return _interp_grid(vals, symmetry, N_c, N_f)
@@ -480,7 +480,7 @@ def _facets(symmetry: str, N: int, theta_sym: torch.Tensor, ordering=None):
     """(tri_idx or None, facet weights summing to 4π) for projection/summation.
 
     ``ordering=(f, R_L2S)`` weights every facet by the orientational
-    distribution evaluated at the facet centre (EasySpin pepper.m
+    distribution evaluated at the facet center (EasySpin pepper.m
     ``orderingWeights`` for partially ordered samples).
     """
     if symmetry == 'Dinfh':
@@ -581,7 +581,7 @@ def _finish_field_sweep(spec: torch.Tensor, x: torch.Tensor, dx: float, exp,
 
 def _preselect_pairs(H0, mux, muy, muz, sys, exp, opt, B_center, freq_sweep=False):
     """EasySpin resfields transition pre-selection: transition rates of all level
-    pairs at the centre field on a small D2h grid (TPSGridSize 4); keep the pairs
+    pairs at the center field on a small D2h grid (TPSGridSize 4); keep the pairs
     whose maximum rate reaches Opt.Threshold × the largest; pure nuclear
     transitions are dropped when the hyperfine interaction is weak
     (HFIStrength = max|A|·(I+1/2)/ν < 0.5).  Returns a list of (u, v) pairs."""
@@ -1321,7 +1321,7 @@ def _pepper_single(
     # EasySpin pepper.m: the perturbation solver (resfields_perturb) searches
     # Exp.SearchRange = Range ± 20 % of the sweep width (clamped at 0) so that
     # lines just outside the window contribute their in-range part; the
-    # matrix-diagonalisation solver (resfields) searches the sweep range only.
+    # matrix-diagonalization solver (resfields) searches the sweep range only.
     from dataclasses import replace as _dc_replace
     _w = exp.Range[1] - exp.Range[0]
     exp_search = _dc_replace(exp, Range=[max(0.0, exp.Range[0] - 0.2 * _w), exp.Range[1] + 0.2 * _w],
@@ -1999,7 +1999,7 @@ def _pepper_single(
         # shapes whose sum over points equals w·I. EasySpin pepper.m converts
         # these to a spectral density (spec/deltaX) and multiplies by 2π for
         # the χ integral; the orientation weights already sum to 4π, so no
-        # further normalisation is applied. Together with the dBdE factor in
+        # further normalization is applied. Together with the dBdE factor in
         # resfields this reproduces EasySpin's absolute intensity
         # (pepper_intensity_isopowder: ∫spec dB = 8π²·TransitionRate·dBdE).
         spec = spec / dx

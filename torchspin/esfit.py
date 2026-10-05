@@ -77,9 +77,9 @@ class FitOptions:
         Whether to compute parameter uncertainties. Default: True
     trf_diff_step, trf_x_scale, trf_gradient_tol
         Options for ``method='trf'`` (SciPy ``least_squares(method='trf')``,
-        bounded trust-region reflective least squares). The solver minimises
+        bounded trust-region reflective least squares). The solver minimizes
         the same target-transformed residual vector whose RMSD the other
-        methods minimise, so esfit's parameter mapping (dict/array ``p0``,
+        methods minimize, so esfit's parameter mapping (dict/array ``p0``,
         fixed parameters, ``lb``/``ub``/``vary``), amplitude and baseline
         handling (``autoscale``/``baseline``), ``target``, progress reporting
         and stopping (``max_time``, ``stop_when``, interrupt) apply unchanged.
@@ -102,7 +102,7 @@ class FitOptions:
         ``interrupted=False``; a stop or interrupt returns the best point so
         far with ``interrupted=True``. ``FitResult.n_iterations`` is SciPy's
         Jacobian-evaluation count (one per trust-region iteration).
-        TRF is a local optimisation method, not a CPU-acceleration feature:
+        TRF is a local optimization method, not a CPU-acceleration feature:
         it runs sequentially in the calling process. Simulation threading
         (``torch.set_num_threads``) and the population-worker parallelism of
         ``n_workers`` (population methods only) are separate and unaffected.
@@ -1601,7 +1601,7 @@ def _optimize_montecarlo(
     bounds: tuple[np.ndarray, np.ndarray],
     options: FitOptions,
 ) -> OptimizeResult:
-    """Monte Carlo / simulated annealing optimiser.
+    """Monte Carlo / simulated annealing optimizer.
 
     Draws ``mc_samples`` random parameter sets uniformly within bounds,
     then applies a simple simulated annealing refinement around the best
@@ -1698,7 +1698,7 @@ def _optimize_genetic(
     cross_rate = options.ga_crossover
     rng = np.random.default_rng(options.seed)
 
-    # Initialise population: elite[0] = p0, rest = random
+    # Initialize population: elite[0] = p0, rest = random
     pop = np.empty((pop_size, n))
     pop[0] = np.clip(p0, lb, ub)
     pop[1:] = rng.uniform(lb, ub, size=(pop_size - 1, n))
@@ -1800,7 +1800,7 @@ def _optimize_swarm(
     rng = np.random.default_rng(options.seed)
     span = ub - lb
 
-    # Initialise positions and velocities
+    # Initialize positions and velocities
     pos = rng.uniform(lb, ub, size=(swarm_n, n))
     pos[0] = np.clip(p0, lb, ub)  # seed with initial guess
     vel = rng.uniform(-span, span, size=(swarm_n, n)) * 0.1
@@ -2028,7 +2028,7 @@ def _optimize_trf(
 ) -> OptimizeResult:
     """Bounded trust-region reflective least squares (SciPy ``least_squares``).
 
-    Minimises the target-transformed residual vector returned by ``resid_fn``
+    Minimizes the target-transformed residual vector returned by ``resid_fn``
     within ``bounds``, so esfit's autoscale/baseline/target handling is
     retained.  Every residual evaluation, including SciPy's finite-difference
     Jacobian probes, is recorded in the progress tracker: progress reporting,
@@ -2260,7 +2260,7 @@ def esfit(
         options = FitOptions()
 
     # Resolve target='auto': pick 'int' for derivative-like data
-    # (mean << std, characteristic of field-modulated CW EPR with
+    # (mean << std, characteriztic of field-modulated CW EPR with
     # Harmonic=1) so the loss landscape is smooth enough for local
     # optimizers. Matches MATLAB EasySpin esfit.m:382-390 which sets
     # TargetID=2 (integral) for pepper/garlic with Harmonic>0.

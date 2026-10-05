@@ -228,7 +228,7 @@ def quat2euler(q: np.ndarray, convention: str = 'passive'):
 
     norm_err = np.abs(1.0 - np.sqrt(np.sum(q ** 2, axis=0)))
     if np.any(norm_err > 1e-8):
-        raise ValueError("q is not normalised")
+        raise ValueError("q is not normalized")
 
     convention = convention.lower()
     if convention == 'passive':
@@ -286,7 +286,7 @@ def quat2rotmat(q: np.ndarray) -> np.ndarray:
 
     norm_err = np.abs(1.0 - np.sqrt(np.sum(q ** 2, axis=0)))
     if np.any(norm_err > 1e-8):
-        raise ValueError("q is not normalised")
+        raise ValueError("q is not normalized")
 
     single = q.ndim == 1
     if single:
@@ -398,7 +398,7 @@ def rotaxi2mat(n, rho: float) -> np.ndarray:
     ----------
     n : str or array_like, shape (3,)
         Rotation axis.  Accepts string shortcuts ``'x'``, ``'y'``, ``'z'``,
-        ``'xy'``, ``'xz'``, ``'yz'``, ``'xyz'``.  Does not need to be normalised.
+        ``'xy'``, ``'xz'``, ``'yz'``, ``'xyz'``.  Does not need to be normalized.
     rho : float
         Rotation angle in radians.
 
@@ -621,7 +621,7 @@ def vec2ang(v) -> tuple:
     ----------
     v : array_like, shape (3,) or (3, N)
         Unit or non-unit Cartesian vector(s).  Non-unit vectors are
-        normalised internally.
+        normalized internally.
 
     Returns
     -------
@@ -647,7 +647,7 @@ def vec2ang(v) -> tuple:
     if single:
         v = v[:, np.newaxis]
 
-    # Normalise
+    # Normalize
     norms = np.linalg.norm(v, axis=0, keepdims=True)
     norms = np.where(norms == 0, 1.0, norms)
     v = v / norms
@@ -828,7 +828,7 @@ def rotateframe(ang0, nRot, rho) -> np.ndarray:
         Initial Euler angles ``[alpha, beta, gamma]`` in radians defining the
         starting orientation.
     nRot : array_like, shape (3,)
-        Unit vector (or non-unit — normalised internally) defining the
+        Unit vector (or non-unit — normalized internally) defining the
         rotation axis in the molecular frame.
     rho : float or array_like, shape (M,)
         Rotation angle(s) in radians around *nRot*.

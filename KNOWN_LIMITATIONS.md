@@ -269,7 +269,7 @@ agree to ~1e-8 relative norm error; g gradients agree to the finite-difference
 limit set by the piecewise-linear projection (a vertex crossing a field bin is
 a kink): relative norm error 6e-2 / 8e-3 / 1.5e-4 / 2e-8 for steps 1e-4 /
 1e-5 / 1e-6 / 1e-7 in g, identically for `pepper` and `pepper_autograd`.
-Optimisers see an almost-everywhere exact gradient of a piecewise-smooth model.
+Optimizers see an almost-everywhere exact gradient of a piecewise-smooth model.
 
 The earlier stand-alone models remain as `method='broadband'` and
 `method='analytical'` (deprecated). They sum discrete orientations without

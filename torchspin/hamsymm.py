@@ -13,7 +13,7 @@ as in EasySpin:
 * **Eigenvalue analysis** (``hamsymm_eigs``): used when Stevens operator
   terms (``Sys.B``), higher-order Zeeman terms (``Sys.Ham``), crystal-field
   terms (``Sys.CF*``) or any full 3×3 tensors are present. The Hamiltonian is
-  diagonalised at twelve probe field directions in each candidate symmetry
+  diagonalized at twelve probe field directions in each candidate symmetry
   frame and the point group is inferred from eigenvalue coincidences.
 """
 from __future__ import annotations

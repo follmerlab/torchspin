@@ -64,7 +64,7 @@ def run():
 def _plot(freq_np, spectra, spec_sum, nu_H):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
 
-    # Normalise sum for display
+    # Normalize sum for display
     pk = np.abs(spec_sum).max()
     ax1.plot(freq_np, spec_sum / pk if pk > 0 else spec_sum, 'k', lw=1.5)
     ax1.set_ylabel('Intensity (norm.)')

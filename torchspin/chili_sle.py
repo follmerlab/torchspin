@@ -684,7 +684,7 @@ def chili_xlmk(potential: dict, R):
 
 
 def diffsuperop(basis: Basis, R, XLMK, potential: Optional[dict]):
-    """EasySpin ``diffsuperop`` (K-symmetrised LjKKM basis)."""
+    """EasySpin ``diffsuperop`` (K-symmetrized LjKKM basis)."""
     L, M, K, jK = basis.L, basis.M, basis.K, basis.jK
     n = L.size
     R = np.asarray(R, dtype=float).reshape(-1)

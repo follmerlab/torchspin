@@ -653,7 +653,7 @@ def _perturb_freq(F, aiso, giso, gn, B_T, order):
 def _stick_spectrum(positions, amplitudes, sweep_range, n_points, verbose=False, linear=False) -> torch.Tensor:
     """EasySpin ``constructstickspectrum``: each line goes into its nearest bin
     (``linear=False``, bit-comparable with EasySpin's garlic output) or is split
-    linearly between the two neighbouring bins (``linear=True``, EasySpin
+    linearly between the two neighboring bins (``linear=True``, EasySpin
     ``makespec``; differentiable in the line positions).
     """
     dt = torch.float64
@@ -679,7 +679,7 @@ def _stick_spectrum(positions, amplitudes, sweep_range, n_points, verbose=False,
 
 
 def _lorentzian_lines_t(x: torch.Tensor, x0: torch.Tensor, fwhm: torch.Tensor, diff: int, phase: float) -> torch.Tensor:
-    """Area-normalised Lorentzian absorption (phase-rotated with dispersion) for a
+    """Area-normalized Lorentzian absorption (phase-rotated with dispersion) for a
     batch of lines: ``(nLines, nX)``.  Torch port of ``lineshape.lorentzian``."""
     gamma = (fwhm / math.sqrt(3.0)).unsqueeze(1)
     pre = 2.0 / (math.pi * math.sqrt(3.0))

@@ -11,7 +11,7 @@ The MATLAB scripts that generated these files do not store the field axis x,
 so we reconstruct it from the known Exp.Range (1024-point default).
 
 Cosine similarity threshold: ≥ 0.995 (GridSize=50 captures >99.5% of the
-spectral shape; the remaining deviation is powder-grid discretisation noise).
+spectral shape; the remaining deviation is powder-grid discretization noise).
 """
 
 from pathlib import Path

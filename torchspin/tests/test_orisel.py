@@ -35,7 +35,7 @@ class TestOriselBasic:
         assert np.all(weights >= 0)
 
     def test_max_weight_is_one(self):
-        """Weights are normalised so max = 1.0."""
+        """Weights are normalized so max = 1.0."""
         sys, exp = _make_sys_exp()
         weights, _, _ = orisel(sys, exp)
         assert abs(weights.max() - 1.0) < 1e-10

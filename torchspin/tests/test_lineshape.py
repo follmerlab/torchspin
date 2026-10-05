@@ -393,11 +393,11 @@ class TestLshape:
     def test_mixed_alpha(self):
         """alpha=0.5 gives mix of G and L."""
         y = lshape(self.X, 0, 1.0, alpha=0.5)
-        # Should be positive, centred at 0
+        # Should be positive, centerd at 0
         assert y[len(y)//2] > 0
         assert y.max() == y[len(y)//2]
 
-    def test_centre_offset(self):
+    def test_center_offset(self):
         """x0 shifts the peak."""
         y0 = lshape(self.X, 0, 1.0)
         y1 = lshape(self.X, 2.0, 1.0)
@@ -416,9 +416,9 @@ class TestLshape:
     def test_diff_1_zero_crossing(self):
         """First derivative crosses zero at the peak."""
         y = lshape(self.X, 0, 1.0, diff=1)
-        # Zero crossing near the centre
-        centre = len(y) // 2
-        assert y[centre - 5] > 0 and y[centre + 5] < 0  # positive left, negative right
+        # Zero crossing near the center
+        center = len(y) // 2
+        assert y[center - 5] > 0 and y[center + 5] < 0  # positive left, negative right
 
     def test_diff_2_symmetric(self):
         """Second derivative is symmetric about x0."""

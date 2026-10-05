@@ -114,7 +114,7 @@ def convspec(
     -----
     * Port of EasySpin's ``convspec``: the line shape is sampled on the
       extended 2N+1 grid (no analytic renormalisation), so sub-increment
-      widths reproduce EasySpin's behaviour bit for bit.  Gaussian and
+      widths reproduce EasySpin's behavior bit for bit.  Gaussian and
       Lorentzian parts are applied sequentially (as pepper.m does), which is
       the same as a Voigt convolution; the derivative is carried by the first.
     * With both widths zero and ``deriv > 0`` the spectrum is differentiated

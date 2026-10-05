@@ -11,7 +11,7 @@ __pycache__/
 .venv/
 *.egg-info/
 
-# build artefacts
+# build artifacts
 dist/
 build/
 *.whl

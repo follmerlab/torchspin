@@ -102,11 +102,11 @@ def resfields_batch(
     # ── Step 2: Segment model of the level diagram (EasySpin resfields.m) ──────
     # Energies E(B) and slopes dE/dB = -<n|μzL|n> at a set of field knots define a
     # cubic Hermite model of every transition energy on each segment.  Knots are
-    # doubled (midpoints diagonalised) until the model reproduces the transition
+    # doubled (midpoints diagonalized) until the model reproduces the transition
     # energies at the midpoints to mwFreq·ModellingAccuracy.  Resonances are the
     # roots of the local cubics, polished by two safeguarded Newton steps with
-    # exact diagonalisation.  This replaces a dense coarse grid plus bisection
-    # (~45 diagonalisations per resonance) by ~10-20 per orientation.
+    # exact diagonalization.  This replaces a dense coarse grid plus bisection
+    # (~45 diagonalizations per resonance) by ~10-20 per orientation.
     all_pairs = list(pairs) if pairs is not None else [(i, j) for i in range(nStates) for j in range(i + 1, nStates)]
     pair_i_arr = torch.tensor([p[0] for p in all_pairs], dtype=torch.long, device=dev)
     pair_j_arr = torch.tensor([p[1] for p in all_pairs], dtype=torch.long, device=dev)
@@ -222,7 +222,7 @@ def resfields_batch(
             B_c = Bk[ss[kk]] + t * hseg[ss[kk]]
             m_c, p_c = mm[kk], pp[kk]
             lo = Bk[ss[kk]]; hi = Bk[ss[kk] + 1]
-            # One exact diagonalisation per candidate at the model root (EasySpin
+            # One exact diagonalization per candidate at the model root (EasySpin
             # evaluates the intensity there).  The exact energies and
             # Hellmann-Feynman slopes give a Newton correction of the field for free;
             # the two eigenvectors of each transition are kept for the intensities.
@@ -273,7 +273,7 @@ def resfields_batch(
 
     # ── Step 4: Intensities from the eigenpairs at the resonance fields ───────
     # E_res (nBrackets, nStates) and the transition eigenvectors psi_i, psi_j
-    # (nBrackets, dim) were gathered at the candidate diagonalisation above.
+    # (nBrackets, dim) were gathered at the candidate diagonalization above.
 
     # Transition moment matrix elements: <ψ_i|Op|ψ_j>
     # mux/muy/muz are (dim, dim); psi_j is (nBrackets, dim).
@@ -386,7 +386,7 @@ def resfields_batch(
     # non-equilibrium states are negative), then sort by (orientation, pair
     # index, B_res).  The pair-index order is the natural loop order (0,1) <
     # (0,2) < (1,2) ...; it is what keeps transition slot i_t consistent between
-    # neighbouring orientations in the triangle projection (ascending-B order
+    # neighboring orientations in the triangle projection (ascending-B order
     # breaks at crossover angles).
     if opt.Threshold > 0 and nBrackets > 0:
         absI = intensities_all.abs()

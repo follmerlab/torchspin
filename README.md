@@ -1,36 +1,29 @@
 # torchspin
 
-**A differentiable PyTorch framework for EPR/ESR spin-Hamiltonian and spectrum simulation, developed against [EasySpin](https://easyspin.org).**
+**Simulate and fit EPR/ESR spectra in Python — differentiable, GPU-capable, and validated against [EasySpin](https://easyspin.org).**
+
+[![PyPI](https://img.shields.io/pypi/v/torchspin)](https://pypi.org/project/torchspin/)
+[![Python](https://img.shields.io/pypi/pyversions/torchspin)](https://pypi.org/project/torchspin/)
+[![Tests](https://github.com/follmerlab/torchspin/actions/workflows/python-tests.yml/badge.svg)](https://github.com/follmerlab/torchspin/actions/workflows/python-tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 
 torchspin reimplements the core physics engine of EasySpin (MATLAB) in
-Python/PyTorch, with end-to-end autograd support, optional GPU execution,
-and a Python-native API.
+Python/PyTorch. You get the simulators you already know — `pepper`, `garlic`,
+`chili`, `salt`, `saffron`, `curry`, `cardamom`, `esfit` — with the same units
+and conventions, plus three things MATLAB cannot give you:
 
-TorchSpin is a reimplementation, not a drop-in replacement for every EasySpin
-feature. See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) and
-[benchmarks/results/BENCHMARK_REPORT.md](benchmarks/results/BENCHMARK_REPORT.md)
-before using it for publication-critical calculations.
+- **Gradients.** Spectra are differentiable end to end, so you can fit with
+  gradient descent, propagate uncertainty, or put a simulator inside a neural
+  network.
+- **A Python workflow.** NumPy and torch tensors in and out, no license server,
+  installable with `pip`.
+- **Optional GPU.** `Options(device='cuda')` for batched and gradient-based
+  work.
 
-- **2659 passing tests, 0 failures**, including 30 MATLAB-validation modules that compare
-  against stored EasySpin outputs (cosine ≥ 0.999 for `pepper`, `garlic`,
-  `chili`, `salt`/`endorfrq`, `saffron`, `curry`, `spidyan`; fitted `esfit`
-  parameters within 3×10⁻⁴ in g of EasySpin's)
-- **Competitive with EasySpin on a multi-core node, not uniformly faster**: on
-  the audited matched-host campaign (nine workloads, five replicates, medians
-  with IQRs) torchspin's best CPU configuration is faster on six — slow-motion
-  `chili` 7.3× and 1.5×, `pepper` Mn(II) 2.8×, trajectory `cardamom` 2.0×,
-  a 20-call `pepper` fit loop 1.9×, perturbative `pepper` 1.3× — and slower on
-  three: `pepper` Cu/2N matrix 0.34×, `pepper` strain summation 0.82×,
-  `saffron` HYSCORE 0.88×.  Details and the device audit:
-  [`benchmarks/results/workstation_20260904_verified/BENCHMARK_VERIFICATION.md`](benchmarks/results/workstation_20260904_verified/BENCHMARK_VERIFICATION.md)
-- **Differentiable** spectra (autograd through the eigendecomposition) and a
-  GPU path whose payoff is batched/gradient fitting rather than raw throughput
-- **Fitting**: `esfit` with local (simplex, Powell, L-BFGS-B, Levenberg–Marquardt,
-  bounded trust-region reflective `trf`),
-  global (swarm, genetic, Monte Carlo, grid) and `global` (swarm + simplex
-  polish) methods; population methods run in a process pool
-  (`FitOptions(n_workers='auto')`; `pip install cloudpickle` for models defined in notebooks);
-  `progress='text'` reports RMSD/evaluations/ETA live and a kernel interrupt returns the best fit so far
+torchspin is a reimplementation, not a drop-in replacement for every EasySpin
+feature. Before relying on it for published results, read
+[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) — it states per simulator what is
+validated against MATLAB and what is not.
 
 ---
 
@@ -42,7 +35,8 @@ pip install "torchspin[plot]"         # + matplotlib for the plotting helpers
 pip install "torchspin[gui]"          # + the interactive fitting panel (torchspin.fitgui)
 ```
 
-CPU-only PyTorch (avoids the large CUDA wheels):
+CPU-only PyTorch, to avoid the large CUDA wheels:
+
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install torchspin
@@ -50,25 +44,11 @@ pip install torchspin
 
 Requires Python 3.10+, PyTorch 2.0+, NumPy 1.23+, SciPy 1.10+.
 
-From source, for development or to run the test suite — the MATLAB reference
-data lives in the repository, not in the PyPI package, so the cross-validation
-tests only run from a checkout:
-
-```bash
-git clone https://github.com/follmerlab/torchspin.git
-cd torchspin
-pip install -e ".[dev]"
-pytest -q                             # full suite, ~25 min
-pytest -q -m "not slow" -k "not matlab_validation"   # fast pass, ~4 min
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the test layout and what CI runs.
-
 ---
 
 ## Quick start
 
-### CW powder spectrum (pepper)
+### CW powder spectrum (`pepper`)
 
 ```python
 from torchspin import SpinSystem, Experiment, Options, pepper
@@ -84,7 +64,7 @@ exp = Experiment(mwFreq=9.5, Range=[330, 350], nPoints=1024, Harmonic=1)
 B, spec = pepper(sys, exp, Options(GridSize=50))
 ```
 
-### Solution EPR (garlic)
+### Solution EPR (`garlic`)
 
 ```python
 from torchspin import SpinSystem, Experiment, garlic
@@ -94,9 +74,10 @@ exp = Experiment(mwFreq=9.5, Range=[336, 342], nPoints=512, Harmonic=1)
 B, spec = garlic(sys, exp)
 ```
 
-### Fitting (esfit)
+### Fitting (`esfit`)
 
 ```python
+import numpy as np
 from torchspin import esfit, FitOptions
 
 def model(p):
@@ -106,13 +87,17 @@ def model(p):
 
 result = esfit(
     data_measured, model,
-    p0=np.array([2.0, 2.1, 2.2]),
+    p0=np.array([2.00, 2.10, 2.20]),
     lb=np.array([1.95, 2.05, 2.15]),
     ub=np.array([2.05, 2.15, 2.25]),
-    options=FitOptions(method='simplex'),
+    options=FitOptions(method='global', progress='text'),
 )
 print('Best-fit g:', result.pfit)
 ```
+
+`progress='text'` prints RMSD, evaluation count and ETA as it runs, and
+interrupting the kernel returns the best fit so far. Population-based methods
+parallelize over processes with `FitOptions(n_workers='auto')`.
 
 ### Differentiable spectrum
 
@@ -122,37 +107,29 @@ from torchspin import differentiable_spectrum
 
 g = torch.tensor([2.0, 2.1, 2.2], dtype=torch.float64, requires_grad=True)
 B, spec = differentiable_spectrum(g, mwFreq_GHz=9.5, B_range=(300, 380),
-                                   nPoints=512, lw_mT=1.0)
+                                  nPoints=512, lw_mT=1.0)
 loss = ((spec - target_spec) ** 2).sum()
 loss.backward()
 print('dL/dg:', g.grad)
 ```
 
-### Interactive notebooks
+---
 
-An index of all tutorials and reference documents is in [docs/index.md](docs/index.md).
+## Units and conventions
 
-Example notebooks live in `examples/notebooks/` and cover quickstart usage,
-GPU/autograd workflows, spectral fitting, benchmark reproduction, and two
-end-to-end fitting case studies.
+These match EasySpin, so parameters transfer directly:
 
-- `01_torchspin_quickstart.ipynb` - core API tour: spin systems, Hamiltonians, powder and solution spectra.
-- `02_gpu_and_autograd.ipynb` - GPU execution and differentiable spectrum workflows.
-- `03_spectral_fitting.ipynb` - parameter recovery with `esfit` on simulated spectra.
-- `04_benchmarks.ipynb` - MATLAB/EasySpin vs torchspin timings from the 2026-09 campaign (CPU threads, GPU, worker processes) plus live timing.
-- `05_fitting_real_world.ipynb` - realistic multi-parameter fitting example.
-- `06_blue_copper_fitting.ipynb` - end-to-end blue copper Cu(II) fitting case study.
-- `07_easyspin_parity.ipynb` - overlays of torchspin against stored EasySpin references (pepper, garlic, chili, saffron, cardamom) with cosine similarities.
-- `08_pepper_playground.ipynb` - simulate a `pepper` spectrum, add noise, then fit it with every `esfit` method and compare recovery, residual and time.
-- `09_fit_gui.ipynb` - interactive fitting panel (`torchspin.fitgui`, `pip install "torchspin[gui]"`): sliders, fix boxes, Start/Stop, live fit and RMSD trace.
-
-Recommended starting point: open `01_torchspin_quickstart.ipynb`, then move to
-`02_gpu_and_autograd.ipynb` or `03_spectral_fitting.ipynb` depending on whether
-you care more about differentiable simulation or fitting.
+| | |
+|---|---|
+| Energy | MHz |
+| Magnetic field | mT |
+| Euler angles | radians, z-y'-z'' **passive** rotation |
+| Basis ordering | m = S, S−1, …, −S (descending) |
+| Default dtype | `torch.complex128` |
 
 ---
 
-## Features
+## What's included
 
 | Category | Modules |
 |----------|---------|
@@ -160,46 +137,52 @@ you care more about differentiable simulation or fitting.
 | Pulse EPR | `saffron` (ESEEM/HYSCORE), `spidyan` (arbitrary sequences), `saffron_thyme` (real pulses) |
 | Trajectory | `cardamom` (MD/diffusion/jump), `mdload`, `mdhmm` |
 | Magnetometry | `curry` (susceptibility, magnetization) |
-| Fitting | `esfit` (10 methods: simplex, L-BFGS-B, Powell, Levenberg–Marquardt, trust-region reflective `trf`, grid, Monte Carlo, genetic, swarm, and `global` = swarm + simplex polish); `torchspin.fitgui` interactive panel |
-| Autograd | `differentiable_spectrum` (`pepper`'s own forward path via `pepper_autograd`); `garlic`, `salt`, `saffron` and `curry` are differentiable too |
-| ML | `torchspin.ml` — parameter packing (`ParamSpec`), batched simulation, `SpectrumDataset`, differentiable losses |
+| Fitting | `esfit` — 10 methods (simplex, L-BFGS-B, Powell, Levenberg–Marquardt, trust-region reflective, grid, Monte Carlo, genetic, swarm, and `global` = swarm + simplex polish); `torchspin.fitgui` interactive panel |
+| Autograd | `differentiable_spectrum`; `pepper`, `garlic`, `salt`, `saffron` and `curry` are differentiable |
+| Machine learning | `torchspin.ml` — parameter packing, batched simulation, datasets, differentiable losses |
 | Data I/O | `eprload` (14 vendor formats), `eprsave` (BES3T), `orca2torchspin` |
-| Batch/GPU | `batch_pepper`, `batch_simulate`; `Options.device='cuda'` |
+| Batch / GPU | `batch_pepper`, `batch_simulate`; `Options(device='cuda')` |
 
 ---
 
-## Conventions
+## Tutorials
 
-- **Energy units:** MHz throughout
-- **Field units:** mT
-- **Euler angles:** radians, z-y'-z'' **passive** rotation
-- **Basis ordering:** m = S, S−1, …, −S (descending)
-- **Default dtype:** `torch.complex128`
+Start with `01_torchspin_quickstart.ipynb`, then branch to autograd or fitting
+depending on what you need. Full index: [docs/index.md](docs/index.md).
+
+| Notebook | What it covers |
+|---|---|
+| `01_torchspin_quickstart` | Core API: spin systems, Hamiltonians, powder and solution spectra |
+| `02_gpu_and_autograd` | GPU execution and differentiable spectra |
+| `03_spectral_fitting` | Parameter recovery with `esfit` |
+| `04_benchmarks` | Timings against MATLAB/EasySpin |
+| `05_fitting_real_world` | Bad starting guesses, loss landscapes, global vs local search |
+| `06_blue_copper_fitting` | End-to-end Cu(II) case study |
+| `07_easyspin_parity` | Overlays against stored EasySpin references |
+| `08_pepper_playground` | Simulate, add noise, fit with every `esfit` method |
+| `09_fit_gui` | Interactive fitting panel: sliders, live fit, RMSD trace |
+
+They live in `examples/notebooks/`, with scripted equivalents of EasySpin's
+example collection in `examples/{solidstate,liquids,slowmotion,endor,fitting,magnetometry}`.
 
 ---
 
-## Validation status
+## Accuracy and performance
 
-Every simulator with an EasySpin counterpart is validated against stored MATLAB
-outputs (`tests/data/*.mat`, generated by the scripts in `tests/`); the
-validation modules are `torchspin/tests/test_*_matlab_validation.py`; what
-changed when is in `CHANGELOG.md`.
-As of 2026-10-04 (2659 passed, 0 failed, 4 skipped, 3 xfailed, on the clean-room host):
+Every simulator with an EasySpin counterpart is checked against stored MATLAB
+reference output on each commit. Agreement is cosine ≥ 0.999 (most
+0.9999–1.0000) for `pepper`, `garlic`, `salt`, `saffron`, `spidyan` and
+`curry`, with absolute intensities matched where EasySpin defines them.
+`chili` and the stochastic `cardamom` have documented caveats. Details per
+simulator, with the evidence: [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
 
-- `pepper` (powders, crystals, strains, frequency sweeps, non-equilibrium
-  populations, photoselection, ordering, isotopologues), `garlic`, `salt`,
-  `endorfrq`, `saffron`, `spidyan`, `curry`/`blochsteady`: cosine ≥ 0.999
-  (most 0.9999–1.0000), absolute intensities included where EasySpin defines them;
-- `chili`: 60-case suite, 59 at cosine ≥ 0.999;
-- `esfit`: fitted parameters within 3×10⁻⁴ (g) and 0.03 mT (linewidth) of
-  EasySpin's on the shared cross-validation cases;
-- `cardamom`: stochastic, cosine > 0.75 at 100 trajectories by design.
-
-Performance against MATLAB/EasySpin (same nine workloads, one workstation):
-`benchmarks/results/workstation_20260904_verified/BENCHMARK_VERIFICATION.md`
-(audited and authoritative) with the earlier rounds in
-`benchmarks/results/BENCHMARK_REPORT.md`; remaining gaps and open items:
-`KNOWN_LIMITATIONS.md`.
+On speed, torchspin is competitive rather than uniformly faster. On an audited
+nine-workload comparison it beat EasySpin on six — most strongly on
+slow-motion `chili` (7.3×) and trajectory `cardamom` (2.0×) — and was slower on
+three, including matrix-method Cu(II) powders (0.34×). The GPU path pays off
+for batched and gradient-based work, not for single simulations. Numbers,
+replicates and a per-workload device audit:
+[BENCHMARK_VERIFICATION.md](benchmarks/results/workstation_20260904_verified/BENCHMARK_VERIFICATION.md).
 
 ---
 
@@ -207,20 +190,35 @@ Performance against MATLAB/EasySpin (same nine workloads, one workstation):
 
 If you use torchspin in published work, please cite both:
 
-- **EasySpin** (the MATLAB toolbox this port is based on):
+- **EasySpin**, the MATLAB toolbox this port is based on —
   Stoll, S. & Schweiger, A. *J. Magn. Reson.* **178** (2006) 42–55.
-- **TorchSpin** (the PyTorch reimplementation):
-  See `CITATION.cff` in the repository root.
+- **torchspin** — see [CITATION.cff](CITATION.cff).
+
+---
+
+## Contributing
+
+Bug reports, documentation fixes and pull requests are welcome. Development
+install and the test layout are in [CONTRIBUTING.md](CONTRIBUTING.md):
+
+```bash
+git clone https://github.com/follmerlab/torchspin.git
+cd torchspin
+pip install -e ".[dev]"
+pytest -q -m "not slow" -k "not matlab_validation"   # fast pass, ~4 min
+```
+
+The MATLAB reference data ships in the repository but not in the PyPI package,
+so the cross-validation suite only runs from a checkout.
 
 ---
 
 ## Related
 
 - [EasySpin](https://easyspin.org) — the MATLAB reference implementation
-- [PyTorch](https://pytorch.org) — autograd engine
-
----
+- [PyTorch](https://pytorch.org) — the autograd engine
 
 ## License
 
-MIT. See `LICENSE.md`.
+MIT — see [LICENSE.md](LICENSE.md). torchspin is derived from EasySpin, which is
+also MIT licensed; both copyrights are reproduced there.

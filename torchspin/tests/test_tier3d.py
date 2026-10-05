@@ -104,7 +104,7 @@ class TestTransmitter:
         return Ain, Aout
 
     def _compressed_curve(self, n=50):
-        """Compression curve where Aout < Ain (saturation behaviour)."""
+        """Compression curve where Aout < Ain (saturation behavior)."""
         Ain = np.linspace(0, 1, n)
         Aout = Ain / (1 + 0.5 * Ain)  # always < Ain for Ain > 0
         return Ain, Aout

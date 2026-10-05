@@ -209,7 +209,7 @@ EasySpin development checkout, Python 3.12.13, PyTorch 2.5.1+cu121, numpy 2.4.3.
 `benchmarks/workloads/run_workloads.py` at 1/8/32 threads, on CUDA (best of 2), fit loop with
 4/16/64 worker processes, cProfile runs, `benchmarks/workloads/matlab_workloads.m` with the same
 nine systems).  Baseline commit `ee32042` (results `benchmarks/results/workstation_20260902/`), after the
-optimisations commit `9c3c971` (`benchmarks/results/workstation_20260902_after/`; cardamom row from
+optimizations commit `9c3c971` (`benchmarks/results/workstation_20260902_after/`; cardamom row from
 `cardamom_rot_threads*.json` after the tensor-rotation follow-up).  Tables regenerate with
 `python benchmarks/analysis/workstation_report.py <dir> [--after <dir>]`.
 Caveat: another user's single-core GPU-1 job ran on the reference workstation during the baseline multi-process and
@@ -217,7 +217,7 @@ profile stages and during the after run; torchspin used GPU 0 and at most 64 of 
 
 ## Summary
 
-* Before this round torchspin was 3–10× slower than EasySpin on the matrix-diagonalisation
+* Before this round torchspin was 3–10× slower than EasySpin on the matrix-diagonalization
   workloads and 8× slower on trajectory EPR; the GPU was slower than one CPU core for every
   matrix workload.
 * After it, torchspin on 32 threads is faster than MATLAB on 8 of the 9 workloads (1.2–3×) and
@@ -251,7 +251,7 @@ profile stages and during the after run; torchspin used GPU 0 and at most 64 of 
 | after | 2.54 | 2.61 | 2.50 | 4.28 | |
 
 Process-level parallelism of independent forward calls (the esfit / sweep pattern) gave 3.5×
-before; after the optimisations one call takes 0.13 s and the spawn/import overhead of the pool
+before; after the optimizations one call takes 0.13 s and the spawn/import overhead of the pool
 (~2 s) dominates, so the serial loop is already as fast as 16 processes.
 
 ## Where the time went (cProfile, cumulative, 32 threads / CUDA)
@@ -259,7 +259,7 @@ before; after the optimisations one call takes 0.13 s and the spawn/import overh
 Baseline:
 
 * **pepper 63Cu+2×14N (72 states)**: 11.1 s in `resfields_batch`, 10.2 s of it in `torch.linalg.eigh`
-  (18 660 matrices); the two-step Newton polish plus the final intensity pass diagonalised every
+  (18 660 matrices); the two-step Newton polish plus the final intensity pass diagonalized every
   candidate four times.  On CUDA the same calls took 51 s.
 * **pepper Mn(II) (36 states)**: 12.5 s `eigh` (87 320 matrices), 5.6 s in the Python-loop
   `_projecttriangles`, 1.2 s spherical interpolation.  CUDA: 128 s in `eigh`.
@@ -286,14 +286,14 @@ After:
 
 ## What changed (commits 0bbd6b9, e9e3051, 9c3c971)
 
-1. Resonance search (`resfields_batch`): one exact diagonalisation per candidate at the root of
+1. Resonance search (`resfields_batch`): one exact diagonalization per candidate at the root of
    the cubic Hermite model (EasySpin's scheme) with a free Hellmann–Feynman Newton correction;
    eigenvectors reused for the intensities; knot/candidate batches chunked to ~400 MB; reassembly,
    thresholding and strain widths as tensor ops with one host sync per call.
 2. Multi-core eigendecompositions (`torchspin/_linalg.py`): torch's batched `eigh` loops serially
    over CPU batches, so 32 threads were no faster than 1.  Splitting the batch over a thread pool
    of single-threaded LAPACK calls gives 21–23× on 32 cores (2400 × 72×72: 1.5 s → 0.066 s).
-   cuSOLVER's batched Jacobi solver stops at 32×32; larger CUDA batches are diagonalised one
+   cuSOLVER's batched Jacobi solver stops at 32×32; larger CUDA batches are diagonalized one
    launch at a time (51 s for the same 2400 matrices) and are now routed to the CPU pool.
 3. `Options.BatchSize` automatic (all orientations per call, memory-capped) instead of 10.
 4. SOPHE projection and Gaussian accumulation vectorised (scatter-add + cumulative sums; windowed

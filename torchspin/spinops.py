@@ -150,7 +150,7 @@ def sop(
     >>> SxI = sop([0.5, 0.5], [1, 1])   # same, flat-pair [spin_idx=1, comp_idx=x]
     >>> SzIz = sop([0.5, 0.5], [[1, 3], [2, 3]])  # product Sz1⊗Sz2
     """
-    # Normalise spins to list of floats
+    # Normalize spins to list of floats
     if isinstance(spins, (int, float)):
         spins = [float(spins)]
     else:

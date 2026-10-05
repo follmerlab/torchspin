@@ -130,7 +130,7 @@ def _compare(ref, test):
 
 
 def _gpu_snapshot():
-    """nvidia-smi utilisation/memory of every GPU (contention record); None if unavailable."""
+    """nvidia-smi utilization/memory of every GPU (contention record); None if unavailable."""
     import subprocess
     try:
         txt = subprocess.check_output(
@@ -149,7 +149,7 @@ class _EighCounter:
     """Count torch.linalg.eigh/eigvalsh calls by device and matrix size.
 
     ``torchspin/_linalg.py`` calls ``torch.linalg.eigh`` through the module
-    attribute, so wrapping it here sees every batched diagonalisation, including
+    attribute, so wrapping it here sees every batched diagonalization, including
     the ones it moved from CUDA to the CPU pool (matrices larger than 32x32).
     """
 

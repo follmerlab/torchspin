@@ -14,7 +14,7 @@ changed (list at the end).
 |---|---|---|
 | `chili` (scipy.sparse SLE solver) and `cardamom` (NumPy trajectory propagation) have no device argument; their `device` factory parameter was ignored | three "CUDA" timings were CPU runs | `WORKLOAD_DEVICES` marks them CPU-only; the runner records `effective_mode='unsupported'` and does not time them on CUDA |
 | `saffron_hyscore_512` built `SaffronOptions(GridSize=91)` without `device` | the "CUDA" HYSCORE timing was a CPU run | `SaffronOptions(GridSize=91, device=device)` |
-| `torchspin/_linalg.eigh` routes CUDA batches of matrices larger than 32×32 (cuSOLVER `syevjBatched` limit) to the CPU thread pool; the Cu/2N system is 72×72 and the Mn(II) system 36×36 | both matrix-method "CUDA" timings were CPU eigendecompositions plus GPU bookkeeping | instrumented run counts every `torch.linalg.eigh`/`eigvalsh` call by device and dimension; such runs are labelled `hybrid` |
+| `torchspin/_linalg.eigh` routes CUDA batches of matrices larger than 32×32 (cuSOLVER `syevjBatched` limit) to the CPU thread pool; the Cu/2N system is 72×72 and the Mn(II) system 36×36 | both matrix-method "CUDA" timings were CPU eigendecompositions plus GPU bookkeeping | instrumented run counts every `torch.linalg.eigh`/`eigvalsh` call by device and dimension; such runs are labeled `hybrid` |
 | pepper's grid interpolation, triangle projection and strain accumulation are host-side NumPy/SciPy regardless of `device` | CUDA kernels are a small fraction of the wall time even for the small-matrix workloads | profiler trace records the CUDA-kernel fraction of wall time; `hybrid` when < 50 % |
 | only `torch.set_num_threads` was set; OpenBLAS/OpenMP pools of NumPy/SciPy/torch stayed at their defaults (64) | thread-count series did not control the native pools | OMP/MKL/OPENBLAS/NUMEXPR_NUM_THREADS exported before import and recorded with threadpoolctl |
 | single timed call (`--repeat 1` CPU, best of 2 CUDA, one MATLAB call including first-call JIT) | no dispersion; EasySpin times included JIT/warm-up | one untimed warm-up, five timed replicates, median and IQR, every replicate saved |
@@ -57,7 +57,7 @@ changed (list at the end).
   plus their job on GPU 1); those files are kept in `pass1_with_foreign_load/`.  The CUDA
   stage (07:11–07:13) and the second CPU/MATLAB pass (07:14–07:26), which are the
   reported results, ran with no foreign process above 5 % CPU and both GPUs at 0 %
-  utilisation before and after each stage.  (The raw `system_state.log` recorded by the
+  utilization before and after each stage.  (The raw `system_state.log` recorded by the
   harness is not distributed: it lists other users' processes.  Rerunning
   `benchmarks/cluster/run_workstation_verified.sh` regenerates it locally.)  Pass 1 and pass 2 agree
   within a few per cent for every workload.  Three idle Jupyter kernels of the
@@ -120,9 +120,9 @@ TorchSpin q3 and vice versa).  Machine-readable: `summary.csv`, `raw_replicates.
   every batched eigendecomposition was executed by the CPU thread pool
   (`torchspin/_linalg.eigh`: matrices above the 32×32 cuSOLVER batched limit are moved
   to the host); zero `eigh` calls ran on CUDA.  Their CUDA-mode timings are CPU
-  diagonalisation (32 threads) plus GPU-resident Hamiltonian construction and
+  diagonalization (32 threads) plus GPU-resident Hamiltonian construction and
   resonance search, which is why they are within 10–20 % of the 32-thread CPU times.
-  The 6×6 nitroxide systems (strain, fit loop) diagonalise on CUDA but interpolate,
+  The 6×6 nitroxide systems (strain, fit loop) diagonalize on CUDA but interpolate,
   project and accumulate on the host (thousands of device→host copies per call);
   the perturbative workload runs 0.2 % of its wall time in kernels.
 * **Unsupported on CUDA**: `chili_nitroxide_2nuc`, `chili_powder_potential`,
@@ -183,7 +183,7 @@ pass), `figures/` (figures, `summary.csv`, `raw_replicates.csv`, `summary_tables
    median for older analysis scripts); thread environment variables set before import
    and recorded with threadpoolctl, CPU affinity and git state in `meta`; unsupported
    devices skipped and recorded; CUDA verification (profiler trace, kernel fraction,
-   memcpy counts, eigh device/dimension counter, CPU/CUDA consistency, GPU utilisation
+   memcpy counts, eigh device/dimension counter, CPU/CUDA consistency, GPU utilization
    snapshots) and `effective_mode` classification per workload; `--no-verify`;
    `--list` shows supported devices.  The `--procs` and `--profile` modes are kept.
 3. `benchmarks/workloads/matlab_workloads.m` — `BENCH_WARMUP`/`BENCH_NREP`/`BENCH_OUT`

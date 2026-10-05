@@ -65,7 +65,7 @@ def orisel(sys, exp, opt: Optional[OriselOptions] = None):
     -------
     weights : ndarray, shape (nOrientations,)
         Boltzmann-weighted, bandwidth-weighted selectivity for each orientation.
-        Normalised so the maximum weight is 1.0.
+        Normalized so the maximum weight is 1.0.
     phi : ndarray, shape (nOrientations,)
         Azimuthal angles (rad) of the SOPHE grid points.
     theta : ndarray, shape (nOrientations,)
@@ -158,13 +158,13 @@ def orisel(sys, exp, opt: Optional[OriselOptions] = None):
             from torchspin.constants import GFREE, BMAGN, PLANCK
             dnu_dB = GFREE * BMAGN / PLANCK * 1e-9  # MHz/mT  ≈ 28.02 MHz/mT
             hwhm_B = excit_hwhm / dnu_dB  # mT
-            B_target = mwFreq_MHz / dnu_dB  # approximate centre
+            B_target = mwFreq_MHz / dnu_dB  # approximate center
             delta_B = float(Bt) - B_target
             lorentz = 1.0 / (1.0 + (delta_B / hwhm_B) ** 2)
             w_sum += float(It) * lorentz
         selectivity[i] = w_sum * float(weights_grid[i])
 
-    # Normalise
+    # Normalize
     w_max = selectivity.max()
     if w_max > 0:
         selectivity = selectivity / w_max

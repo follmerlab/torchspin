@@ -188,7 +188,7 @@ class Options:
     AccumMethod:
         garlic only.  Spectrum accumulation: ``'binning'`` (nearest-bin stick
         spectrum + convolution; default in the isotropic regime), ``'linear'``
-        (line split between its two neighbouring bins, EasySpin ``makespec``;
+        (line split between its two neighboring bins, EasySpin ``makespec``;
         differentiable in the line positions and selected automatically when the
         spin system carries grad tensors) or ``'explicit'`` (per-line
         Lorentzians; default in the fast-motion regime).  ``None`` = auto.

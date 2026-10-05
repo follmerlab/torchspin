@@ -163,7 +163,7 @@ def ham_zf(
 def zfsframes(sys: 'SpinSystem'):
     """Extract zero-field splitting parameters and principal frame orientations.
 
-    Port of EasySpin's ``zfsframes.m``.  Analyses the D-tensor of each
+    Port of EasySpin's ``zfsframes.m``.  Analyzes the D-tensor of each
     electron spin and returns the conventional D/E ZFS parameters together
     with the Euler angles that rotate the molecular frame to the D principal
     frame.
@@ -192,7 +192,7 @@ def zfsframes(sys: 'SpinSystem'):
     principal values; Euler angles are taken from ``sys.DFrame``.
 
     If D is given as full 3×3 matrices ``(3*nElectrons, 3)``, the principal
-    values are found by diagonalising each D matrix, and the Euler angles
+    values are found by diagonalizing each D matrix, and the Euler angles
     are extracted from the eigenvector matrix.
 
     Examples
@@ -218,7 +218,7 @@ def zfsframes(sys: 'SpinSystem'):
     D_t = sys.D.numpy()
 
     if sys.fullD:
-        # Full 3×3 per electron: diagonalise each block
+        # Full 3×3 per electron: diagonalize each block
         for i in range(n_e):
             Di = D_t[3*i:3*i+3, :]
             evals, evecs = np.linalg.eigh(Di)

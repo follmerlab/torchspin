@@ -9,8 +9,8 @@ same field direction, level pair and resonance field.
 
 Tolerance: EasySpin (resfields.m ~1147) builds U and V by *linear
 interpolation* of the eigenvectors at the two knots of the field segment that
-brackets the resonance (re-diagonalising only for unstable states), whereas
-torchspin diagonalises at the resonance field itself.  That interpolation
+brackets the resonance (re-diagonalizing only for unstable states), whereas
+torchspin diagonalizes at the resonance field itself.  That interpolation
 limits the agreement to ~1e-4..1e-3 relative (largest for strongly mixed
 states, e.g. two S=1/2 with ee = 1000 MHz at oblique directions).  Observed
 maximum over the five systems x six directions: 1.3e-3; asserted: 3e-3.

@@ -39,8 +39,8 @@ def test_fast_motion_gradients():
     assert y.requires_grad
     J = _jac(y, [g, A, tc, lwg], 4)
     base_g, base_A = [2.008, 2.006, 2.003], [16.0, 16.0, 95.0]
-    # tcorr: the fine accumulation grid is re-discretised with the smallest width,
-    # so the finite difference needs a step that stays inside one discretisation
+    # tcorr: the fine accumulation grid is re-discretized with the smallest width,
+    # so the finite difference needs a step that stays inside one discretization
     cases = (('g', 0, 0, 1e-7, 1e-6), ('g', 2, 2, 1e-7, 1e-6), ('A', 2, 5, 1e-4, 1e-6),
              ('tc', 0, 6, 1e-15, 1e-4), ('lw', 0, 7, 1e-5, 1e-6))
     for name, i, col, h, tol in cases:

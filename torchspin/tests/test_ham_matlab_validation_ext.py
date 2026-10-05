@@ -93,7 +93,7 @@ def sys_from_matlab(ms) -> SpinSystem:
         kw['D'] = kw['D'].reshape(n_e, 1)
 
     # EasySpin: g as one isotropic value per electron, e.g. g = [2 2].
-    # SpinSystem only recognises scalar, (3,), (n_e,3) or full forms.
+    # SpinSystem only recognizes scalar, (3,), (n_e,3) or full forms.
     if 'g' in kw and kw['g'].ndim == 1 and kw['g'].size == n_e and n_e != 3:
         kw['g'] = np.repeat(kw['g'].reshape(n_e, 1), 3, axis=1)
 
@@ -127,7 +127,7 @@ def sys_from_matlab(ms) -> SpinSystem:
     if 'sigma' in kw and kw['sigma'].ndim == 1 and kw['sigma'].size == 3:
         kw['sigma'] = kw['sigma'].reshape(1, 3)
 
-    # Frames.  SpinSystem normalises 1-D gFrame/DFrame/AFrame/eeFrame but not
+    # Frames.  SpinSystem normalizes 1-D gFrame/DFrame/AFrame/eeFrame but not
     # QFrame/sigmaFrame/nnFrame, so reshape the single-row shorthand here.
     for name in ('gFrame', 'DFrame', 'AFrame', 'eeFrame', 'QFrame', 'nnFrame',
                  'sigmaFrame'):

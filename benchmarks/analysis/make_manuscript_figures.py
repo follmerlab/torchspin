@@ -260,7 +260,7 @@ def fig5_differentiable_fit_loss(outdir: Path):
 # ----------------------------------------------------------------------
 
 def write_parity_table(outdir: Path):
-    """Write a LaTeX booktabs table summarising MATLAB parity."""
+    """Write a LaTeX booktabs table summarizing MATLAB parity."""
     lines = [
         r'\begin{table}[h]',
         r'\centering',

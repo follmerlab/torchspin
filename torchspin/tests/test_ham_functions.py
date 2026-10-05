@@ -114,7 +114,7 @@ class TestHamZf:
 
         Hzf = ham_zf(sys)
 
-        # Check it's traceless (characteristic of ZFS)
+        # Check it's traceless (characteriztic of ZFS)
         trace = torch.trace(Hzf)
         assert torch.allclose(trace, torch.zeros(1, dtype=torch.complex128).squeeze(), atol=1e-12)
 

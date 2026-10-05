@@ -51,7 +51,7 @@ def test_perturbative_path_gradients():
 
 
 def test_matrix_path_gradients():
-    """14N with quadrupole (matrix diagonalisation), fixed D2h grid: d spec / d(A, Q)."""
+    """14N with quadrupole (matrix diagonalization), fixed D2h grid: d spec / d(A, Q)."""
     exp = Experiment(Field=3394, mwFreq=95); opt = Options(GridSize=19, GridSymmetry='D2h')
 
     def run(Av, Qv):

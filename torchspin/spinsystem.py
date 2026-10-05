@@ -222,13 +222,13 @@ class SpinSystem:
     def __post_init__(self) -> None:
         from torchspin.constants import GFREE
 
-        # Normalise S
+        # Normalize S
         if isinstance(self.S, (int, float)):
             self.S = [float(self.S)]
         else:
             self.S = [float(s) for s in self.S]
 
-        # Normalise Nucs
+        # Normalize Nucs
         if isinstance(self.Nucs, str):
             if self.Nucs:
                 # Split comma-separated nuclei, strip whitespace
@@ -237,7 +237,7 @@ class SpinSystem:
             else:
                 self.Nucs = []
 
-        # Normalise L (orbital angular momenta)
+        # Normalize L (orbital angular momenta)
         if self.L is not None:
             if isinstance(self.L, (int, float)):
                 self.L = [float(self.L)]
@@ -250,7 +250,7 @@ class SpinSystem:
                 self.gL = [float(self.gL)] * len(self.L)
             else:
                 self.gL = [float(gl) for gl in self.gL]
-            # Normalise soc to tensor
+            # Normalize soc to tensor
             if self.soc is not None:
                 self.soc = _to_tensor(self.soc, torch.float64)
                 if self.soc.ndim == 1:
@@ -519,7 +519,7 @@ class SpinSystem:
         # Convention matches MATLAB EasySpin: sigma defaults to ones(nNuclei, 3),
         # and ham_nz uses pre * sigma * Ik directly (no (I-sigma) transformation).
         def _per_nucleus_rows(T: torch.Tensor, n_rows: int, isotropic_scalar: bool) -> torch.Tensor:
-            """Normalise 0-D / 1-D per-nucleus (or per-pair) input to (n_rows, 3)."""
+            """Normalize 0-D / 1-D per-nucleus (or per-pair) input to (n_rows, 3)."""
             if T.ndim == 0:
                 return T.expand(n_rows, 3).clone()
             if T.ndim == 1:
@@ -660,7 +660,7 @@ class SpinSystem:
             elif self.AStrain.shape[0] != 3:
                 raise ValueError("AStrain must have shape [3].")
 
-        # DStrain: normalised to (nElectrons, 2) = [FWHM_D, FWHM_E] per electron
+        # DStrain: normalized to (nElectrons, 2) = [FWHM_D, FWHM_E] per electron
         # (EasySpin Sys.DStrain: one row per electron spin, 1-3 columns).
         if self.DStrain is not None:
             self.DStrain = _to_tensor(self.DStrain, torch.float64)
@@ -1078,7 +1078,7 @@ class SpinSystem:
 # ---------------------------------------------------------------------------
 
 def _nucleus_indices(sys: 'SpinSystem', idx) -> list[int]:
-    """Normalise nucleus index/indices to a sorted list of 0-based ints."""
+    """Normalize nucleus index/indices to a sorted list of 0-based ints."""
     n = sys.nNuclei
     if isinstance(idx, (int, np.integer)):
         idx = [int(idx)]
@@ -1275,7 +1275,7 @@ def isotopologues(sys: 'SpinSystem') -> list[tuple[float, 'SpinSystem']]:
     -----
     Only a single variant is returned per isotope (the specified isotope in
     *sys.Nucs* with its natural abundance).  To generate variants for *all*
-    naturally occurring isotopes of each element, use a more specialised
+    naturally occurring isotopes of each element, use a more specialized
     function.
 
     Examples

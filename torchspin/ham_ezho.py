@@ -45,11 +45,11 @@ from torchspin.spinsystem import SpinSystem
 # Conversion tables (from McGavin-Tennant-Weil / EasySpin ham_ezho.m)
 # ---------------------------------------------------------------------------
 
-# alphapm1(lB+1) = 1/sqrt(c_{lB})  — spherical harmonic normalisation
+# alphapm1(lB+1) = 1/sqrt(c_{lB})  — spherical harmonic normalization
 _ALPHAPM1_SQ = [1, 1, 1.5, 2.5, 35/8, 63/8, 231/16, 429/16, 6435/128]
 _ALPHAPM1 = [1.0 / math.sqrt(a) for a in _ALPHAPM1_SQ]
 
-# Alm[lS][|mS|] — conversion between Stevens operators and normalised
+# Alm[lS][|mS|] — conversion between Stevens operators and normalized
 # spherical tensor operators.  Index by (lS, abs_mS).
 _ALM = {
     1: [1.0, 1.0],
@@ -71,13 +71,13 @@ _ALM = {
 
 
 # ---------------------------------------------------------------------------
-# Helper: Stevens operator → normalised spherical tensor operator
+# Helper: Stevens operator → normalized spherical tensor operator
 # ---------------------------------------------------------------------------
 
 def _stev_to_sph(spins, lS, mS, iSpin, dtype, device):
-    """Convert Stevens operator to normalised spherical tensor T_{lS,mS}."""
+    """Convert Stevens operator to normalized spherical tensor T_{lS,mS}."""
     if lS == 0:
-        # T_{0,0} = identity (normalised)
+        # T_{0,0} = identity (normalized)
         n = math.prod(int(round(2 * s + 1)) for s in spins)
         return torch.eye(n, dtype=dtype, device=device)
 

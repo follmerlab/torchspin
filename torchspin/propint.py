@@ -81,9 +81,9 @@ def propint(
     # Time grid within one period
     tPeriod = 1.0 / freq
     dt = tPeriod / nIntervals
-    t_centers = (np.arange(nIntervals) + 0.5) * dt  # centre of each interval
+    t_centers = (np.arange(nIntervals) + 0.5) * dt  # center of each interval
 
-    # Cosine modulation values at interval centres
+    # Cosine modulation values at interval centers
     ct = np.cos(2 * np.pi * freq * t_centers + phase)
 
     # Precompute constant factors

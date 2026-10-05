@@ -27,7 +27,7 @@ def load(path=FILE):
     """Return field (mT), spectrum, mwFreq (GHz) and the raw parameter dict."""
     x, y, prm = eprload(path)
     y = np.asarray(np.real(y), dtype=float)
-    # WinEPR (.par) keys: MF = microwave frequency (GHz), HCF/HSW = centre field / sweep (G),
+    # WinEPR (.par) keys: MF = microwave frequency (GHz), HCF/HSW = center field / sweep (G),
     # RMA = modulation amplitude (G), MP = power (mW), RRG = receiver gain, JSD = scans.
     # BES3T (.DSC) keys: MWFQ (Hz), XMIN/XWID (G), B0MA (T), MWPW (W), RCAG (dB), AVGS.
     if 'MWFQ' in prm:

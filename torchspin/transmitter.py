@@ -3,7 +3,7 @@
 Port of EasySpin's ``transmitter.m``.
 
 Models the effect of a nonlinear power amplifier on a pulse signal.
-The transmitter characteristic (input amplitude → output amplitude) is
+The transmitter characteriztic (input amplitude → output amplitude) is
 described by a polynomial fit constrained through the origin.
 
 Example

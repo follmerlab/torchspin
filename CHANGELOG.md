@@ -49,7 +49,7 @@ one; none changes any numerical result.
   interrupted=False` with SciPy's message; a stop or interrupt returns the
   best point so far with `interrupted=True`; `n_iterations` is the
   Jacobian-evaluation count (one per trust-region iteration). TRF is an
-  optimisation method, not a CPU-acceleration feature: it runs sequentially;
+  optimization method, not a CPU-acceleration feature: it runs sequentially;
   simulation threading and the population-worker `n_workers` parallelism are
   separate. The default method is unchanged (`simplex`). Parity with a direct
   `scipy.optimize.least_squares` call is tested (`tests/test_esfit_trf.py`).
@@ -71,7 +71,7 @@ one; none changes any numerical result.
   `SpinSystem` built from a template, on the autograd graph when the vector
   requires grad), `simulate`/`simulate_batch` (any differentiable simulator,
   `(N, nPoints)` output, optional spawned pool for no-grad generation),
-  `SpectrumDataset` (seeded on-the-fly samples with resampling, normalisation,
+  `SpectrumDataset` (seeded on-the-fly samples with resampling, normalization,
   noise and baseline), and torch losses (`cosine_loss`, `rmsd`, `normalize`,
   `resample`) so network predictions can be refined through the simulators.
 - `convspec` accepts tensor widths: differentiable ones are routed to the
@@ -98,7 +98,7 @@ one; none changes any numerical result.
 - `pepper_autograd` / `differentiable_spectrum` handle strains (HStrain,
   gStrain, AStrain, DStrain): the per-transition widths from
   `compute_strain_widths_batch` are already torch, and the EasySpin summation
-  branch (facet centres, spread-smoothed widths, bin-integrated Gaussians —
+  branch (facet centers, spread-smoothed widths, bin-integrated Gaussians —
   `gaussian_bins_t`) is now torch too. Forward equals `pepper()` to 2e-12 on
   nitroxide HStrain+gStrain (D2h), axial gStrain (Dinfh), AStrain and S=1
   DStrain cases; gradients vs finite differences of `pepper()` 1e-6–1e-8 for
@@ -125,11 +125,11 @@ one; none changes any numerical result.
   autograd graph for g, A, Q, tcorr/logtcorr and lw/lwpp. Forward unchanged to
   1e-9 (Fremy's salt, nitroxide fast motion, methyl perturb2, frequency sweep,
   Temperature, Harmonic 2, ModAmp); gradients vs finite differences 1e-8
-  (`test_garlic_autograd.py`; the fine accumulation grid is re-discretised with
+  (`test_garlic_autograd.py`; the fine accumulation grid is re-discretized with
   the smallest width, so tcorr finite differences need a step within one
-  discretisation).
+  discretization).
 - `Options.AccumMethod='linear'` (EasySpin `makespec`: a line is split between
-  its two neighbouring bins) is the differentiable form of the default
+  its two neighboring bins) is the differentiable form of the default
   nearest-bin stick spectrum and is selected automatically when the spin
   system carries grad tensors; it differs from nearest-bin binning by the
   sub-bin quantisation only (≈(Δx/2)/σ relative, 1 % for a 0.3 mT Gaussian at
@@ -177,8 +177,8 @@ one; none changes any numerical result.
   pepper 0.9998–1.0000 / 0.999). Training a CNN on their output was training on
   a model that differs from pepper/EasySpin by more than the features to learn.
 - `SpinSystem` keeps tensors that `requires_grad` (no copy) and accepts lists of
-  tensors (`g=[g_tensor]`, `A=[[ax, ay, az]]`), so parameters can be optimised
-  through the regular simulators; `resfields_batch` Boltzmann normalisation is
+  tensors (`g=[g_tensor]`, `A=[[ax, ay, az]]`), so parameters can be optimized
+  through the regular simulators; `resfields_batch` Boltzmann normalization is
   out of place (autograd through `exp`); `hamsymm` detaches before comparing.
 - Not yet differentiable: strains, `ModAmp`, `mwPhase`, ordering,
   photoselection, crystals, frequency sweeps (`pepper_autograd` raises
@@ -263,11 +263,11 @@ notebooks 01–08, benchmark report against MATLAB/EasySpin. Details below.
 ### Changed — performance round 1 (2026-09-02)
 Results are unchanged (MATLAB parity suites and the full test suite green after
 every step; resonance positions within 1e-11 mT of the previous search).
-- `resfields_batch`: one exact diagonalisation per resonance candidate at the
+- `resfields_batch`: one exact diagonalization per resonance candidate at the
   cubic-model root (EasySpin's scheme) with a free Hellmann–Feynman Newton
   correction, instead of three polish evaluations plus a final pass; the
   transition eigenvectors are gathered there and reused for intensities;
-  knot and candidate diagonalisations chunked to ~400 MB; per-orientation
+  knot and candidate diagonalizations chunked to ~400 MB; per-orientation
   reassembly and strain widths as tensor ops (one host sync per call).
 - `torchspin/_linalg.py`: batched `eigh`/`eigvalsh` split over a thread pool of
   single-threaded LAPACK calls (torch loops serially over CPU batches; 21–23×
@@ -294,7 +294,7 @@ every step; resonance positions within 1e-11 mT of the previous search).
   Lanczos/direct/eigen solvers, field-sweep methods, post-convolution nuclei,
   multi-component input; 60-case MATLAB suite (59 at cosine ≥0.999).
 - `pepper`: first-principles absolute intensity (dBdE, nuclear-sublevel
-  sharing, density normalisation) — the empirical scale factors are gone;
+  sharing, density normalization) — the empirical scale factors are gone;
   symmetry-frame fix for tilted axial tensors; level-pair transition
   bookkeeping and EasySpin's strain summation on the interpolated grid;
   Delaunay triangulation, rectified interpolation and projection for the
@@ -335,7 +335,7 @@ every step; resonance positions within 1e-11 mT of the previous search).
 ### Changed — EasySpin parity round 3
 - `cardamom`: field-swept spectra no longer apply `Experiment.Harmonic`
   (EasySpin returns the imaginary FFT of the time-weighted FID); the output
-  scale follows EasySpin's double orientation normalisation; the jump model
+  scale follows EasySpin's double orientation normalization; the jump model
   no longer requires a correlation time.
 - `hamsymm`: principal-value equality at 1e-12 relative (was `torch.allclose`).
 - `FitOptions.lm_delta` default 1e-3 and `lm_gradient_tol` 1e-5 (EasySpin).
@@ -356,8 +356,8 @@ every step; resonance positions within 1e-11 mT of the previous search).
   (sub-increment widths differed by up to 3.7× from the analytic kernel).
 - pepper: resonances were matched across orientations by list index;
   strain widths were evaluated at one field per orientation; slots with
-  missing resonances were filled from neighbours; isotropic systems and
-  frequency sweeps had wrong normalisation/units; single components ignored
+  missing resonances were filled from neighbors; isotropic systems and
+  frequency sweeps had wrong normalization/units; single components ignored
   `Sys.weight`.
 
 ### Added — EasySpin port completion (2026-09-01)
@@ -457,7 +457,7 @@ every step; resonance positions within 1e-11 mT of the previous search).
 - `TestAutoTargetAndGlobal` and `TestSimplexExploration` regression tests
   in `tests/test_esfit.py` (6 new tests total).
 - `benchmarks/PERFORMANCE_SUMMARY.md` and `benchmarks/RUNLOG_2026-04-20.md`
-  (development records, not distributed; their results are summarised in
+  (development records, not distributed; their results are summarized in
   `benchmarks/results/BENCHMARK_REPORT.md` and embedded in
   `benchmarks/analysis/make_manuscript_figures.py`)
   — performance and accuracy summary (MATLAB parity

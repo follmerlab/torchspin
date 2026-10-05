@@ -5,7 +5,7 @@ the CPU (one LAPACK call per matrix), so a 32-core node is no faster than one co
 Splitting the batch over a thread pool of single-threaded LAPACK calls scales almost
 linearly (64-core workstation, 2400 × 72×72 complex: 1.5 s → 0.066 s with 32 workers).  On CUDA,
 cuSOLVER's batched Jacobi solver only covers matrices up to 32×32; larger batches are
-diagonalised one launch at a time and are 5–10× slower than the CPU pool, so they are
+diagonalized one launch at a time and are 5–10× slower than the CPU pool, so they are
 routed to the CPU and copied back.  Results are identical to the serial path (each
 matrix is still handled by the same LAPACK routine).
 """

@@ -30,7 +30,7 @@ reads the acquisition parameters and fits it.
 differentiable simulators: `ParamSpec` (which spin-system fields are free,
 their ranges and transforms, with `pack`/`unpack` to and from a flat tensor),
 `simulate`/`simulate_batch`, `SpectrumDataset` (an `IterableDataset` that
-samples parameters, simulates, normalises, resamples and adds noise
+samples parameters, simulates, normalizes, resamples and adds noise
 deterministically for a given seed) and the differentiable losses
 `cosine_loss` / `rmsd`.
 
@@ -40,7 +40,7 @@ deterministically for a given seed) and the differentiable losses
 - [KNOWN_LIMITATIONS](../KNOWN_LIMITATIONS.md) — what is and is not ported, per simulator, with the evidence.
 - [CHANGELOG](../CHANGELOG.md) — what changed when, including the parity and performance rounds.
 - [Benchmark report](../benchmarks/results/BENCHMARK_REPORT.md) — MATLAB/EasySpin vs torchspin on nine
-  workloads, before and after the 2026-09 optimisations, with profiles and the measurement procedure.
+  workloads, before and after the 2026-09 optimizations, with profiles and the measurement procedure.
 - [Verified matched-host campaign](https://github.com/follmerlab/torchspin/blob/main/benchmarks/results/workstation_20260904_verified/BENCHMARK_VERIFICATION.md)
   — the authoritative performance measurement: five replicates per point, medians with IQRs, and a
   per-workload device audit showing which runs actually used CUDA. Supersedes the benchmark report

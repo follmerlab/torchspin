@@ -96,7 +96,7 @@ def levels(
     nStates = H0.shape[0]
 
     # -----------------------------------------------------------------------
-    # Normalise phi / theta to arrays so we can handle both scalar and vector
+    # Normalize phi / theta to arrays so we can handle both scalar and vector
     # -----------------------------------------------------------------------
     phi_arr = torch.as_tensor(phi, dtype=torch.float64).reshape(-1)
     theta_arr = torch.as_tensor(theta, dtype=torch.float64).reshape(-1)

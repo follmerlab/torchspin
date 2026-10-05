@@ -42,7 +42,7 @@ _MT_TO_MHZ = GFREE * BMAGN / PLANCK * 1e-9  # MHz/mT
 
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """Cosine similarity between two normalised spectra."""
+    """Cosine similarity between two normalized spectra."""
     an = a / np.abs(a).max()
     bn = b / np.abs(b).max()
     return float(np.dot(an, bn) / (np.linalg.norm(an) * np.linalg.norm(bn)))

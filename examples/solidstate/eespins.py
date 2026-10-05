@@ -24,7 +24,7 @@ def run():
         lw=[1.0, 0.0],
     )
 
-    # Weak exchange: small J -> two nearly independent S=1/2 centres
+    # Weak exchange: small J -> two nearly independent S=1/2 centers
     Sys_weak = SpinSystem(
         S=[0.5, 0.5],
         g=[[2.0, 2.0, 2.0], [2.0, 2.0, 2.0]],
@@ -50,7 +50,7 @@ def _plot(B_np, spc_strong, spc_weak):
     axes[0].grid(True, alpha=0.3)
 
     axes[1].plot(B_np, norm(spc_weak), 'r', lw=1.5)
-    axes[1].set_title('Weak exchange (J = 10 MHz): two nearly independent S=1/2 centres')
+    axes[1].set_title('Weak exchange (J = 10 MHz): two nearly independent S=1/2 centers')
     axes[1].set_xlabel('Magnetic field (mT)')
     axes[1].set_ylabel('Intensity (norm.)')
     axes[1].grid(True, alpha=0.3)

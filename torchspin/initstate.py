@@ -38,7 +38,7 @@ def _as_array(x) -> np.ndarray:
 
 
 def parse_init_state(sys) -> Optional[tuple[np.ndarray, str]]:
-    """Normalise ``sys.initState`` to ``(matrix_or_vector, basis)`` with basis
+    """Normalize ``sys.initState`` to ``(matrix_or_vector, basis)`` with basis
     ``'uncoupled'``, ``'eigen'`` or ``'zerofield'`` (EasySpin validatespinsys)."""
     st = getattr(sys, 'initState', None)
     if st is None:

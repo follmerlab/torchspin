@@ -100,7 +100,7 @@ class TestQuatmult:
             t = quatmult(q, quatinv(q))
             assert np.allclose(np.abs(t), [1, 0, 0, 0], atol=1e-12)
 
-    def test_normalised_output(self):
+    def test_normalized_output(self):
         """Product of unit quaternions is unit quaternion."""
         q = _make_quat(1.0, 0.5, 2.0)
         r = _make_quat(0.3, 1.2, 0.7)
@@ -206,7 +206,7 @@ class TestRotmat2Quat:
             q = rotmat2quat(R)
             assert q[0] >= -1e-12
 
-    def test_normalised(self):
+    def test_normalized(self):
         for a in _ANGLES:
             R = erot(*a).numpy()
             q = rotmat2quat(R)
@@ -315,9 +315,9 @@ class TestQuat2Euler:
             _, b, _ = quat2euler(q)
             assert float(b) >= -1e-10
 
-    def test_unnormalised_raises(self):
-        q = np.array([1.0, 0.1, 0.0, 0.0])  # not normalised
-        with pytest.raises(ValueError, match="normalised"):
+    def test_unnormalized_raises(self):
+        q = np.array([1.0, 0.1, 0.0, 0.0])  # not normalized
+        with pytest.raises(ValueError, match="normalized"):
             quat2euler(q)
 
 

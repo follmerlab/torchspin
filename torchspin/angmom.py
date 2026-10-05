@@ -596,7 +596,7 @@ def isto(J, kq, q_arg=None) -> np.ndarray:
     >>> T = isto(0.5, 1, 0)    # T^1_0 for S=1/2  (= Sz / sqrt(2), unnorm)
     >>> T = isto(1.0, [2, 0])  # T^2_0 for S=1
     """
-    # --- Normalise input ---
+    # --- Normalize input ---
     if q_arg is not None:
         # isto(J, k, q) shorthand
         k_single = int(round(float(kq)))
