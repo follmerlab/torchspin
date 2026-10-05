@@ -36,23 +36,33 @@ before using it for publication-critical calculations.
 
 ## Installation
 
-torchspin is not on PyPI yet; install from source:
+```bash
+pip install torchspin                 # core
+pip install "torchspin[plot]"         # + matplotlib for the plotting helpers
+pip install "torchspin[gui]"          # + the interactive fitting panel (torchspin.fitgui)
+```
+
+CPU-only PyTorch (avoids the large CUDA wheels):
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install torchspin
+```
+
+Requires Python 3.10+, PyTorch 2.0+, NumPy 1.23+, SciPy 1.10+.
+
+From source, for development or to run the test suite — the MATLAB reference
+data lives in the repository, not in the PyPI package, so the cross-validation
+tests only run from a checkout:
 
 ```bash
 git clone https://github.com/follmerlab/torchspin.git
 cd torchspin
-pip install -e .                   # core
-pip install -e ".[plot]"          # with matplotlib for plotting helpers
-pip install -e ".[gui]"           # with the interactive fitting panel
+pip install -e ".[dev]"
+pytest -q                             # full suite, ~25 min
+pytest -q -m "not slow" -k "not matlab_validation"   # fast pass, ~4 min
 ```
 
-CPU-only PyTorch:
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -e .
-```
-
-Requires Python 3.10+, PyTorch 2.0+, NumPy 1.23+, SciPy 1.10+.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the test layout and what CI runs.
 
 ---
 
