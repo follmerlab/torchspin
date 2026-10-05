@@ -305,13 +305,19 @@ differentiable.
 | PyTorch | 2.5 (CUDA 12.1) | 2.14 (CUDA 13.0) |
 | GPU | 2× RTX 4090 | 2× RTX 3090 |
 
+CI additionally runs the suite on Linux, macOS and Windows across Python
+3.10-3.13 on every push, which is the full range the package claims support
+for (`requires-python = ">=3.10"`).
+
 The clean-room host installs the package into an empty environment from the
 declared dependencies alone and runs the full suite; it is what the release is
 gated on.  NumPy 1.x is still supported (the `np.trapezoid` / `np.trapz`
-fallbacks) but is not routinely exercised.  macOS and Windows are not tested;
-nothing in the package is platform-specific, but Bruker companion-file lookup
-is the kind of thing that only breaks on a case-sensitive filesystem, so
-treat untested platforms as untested.
+fallbacks) but is not routinely exercised.
+
+Platform-specific breakage is real and worth testing for rather than assuming
+away: the first CI run the project ever completed found that `eprload` could
+not pair Bruker `.SPC`/`.PAR` files on a case-sensitive filesystem, which no
+amount of testing on macOS would have surfaced.
 
 CUDA is used opportunistically.  Batched eigendecompositions of matrices
 larger than 32×32 are routed to the CPU thread pool (the cuSOLVER
