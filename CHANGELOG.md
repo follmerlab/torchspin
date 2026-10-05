@@ -6,10 +6,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [0.3.0] — 2026-10-04
 
-First public release.  Benchmark artefacts now identify the measurement host
-by its hardware rather than by hostname, and the development history
-(manuscript drafts, planning notes, agent branches) is not part of this
-repository.
+First public release.
 
 ### Fixed — NumPy 2.0 and case-sensitive filesystems (2026-10-04)
 
@@ -263,7 +260,7 @@ notebooks 01–08, benchmark report against MATLAB/EasySpin. Details below.
   two minima are the same powder spectrum and which one a simplex reaches is
   decided by rounding noise.
 
-### Changed — performance round 1 (branch `agents/torchspin-port-4`, 2026-09-02)
+### Changed — performance round 1 (2026-09-02)
 Results are unchanged (MATLAB parity suites and the full test suite green after
 every step; resonance positions within 1e-11 mT of the previous search).
 - `resfields_batch`: one exact diagonalisation per resonance candidate at the
@@ -290,7 +287,7 @@ every step; resonance positions within 1e-11 mT of the previous search).
   results in `benchmarks/results/workstation_20260902*/` and
   `benchmarks/results/BENCHMARK_REPORT.md`.
 
-### Added — EasySpin parity round 2 (branch `agents/torchspin-port-2`, 2026-09-01)
+### Added — EasySpin parity round 2 (2026-09-01)
 - `chili`: full port of EasySpin's general stochastic-Liouville method
   (`torchspin/chili_sle.py`): arbitrary spin systems, several nuclei, S>1/2,
   orienting potentials with powder integration, LjKKM basis switches,
@@ -323,7 +320,7 @@ every step; resonance positions within 1e-11 mT of the previous search).
   companion-file axes, multi-value BES3T, JEOL and specman fixes.
 - Ports of EasySpin's `isotopologues_*` tests; cardamom MATLAB references.
 
-### Added — EasySpin parity round 3 (branch `agents/torchspin-port-3`, 2026-09-02)
+### Added — EasySpin parity round 3 (2026-09-02)
 - `pepper`: `Experiment.mwMode` excitation modes (`torchspin/excitation.py`),
   photoselection on the perturbation paths, `Options.separate='transitions'`,
   automatic sweep ranges, EasySpin transition pre-/post-selection, paired
@@ -363,7 +360,7 @@ every step; resonance positions within 1e-11 mT of the previous search).
   frequency sweeps had wrong normalisation/units; single components ignored
   `Sys.weight`.
 
-### Added — EasySpin port completion (branch `agents/torchspin-saffron-porting`, 2026-09-01)
+### Added — EasySpin port completion (2026-09-01)
 - `saffron`: S>1/2 systems, MimsENDOR blind-spot fix, `ProductRule` with
   `TimeDomain`, multi-component input with `Sys.weight` and
   `opt.separate='components'`, single-crystal simulations via
