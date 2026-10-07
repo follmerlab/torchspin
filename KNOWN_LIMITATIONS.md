@@ -71,7 +71,9 @@ natural-abundance isotopologue expansion multiplies whatever that costs
 |---|---|---|---|
 | 63Cu + 2×14N (72 states) | `matrix` | 5.9 s | 16.3 s |
 | 63Cu + 2×14N | `hybrid` | 0.06 s | 0.14 s |
-| 63Cu + 4×14N (648 states) | `matrix` | hours | ~10 min |
+| 63Cu + 2×14N, tilted `AFrame` | `matrix` | 590 s | 630 s |
+| 63Cu + 2×14N, tilted `AFrame` | `hybrid` | 5.1 s | 143 s |
+| 63Cu + 4×14N (648 states) | `matrix` | not measured to completion | not measured to completion |
 | 63Cu + 4×14N | `hybrid` | 0.27 s | 0.28 s |
 | 63Cu + 4×14N | `perturb` | 0.06 s | 0.04 s |
 | Cu + 4×N, natural abundance | `hybrid` | 2.0 s | 5.6 s |
@@ -79,7 +81,10 @@ natural-abundance isotopologue expansion multiplies whatever that costs
 | Cu + N with `n=[1,4]` | `hybrid` | 0.30 s | not supported |
 
 Two things follow.  `matrix` on Cu + 4×14N is not a fit-loop operation in either
-code — that is what `hybrid` is for.  And if the isotope matters less than the
+code — that is what `hybrid` is for; neither code was run to completion on it
+here, and the tilted-frame row is the largest exact comparison that was.  Note
+that torchspin's exact solver is **not** the slower of the two: it is 2.8×
+faster at two nitrogens and comparable with a full A tensor.  And if the isotope matters less than the
 run time, name the isotopes (`'63Cu'`, `'14N'`) or raise `Opt.IsoCutoff`:
 natural-abundance copper alone doubles the work for a 0.3 % spectral change.
 
@@ -93,6 +98,24 @@ collapsed; EasySpin's `pepper` rejects `n > 1` for every method.  Equivalence
 means *identical couplings and identical orientations*: four nitrogens with
 different `AFrame` tilts are not a set of equivalent nuclei, whatever their
 principal values.
+
+**Open: the matrix path loses absolute amplitude as ligand nuclei are added.**
+Found while building the comparison above, and present in 0.3.0 — the spectra
+are bit-identical to the released code.  Shapes agree with EasySpin (cosine
+0.9995 at two nitrogens), but the absolute amplitude drifts low, and
+progressively: ratio 1.000 with no nuclei, 0.990 with one nitrogen, 0.978 with
+two, against EasySpin's own matrix result for the same system.  A quadrupolar
+ligand shows the same solver drifting in shape instead: Cu + 14N with `Sys.Q`
+gives cosine 0.9974 through `matrix` and 0.9998 through `hybrid`.  The integrated
+absorption behaves the same way — 578, 560, 535 for 0, 1, 2 nitrogens, where
+`hybrid` and `perturb` both hold at 578 — so the exact solver is dropping
+intensity somewhere rather than misplacing it.  `Options.Threshold=0` does not
+recover it (it makes the agreement worse), so the transition pre-selection is
+not the cause.  Everything else in the trust matrix is unaffected: this shows up
+only with a large central hyperfine coupling plus several resolved ligand
+nuclei, the regime where `matrix` is in any case the wrong tool for the cost.
+The two `cupc_*_2N_matrix` cases hold the current size of the deviation so that
+it cannot grow unnoticed.  Not yet diagnosed.
 
 **Default `GridSize=[19,4]` is unconverged for narrow lines on a large
 hyperfine.** For this system the default grid leaves the powder average

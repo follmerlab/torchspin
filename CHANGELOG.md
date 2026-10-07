@@ -123,6 +123,21 @@ pool, so two concurrent batches could interleave and leave the process pinned
 at one intra-op thread for the rest of the session.  Both now hold a lock
 across the critical section.
 
+### Documented — the matrix path loses amplitude as ligand nuclei are added
+
+Found while building the comparison above, and **present in 0.3.0**: the
+spectra are bit-identical to the released code.  Against EasySpin's own matrix
+result the shape agrees (cosine 0.9995 at two nitrogens) but the absolute
+amplitude drifts low, and progressively — 1.000 with no nuclei, 0.990 with one
+nitrogen, 0.978 with two.  With a quadrupolar ligand the same solver drifts in
+shape instead: cosine 0.9974 through `matrix` against 0.9998 through `hybrid`.  The integrated absorption shows the same loss (578,
+560, 535) where `hybrid` and `perturb` both hold at 578, so intensity is being
+dropped rather than misplaced, and `Options.Threshold=0` does not recover it.
+
+Not diagnosed yet, and not fixed here.  The two `cupc_*_2N_matrix` validation
+cases now pin the current size of the deviation so that it cannot grow
+unnoticed, and § Pepper in `KNOWN_LIMITATIONS.md` records what is known.
+
 ### Added — `benchmarks/python/cupc_claims.py`
 
 Reproduces the five reported defects and records the measured before/after
