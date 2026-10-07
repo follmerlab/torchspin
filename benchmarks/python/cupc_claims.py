@@ -66,11 +66,29 @@ def _time(sys_, opt) -> tuple[float, str, np.ndarray | None]:
 
 
 def claim_1_matrix_crash() -> list[str]:
-    """Matrix diagonalization on Cu + 4x14N."""
+    """Matrix diagonalization on Cu + 4x14N, the exact call that was reported.
+
+    Only run with --slow: once the eigensolver no longer aborts, this call
+    *completes*, and exact diagonalization of a 648-dimensional Hilbert space
+    over a powder grid takes a very long time in either code.  That is the
+    point of the hybrid method, not a thing to wait for on every run.
+    """
     sys_ = _system(['Cu'] + ['N'] * 4, 4)
     dt, status, _ = _time(sys_, Options())
-    return [f'Cu(nat) + 4xN(nat), Method=matrix, GridSize=[19,4] (default)',
+    return ['Cu(nat) + 4xN(nat), Method=matrix, GridSize=[19,4] (default)',
             f'  {dt:8.2f} s  ->  {status}']
+
+
+def claim_1_hybrid_handles_it() -> list[str]:
+    """The same system through the hybrid method, for scale."""
+    rows = []
+    for label, nucs, n_n, n in (('4 explicit N  ', ['Cu'] + ['N'] * 4, 4, None),
+                                ('N with n=[1,4]', ['Cu', 'N'], 1, [1, 4])):
+        sys_ = _system(nucs, n_n, n=n)
+        dt, status, _ = _time(sys_, Options(Method='hybrid', HybridCoreNuclei=[1],
+                                            GridSize=[91, 4], Verbosity=0))
+        rows.append(f'  hybrid, {label}, GridSize=[91,4]:  {dt:7.2f} s  ->  {status}')
+    return rows
 
 
 def claim_2_hybrid_missing() -> list[str]:
@@ -101,8 +119,10 @@ def claim_4_perturb_cost() -> list[str]:
             note = '' if status == 'ok' else f'  ({status})'
             rows.append(f'  {label}   {str(grid):>8}   {n_comp:10d}   {dt:7.2f} s{note}')
     rows.append('')
-    rows.append('  Cost is nearly independent of GridSize -> it is a fixed per-component')
-    rows.append('  setup cost, paid once per isotopologue, not orientation work.')
+    rows.append('  The cost barely moves between a 7-knot and a 91-knot grid, so it is')
+    rows.append('  per-component setup rather than orientation work, and it is paid once')
+    rows.append('  per isotopologue -- which is why natural abundance costs several times')
+    rows.append('  more than naming the isotopes.')
     return rows
 
 
@@ -134,12 +154,16 @@ def extra_isocutoff() -> list[str]:
     return rows
 
 
+SLOW_SECTIONS = (
+    ('Claim 1 - matrix diagonalization on Cu + 4x14N (the reported call)', claim_1_matrix_crash),
+    ('Claim 5b - matrix cost with two ligand nuclei', claim_5_matrix_scaling),
+)
+
 SECTIONS = (
-    ('Claim 1 - matrix diagonalization crashes on Cu + 4x14N', claim_1_matrix_crash),
+    ('Claim 1 - the same system the matrix method could not diagonalize', claim_1_hybrid_handles_it),
     ('Claim 2 - no hybrid method', claim_2_hybrid_missing),
     ('Claim 3 - pepper rejects equivalent nuclei (Sys.n > 1)', claim_3_equivalent_nuclei),
     ('Claim 4 - perturbation cost is dominated by per-component setup', claim_4_perturb_cost),
-    ('Claim 5 - matrix cost grows steeply with the number of nuclei', claim_5_matrix_scaling),
     ('Extra - does Options.IsoCutoff reach the isotopologue expansion?', extra_isocutoff),
 )
 
@@ -148,6 +172,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=None,
                         help='directory for a Markdown report (default: print only)')
+    parser.add_argument('--label', default=None,
+                        help="tag for the report filename, e.g. 'before' or 'after'")
+    parser.add_argument('--slow', action='store_true',
+                        help='also run the exact-diagonalization cases, which take '
+                             'tens of minutes for Cu + 4 nitrogens')
     args = parser.parse_args()
 
     lines = [
@@ -164,7 +193,7 @@ def main() -> int:
         '9.347144 GHz, 233.8-433.8 mT, 2667 points.',
         '',
     ]
-    for title, fn in SECTIONS:
+    for title, fn in (SECTIONS + SLOW_SECTIONS if args.slow else SECTIONS):
         lines.append(f'## {title}')
         lines.append('')
         lines.append('```')
@@ -177,7 +206,8 @@ def main() -> int:
 
     if args.output is not None:
         args.output.mkdir(parents=True, exist_ok=True)
-        path = args.output / f'cupc_claims_{_dt.date.today():%Y%m%d}.md'
+        tag = f'_{args.label}' if args.label else ''
+        path = args.output / f'cupc_claims_{_dt.date.today():%Y%m%d}{tag}.md'
         path.write_text(report, encoding='utf-8')
         print(f'wrote {path}')
     return 0

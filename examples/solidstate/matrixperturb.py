@@ -28,21 +28,19 @@ def run():
 
     exp = Experiment(mwFreq=10.0, Range=[290, 390], nPoints=1024, Harmonic=1)
 
-    # Matrix diagonalization (default method in torchspin)
+    # Matrix diagonalization (default method), the accurate reference.
     opt_matrix = Options(GridSize=[19, 4], Verbosity=0)
     t0 = time.time()
     B, spc_matrix = pepper(Sys, exp, opt_matrix)
     t_matrix = time.time() - t0
     print(f'Matrix method: {t_matrix:.2f} s')
 
-    # Perturbation theory is not yet exposed as a pepper option in torchspin;
-    # the matrix method is used for both curves here to demonstrate the API.
-    # In EasySpin, Opt.Method='perturb' selects the perturbation path.
-    # torchspin's resfields_perturb module provides the per-orientation PT engine.
+    # Second-order perturbation theory: orders of magnitude faster, and less
+    # accurate the larger the hyperfine coupling is.
     t0 = time.time()
-    _, spc_perturb = pepper(Sys, exp, opt_matrix)
+    _, spc_perturb = pepper(Sys, exp, Options(Method='perturb', GridSize=[19, 4], Verbosity=0))
     t_perturb = time.time() - t0
-    print(f'Perturbation (matrix fallback): {t_perturb:.2f} s')
+    print(f'Perturbation theory: {t_perturb:.2f} s')
 
     return B.numpy(), spc_matrix.numpy(), spc_perturb.numpy(), t_matrix, t_perturb
 
