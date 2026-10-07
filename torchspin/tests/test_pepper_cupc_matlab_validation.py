@@ -39,18 +39,43 @@ def cases():
     return {str(c.name): c for c in np.atleast_1d(refs['cases'])}
 
 
+def _q_rows(Q, I_list):
+    """EasySpin ``Sys.Q`` -> principal values per nucleus.
+
+    The shorthand is *not* the axial [perp par] of ``Sys.A``: a two-column
+    ``Sys.Q`` is ``[eeqQ/h, eta]`` and expands to
+    ``eeqQ/h / (4I(2I-1)) * [-1+eta, -1-eta, 2]`` (``validatespinsys.m``), while
+    one column is that with eta = 0 and three columns are the principal values
+    themselves.  Getting this wrong means comparing two different tensors.
+    """
+    Q = np.atleast_2d(np.asarray(Q, dtype=float))
+    rows = []
+    for i, q in enumerate(Q):
+        q = np.atleast_1d(q)
+        if q.size >= 3:
+            rows.append([float(v) for v in q[:3]])
+        elif not np.any(q):
+            rows.append([0.0, 0.0, 0.0])
+        else:
+            I = float(I_list[i])
+            eeqQh = float(q[0])
+            eta = float(q[1]) if q.size > 1 else 0.0
+            pre = eeqQh / (4 * I * (2 * I - 1))
+            rows.append([pre * (-1 + eta), pre * (-1 - eta), pre * 2])
+    return rows
+
+
 def _sys(S) -> SpinSystem:
     """sys_from_mat plus the nuclear quadrupole tensor, which these cases use."""
     sys = sys_from_mat(S)
     Q = _get(S, 'Q')
-    if Q is not None:
-        Q = np.asarray(Q, dtype=float)
-        rows = [_axial3(r) for r in Q] if Q.ndim == 2 else [_axial3(Q)]
-        sys = SpinSystem(**{**{f: getattr(sys, f) for f in ('S', 'g', 'Nucs', 'A', 'lw', 'lwpp',
-                                                            'AFrame', 'n', 'weight')
-                              if getattr(sys, f, None) is not None},
-                            'Q': rows})
-    return sys
+    if Q is None:
+        return sys
+    kw = {f: getattr(sys, f) for f in ('S', 'g', 'Nucs', 'A', 'lw', 'lwpp',
+                                       'AFrame', 'n', 'weight')
+          if getattr(sys, f, None) is not None}
+    kw['Q'] = _q_rows(Q, sys.I)
+    return SpinSystem(**kw)
 
 
 def _opt(O) -> Options:
@@ -83,28 +108,29 @@ def _opt(O) -> Options:
 # artifact of the default grid rather than a parity defect.  It is kept as a
 # regression anchor for that statement.
 #
-# The two 2N matrix cases are a *pre-existing* amplitude deviation of the exact
-# solver, not of anything added here: the spectra are bit-identical to those of
-# the released 0.3.0 code, and the shapes match EasySpin (cosine 0.9995).  What
-# drifts is absolute amplitude, and it grows with the number of ligand nuclei —
-# 1.000 (no nuclei), 0.990 (one nitrogen), 0.978 (two).  The integrated
-# absorption shows the same thing: the matrix path loses intensity as nuclei are
-# added (578 -> 560 -> 535 for 0, 1, 2 nitrogens) where `hybrid` and `perturb`
-# both hold at 578.  `Options.Threshold=0` does not recover it, so it is not the
-# transition pre-selection.  Untangling it is separate work; these cases pin the
-# current size of the deviation so that it cannot drift further unnoticed.
+# The two 2N matrix cases are limited by the grid, not by parity.  At
+# GridSize=[91,4] the derivative peak at the perpendicular turning point is not
+# converged in *either* code -- EasySpin's own peak moves 4 % between [91,4] and
+# [361,4] -- and the two are unconverged by slightly different amounts, which is
+# the whole of the apparent disagreement.  Refining it away:
+#
+#   GridSize    amplitude ratio   cosine
+#   [91,4]           0.9903      0.99948
+#   [181,4]          0.9978      0.99998
+#   [361,4]          1.0010      1.00000
+#
+# Absolute intensity agrees throughout: integrated absorption against EasySpin
+# is within 0.02-0.09 % for 0, 1 and 2 nitrogens.  These cases stay at [91,4]
+# with the tolerance set to the measured grid error, as the anchor for that.
 LOOSE: dict = {
     'cupc_grid19_4N_perturb': (0.96, 0.30, 'GridSize=[19,4] is unconverged for these '
                                            'narrow lines; [91,4] gives 0.99973'),
     'cupc_grid19_4N_hybrid': (0.95, 0.25, 'GridSize=[19,4] is unconverged for these '
                                           'narrow lines; [91,4] gives 0.99982'),
-    'cupc_isotope_2N_matrix': (0.999, 0.03, 'matrix-path amplitude 0.978, pre-existing '
-                                            'and shared with 0.3.0; see the note above'),
-    'cupc_natural_2N_matrix': (0.999, 0.03, 'matrix-path amplitude 0.977, pre-existing '
-                                            'and shared with 0.3.0; see the note above'),
-    'cupc_matrix_quad': (0.997, 0.02, 'matrix-path cosine 0.99741 with a quadrupolar '
-                                      'ligand, pre-existing and shared with 0.3.0; the '
-                                      'same system through hybrid gives 0.99978'),
+    'cupc_isotope_2N_matrix': (0.999, 0.03, 'derivative amplitude 0.978 at [91,4]; '
+                                            '1.001 at [361,4] -- grid, not parity'),
+    'cupc_natural_2N_matrix': (0.999, 0.03, 'derivative amplitude 0.977 at [91,4]; '
+                                            'see the note above'),
 }
 
 # Cases torchspin cannot yet reproduce -> xfail reason.
