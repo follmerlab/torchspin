@@ -99,32 +99,52 @@ means *identical couplings and identical orientations*: four nitrogens with
 different `AFrame` tilts are not a set of equivalent nuclei, whatever their
 principal values.
 
-**Open: the matrix path loses absolute amplitude as ligand nuclei are added.**
-Found while building the comparison above, and present in 0.3.0 — the spectra
-are bit-identical to the released code.  Shapes agree with EasySpin (cosine
-0.9995 at two nitrogens), but the absolute amplitude drifts low, and
-progressively: ratio 1.000 with no nuclei, 0.990 with one nitrogen, 0.978 with
-two, against EasySpin's own matrix result for the same system.  A quadrupolar
-ligand shows the same solver drifting in shape instead: Cu + 14N with `Sys.Q`
-gives cosine 0.9974 through `matrix` and 0.9998 through `hybrid`.  The integrated
-absorption behaves the same way — 578, 560, 535 for 0, 1, 2 nitrogens, where
-`hybrid` and `perturb` both hold at 578 — so the exact solver is dropping
-intensity somewhere rather than misplacing it.  `Options.Threshold=0` does not
-recover it (it makes the agreement worse), so the transition pre-selection is
-not the cause.  Everything else in the trust matrix is unaffected: this shows up
-only with a large central hyperfine coupling plus several resolved ligand
-nuclei, the regime where `matrix` is in any case the wrong tool for the cost.
-The two `cupc_*_2N_matrix` cases hold the current size of the deviation so that
-it cannot grow unnoticed.  Not yet diagnosed.
+**The derivative peak at a turning point needs a finer grid than the spectrum
+as a whole.** Worth knowing because it looks like a parity defect and is not.
+Comparing Cu + 1x14N by `matrix` against EasySpin at `GridSize=[91,4]` gives
+cosine 0.99948 but an amplitude ratio of 0.990, and at two nitrogens 0.978 —
+outside the 2 % amplitude convention.  Refining the grid removes it entirely:
+
+| `GridSize` | torchspin peak | EasySpin peak | ratio | cosine |
+|---|---|---|---|---|
+| `[91,4]` | 53.18 | 53.70 | 0.9903 | 0.99948 |
+| `[181,4]` | 51.51 | 51.62 | 0.9978 | 0.99998 |
+| `[361,4]` | 51.49 | 51.44 | 1.0010 | 1.00000 |
+
+**Neither code is converged at `[91,4]`** — EasySpin's own peak moves 53.70 →
+51.62 → 51.44 over the same refinement, a 4 % change in its own answer — and the
+two are unconverged by slightly different amounts, which is the whole of the
+apparent disagreement.  At `[361,4]` they agree to 0.1 % in amplitude and to
+cosine 1.00000.  The derivative extremum at a turning point is the most
+grid-sensitive number in a powder spectrum, far more so than the integrated
+intensity, so it is the first thing to check when an amplitude looks wrong.
+
+**Absolute intensity does agree, including with nuclei.** Integrated absorption
+(`Harmonic=0`, `[91,4]`) against EasySpin: 578.38/578.38 with no nuclei,
+559.77/559.90 with one nitrogen, 535.49/534.99 with two — 0.02-0.09 %.
+Absorption peak heights agree to 0.2-0.8 %.
+
+That the integral *falls* as nuclei are added (578 → 560 → 535) is real but is
+not a torchspin effect: **EasySpin does the same, to 0.1 %.** It is the matrix
+method's transition pre-selection dropping weak transitions — both codes select
+exactly the same number of level pairs (60 with one nitrogen, 215 with two) —
+and `Options.Threshold=0` does not recover it, because without pre-selection the
+pure nuclear transitions come back and put intensity in the wrong places.
+`hybrid` and `perturb` hold at 578 because they place all the nuclear intensity
+on the core lines instead.
 
 **Default `GridSize=[19,4]` is unconverged for narrow lines on a large
 hyperfine.** For this system the default grid leaves the powder average
 dominated by ripple, and the two codes place that ripple differently: the same
 Cu + 4×N spectrum agrees with EasySpin to cosine 0.9998 at `[91,4]` but only
-0.96–0.97 at `[19,4]`.  Neither result is right — both are unconverged.  There
-is no automatic warning; converge the grid yourself whenever the linewidth is
-small compared with the field spread between neighboring grid points.  The two
-`cupc_grid19_4N_*` cases are kept in the validation suite as the record of this.
+0.96–0.97 at `[19,4]`.  Neither result is right — both are unconverged.  There is no
+automatic warning, because there is no reliable shortcut: a heuristic on the
+field step between knots flags dozens of simulations that agree with EasySpin to
+cosine 0.9999, since the SOPHE projection integrates analytically over each grid
+segment.  Use `torchspin.grid_convergence(sys, exp, opt)`, which simulates again
+on a finer grid and reports what changed — the only trustworthy test, and the
+one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
+the record of this.
 
 ## Pepper — absolute intensity (fixed 2026-09-01)
 
@@ -330,7 +350,9 @@ seconds for time sweeps) instead of converting to mT, multi-dimensional data
 are returned as arrays with one abscissa per dimension (a list), several data
 values per point (`IKKF 'CPLX,CPLX'`) give a list of datasets, and JEOL /
 specman axes follow EasySpin's conventions. Callers that relied on mT must
-divide by 10.
+divide by 10.  The `eprload` docstring now states the units per format and shows
+that conversion in a worked example, and `eprload_info` prints the unit and
+flags a gauss axis, so this no longer has to be found here first.
 
 ---
 
@@ -439,8 +461,11 @@ The documented xfails are:
 
 The 4 skips are environment-dependent, not unimplemented behavior:
 
-* 3 in `test_fitgui.py` — `ipywidgets` is absent (it ships in the `gui`
-  extra, not `test`); install `torchspin[gui]` to run them.
+* `test_fitgui.py` used to skip because `ipywidgets` shipped only in the `gui`
+  extra; it is now in `test` and `dev` as well, so those tests run.  A missing
+  GUI dependency also no longer surfaces as a bare `ModuleNotFoundError` — the
+  panel raises an `ImportError` naming the module and the extra that provides
+  it.
 * 1 in `test_gpu_consistency.py` — it exercises the CPU fallback taken when
   CUDA is *missing*, so it skips on a machine that has a GPU.
 

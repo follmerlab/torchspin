@@ -68,11 +68,29 @@ def eprload(
     Returns
     -------
     x : ndarray
-        Abscissa (magnetic field, time, frequency, etc.)
+        Abscissa, **in the units the file uses**, exactly as EasySpin's
+        ``eprload`` returns it — it is not converted.  For Bruker BES3T and
+        ESP/WinEPR field sweeps that is **gauss**, not millitesla; for Bruker
+        ENDOR it is MHz, and for time sweeps seconds.  Magnettech XML gives mT.
+        For multi-dimensional data this is a list, one abscissa per dimension.
+
+        The rest of torchspin works in **mT** (``Experiment.Range``,
+        ``Experiment.Field``, ``SpinSystem.lw``), so a Bruker field axis needs
+        dividing by 10 before it is used to build an ``Experiment``::
+
+            B_G, spc, pars = eprload('spectrum.DTA')
+            exp = Experiment(mwFreq=pars['MWFQ'] / 1e9,      # Hz -> GHz
+                             Range=[B_G[0] / 10, B_G[-1] / 10],   # G -> mT
+                             nPoints=B_G.size, Harmonic=1)
+
+        The file's own unit string survives in *params* where the format
+        records one (``params['XUNI']`` for BES3T).
     y : ndarray
-        Ordinate (spectral intensity)
+        Ordinate (spectral intensity).  A list of arrays when the file holds
+        several datasets (BES3T ``IKKF`` with more than one entry).
     params : dict
-        Dictionary of parameters from the parameter file
+        Dictionary of parameters from the parameter file, keys and values as the
+        file spells them.
     """
     filepath = Path(filename)
 
@@ -1518,14 +1536,27 @@ def _apply_scaling(y: np.ndarray, params: Dict[str, Any], scaling: str) -> np.nd
 # ---------------------------------------------------------------------------
 
 def eprload_info(filename: Union[str, Path]) -> None:
-    """Display information about an EPR data file."""
+    """Display information about an EPR data file.
+
+    The x-axis is reported in the file's own units (gauss for Bruker field
+    sweeps), which is what :func:`eprload` returns; see its docstring.
+    """
     x, y, params = eprload(filename)
+    axes = x if isinstance(x, list) else [x]
+    data = y[0] if isinstance(y, list) else y
 
     print(f"File: {filename}")
-    print(f"Data points: {y.size}")
-    if x.size > 0:
-        print(f"X-axis: {x.ravel()[0]:.3f} to {x.ravel()[-1]:.3f} ({len(x)} points)")
-    yr = np.real(y) if np.iscomplexobj(y) else y
+    print(f"Data points: {np.asarray(data).size}")
+    unit = str(params.get('XUNI', '')).strip("'\"") or '?'
+    for i, ax in enumerate(axes):
+        ax = np.asarray(ax).ravel()
+        if ax.size == 0:
+            continue
+        label = 'X-axis' if len(axes) == 1 else f'Axis {i + 1}'
+        u = unit if i == 0 else '?'
+        print(f"{label}: {ax[0]:.3f} to {ax[-1]:.3f} {u} ({ax.size} points)"
+              f"{'  [divide by 10 for mT]' if u.upper() == 'G' else ''}")
+    yr = np.real(data) if np.iscomplexobj(data) else np.asarray(data)
     print(f"Y-axis: min={yr.min():.3e}, max={yr.max():.3e}")
     print(f"\nKey parameters:")
 

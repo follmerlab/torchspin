@@ -123,20 +123,94 @@ pool, so two concurrent batches could interleave and leave the process pinned
 at one intra-op thread for the rest of the session.  Both now hold a lock
 across the critical section.
 
-### Documented — the matrix path loses amplitude as ligand nuclei are added
+### Added — `grid_convergence`, to answer whether `Options.GridSize` is enough
 
-Found while building the comparison above, and **present in 0.3.0**: the
-spectra are bit-identical to the released code.  Against EasySpin's own matrix
-result the shape agrees (cosine 0.9995 at two nitrogens) but the absolute
-amplitude drifts low, and progressively — 1.000 with no nuclei, 0.990 with one
-nitrogen, 0.978 with two.  With a quadrupolar ligand the same solver drifts in
-shape instead: cosine 0.9974 through `matrix` against 0.9998 through `hybrid`.  The integrated absorption shows the same loss (578,
-560, 535) where `hybrid` and `perturb` both hold at 578, so intensity is being
-dropped rather than misplaced, and `Options.Threshold=0` does not recover it.
+The default `GridSize=[19,4]` is badly unconverged for a narrow line on a large
+hyperfine coupling — for the reported Cu(II) case the derivative peak is 3 % out
+at `[19,4]` and still moving 4 % between `[91,4]` and `[361,4]`, in EasySpin
+equally — and a single spectrum gives no hint of it.
 
-Not diagnosed yet, and not fixed here.  The two `cupc_*_2N_matrix` validation
-cases now pin the current size of the deviation so that it cannot grow
-unnoticed, and § Pepper in `KNOWN_LIMITATIONS.md` records what is known.
+`torchspin.grid_convergence(sys, exp, opt)` simulates again on a `refine`×
+finer coarse grid and reports the cosine and amplitude change, with
+`.converged` against tolerances a tenth of the repository's parity bar, and
+`.report()` giving a sentence that names a grid to use.
+
+A heuristic was tried first and deliberately abandoned: comparing the field step
+between knots against the linewidth sounds right, but the SOPHE projection
+integrates analytically over each grid segment, so a large step per knot is
+normal and harmless. That heuristic flagged ~60 simulations in this repository's
+own suite which agree with EasySpin to cosine 0.9999. A check that cries wolf on
+validated-correct cases is worse than none, so the honest version costs a second
+simulation and is opt-in rather than a warning inside `pepper`.
+
+### Fixed — `torchspin.fitgui` now says which extra to install
+
+`FitPanel(...)` failed with a bare `ModuleNotFoundError: No module named
+'ipywidgets'` and no hint that an optional dependency group provides it.  The
+imports now raise an `ImportError` naming the module, what it is needed for, and
+`pip install "torchspin[gui]"`.
+
+The `gui` extra was also incomplete: it omitted `ipython`, which
+`FitPanel.show()` needs, and `cloudpickle`, which the panel's own `n_workers`
+control needs.  Both are now in it, and `ipywidgets` is in `test` and `dev` so
+the four `test_fitgui.py` tests run instead of skipping.
+
+### Fixed — `vary` could put a linewidth or a weight below zero
+
+`vary` becomes `p0 ± vary`, so `Vary.lw = 1` around `lw = 0.54`, or
+`Vary.weight = 0.2` around `weight = 0.001` — both taken from a real fit script
+— handed the optimizer a negative lower bound for a quantity that cannot be
+negative.  In the dict style the field name is known, so the lower bound is now
+clipped at zero for `lw`, `lwpp`, `lwEndor`, `HStrain`, `gStrain`, `AStrain`,
+`DStrain`, `weight`, `tcorr`, `Diff`, `T1` and `T2`, which is what EasySpin's
+`esfit` does (`nonnegFieldNames`).  Explicit `lb`/`ub` are still used exactly as
+given — clipping a bound the user stated would be worse than the problem.
+
+A plain parameter vector carries no field names, so neither `esfit` nor
+`FitSession` can clip there, as in EasySpin; both docstrings now say so and
+point at `lb`/`ub`.
+
+### Fixed — `eprload` units are now documented where they bite
+
+`eprload` returns the abscissa in the file's own units, so a Bruker field axis
+is in **gauss** while the rest of torchspin works in mT.  That is deliberate and
+matches EasySpin, and it was recorded in `KNOWN_LIMITATIONS.md` — but the
+`eprload` docstring said only "Abscissa (magnetic field, time, frequency,
+etc.)", which is where a user actually looks before feeding the axis straight
+into `Experiment.Range`.  The docstring now states the units per format, shows
+the `/ 10` conversion in a worked example, and notes that the file's own unit
+string survives in `params`.
+
+`eprload_info` now prints the unit and, for a gauss axis, that it needs dividing
+by 10 (it also no longer crashes on multi-dimensional data, where `x` is a list
+of axes and `y` can be a list of datasets).
+
+### Documented — derivative amplitude at a turning point is grid-limited
+
+Investigated because it first looked like a parity defect of the exact solver,
+and turned out not to be one.  Comparing Cu + 1×14N by `matrix` against EasySpin
+at `GridSize=[91,4]` gives cosine 0.99948 but amplitude 0.990, and 0.978 at two
+nitrogens — outside the 2 % amplitude convention.  Refining the grid removes it:
+0.9903 → 0.9978 → **1.0010** and cosine 0.99948 → 0.99998 → **1.00000** over
+`[91,4]` → `[181,4]` → `[361,4]`.
+
+Neither code is converged at `[91,4]`: EasySpin's own derivative peak moves
+53.70 → 51.62 → 51.44 across the same refinement, a 4 % change in its own
+answer.  The two are simply unconverged by slightly different amounts.  The
+derivative extremum at a turning point is the most grid-sensitive quantity in a
+powder spectrum, much more so than the integrated intensity.
+
+Absolute intensity agrees throughout, including with nuclei: integrated
+absorption against EasySpin is 578.38/578.38, 559.77/559.90 and 535.49/534.99
+for 0, 1 and 2 nitrogens (0.02–0.09 %), and absorption peak heights agree to
+0.2–0.8 %.  That the integral falls as nuclei are added is real but **EasySpin
+does the same to 0.1 %** — it is the matrix method's transition pre-selection
+dropping weak transitions, and both codes select exactly the same number of
+level pairs (60 and 215).  `hybrid` and `perturb` hold at 578 because they put
+all the nuclear intensity on the core lines.
+
+The two `cupc_*_2N_matrix` cases are kept at `[91,4]` with the amplitude
+tolerance set to the measured grid error, as the regression anchor for this.
 
 ### Added — `benchmarks/python/cupc_claims.py`
 

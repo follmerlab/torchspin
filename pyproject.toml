@@ -49,9 +49,9 @@ Issues = "https://github.com/follmerlab/torchspin/issues"
 [project.optional-dependencies]
 plot = ["matplotlib>=3.6"]
 fit = ["cloudpickle>=2.0"]          # process-pool esfit with notebook-defined models
-gui = ["ipywidgets>=7.6", "matplotlib>=3.6", "ipympl>=0.9"]   # interactive fitting panel (torchspin.fitgui)
-test = ["pytest>=7", "pytest-cov", "matplotlib>=3.6", "cloudpickle>=2.0"]
-dev = ["pytest>=7", "pytest-cov", "build", "twine", "matplotlib>=3.6", "cloudpickle>=2.0"]
+gui = ["ipywidgets>=7.6", "matplotlib>=3.6", "ipympl>=0.9", "ipython>=7", "cloudpickle>=2.0"]   # interactive fitting panel (torchspin.fitgui)
+test = ["pytest>=7", "pytest-cov", "matplotlib>=3.6", "cloudpickle>=2.0", "ipywidgets>=7.6"]
+dev = ["pytest>=7", "pytest-cov", "build", "twine", "matplotlib>=3.6", "cloudpickle>=2.0", "ipywidgets>=7.6"]
 
 [tool.setuptools.packages.find]
 where = ["."]

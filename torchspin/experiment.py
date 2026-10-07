@@ -194,15 +194,21 @@ class Options:
         Computational method.  Which names are accepted depends on the
         simulator:
 
-        :func:`pepper`, :func:`salt` — ``'matrix'`` (default) exact
-        diagonalization; ``'perturb'``/``'perturb2'`` second-order perturbation
-        theory (``'perturb1'`` first order); ``'hybrid'`` exact core plus
+        :func:`pepper` — ``'matrix'`` (default) exact diagonalization;
+        ``'perturb'``/``'perturb2'`` second-order perturbation theory
+        (``'perturb1'`` first order); ``'hybrid'`` exact core plus
         perturbational ligand nuclei, selected with ``HybridCoreNuclei``.
-        ``'perturb3'``–``'perturb5'`` are not available here and raise.
+        ``'perturb3'``–``'perturb5'`` are not implemented here and raise rather
+        than quietly running second order.
 
         :func:`garlic` — ``'exact'`` (Breit–Rabi fixed-point solver, EasySpin
         default) / ``'perturb'`` / ``'perturb1'``–``'perturb5'`` (perturbation
-        theory of the given order; ``'perturb'`` = 5th order).
+        theory of the given order; ``'perturb'`` = 5th order).  Note that the
+        bare name means different orders in the two simulators, as in EasySpin.
+
+        :func:`salt` ignores ``Method``: it always finds resonance fields by
+        diagonalization and the ENDOR frequencies by first-order perturbation
+        theory.
     HybridCoreNuclei:
         ``Method='hybrid'`` only.  1-based indices into ``Sys.Nucs`` of the
         nuclei to keep in the exactly diagonalized core; all electron spins are

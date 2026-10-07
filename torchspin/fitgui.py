@@ -24,6 +24,23 @@ from torchspin.esfit import FitOptions, FitResult, ParameterHandler, esfit, _fit
 _METHODS = ['global', 'simplex', 'trf', 'levmar', 'lbfgsb', 'powell', 'swarm', 'genetic', 'montecarlo', 'grid']
 
 
+def _require(module: str, purpose: str, extra: str = 'gui'):
+    """Import an optional dependency, or explain how to install it.
+
+    The panel's dependencies are deliberately optional, so the failure has to
+    say which extra provides them rather than leaving a bare
+    ``ModuleNotFoundError: No module named 'ipywidgets'``.
+    """
+    import importlib
+    try:
+        return importlib.import_module(module)
+    except ImportError as exc:
+        raise ImportError(
+            f"torchspin.fitgui needs {module} ({purpose}), which is not installed. "
+            f'Install the optional dependencies with: pip install "torchspin[{extra}]"'
+        ) from exc
+
+
 class FitSession:
     """A fit that runs in a background thread and reports its progress.
 
@@ -40,6 +57,14 @@ class FitSession:
     they are ``p0 ± vary`` around the start of each run.  ``start(vary=...)`` with zero
     entries fixes those parameters for that run only (the panel's "fix" boxes), so a
     fixed parameter can be released again on the next run.
+
+    ``vary`` is **not** clipped at anything physical here, because a plain parameter
+    vector carries no information about what each entry means: ``vary`` larger than
+    ``p0`` gives a negative lower bound, which for a linewidth or a weight lets the
+    optimizer explore unphysical values.  Pass explicit ``lb``/``ub`` for those
+    parameters (``lb=np.maximum(p0 - vary, floor)``), or use :func:`esfit`'s dict
+    style, where the field names are known and non-negative fields are clipped at
+    zero as EasySpin does.
     """
 
     def __init__(self, data, model: Callable, p0, vary=None, lb=None, ub=None,
@@ -170,9 +195,9 @@ class FitPanel:
     """
 
     def __init__(self, session: FitSession, figsize=(7.0, 6.5), refresh_s: float = 0.5, x=None, xlabel='B (mT)'):
-        import ipywidgets as w
-        import matplotlib
-        import matplotlib.pyplot as plt
+        w = _require('ipywidgets', 'the parameter sliders and buttons')
+        matplotlib = _require('matplotlib', 'the fit figure')
+        plt = _require('matplotlib.pyplot', 'the fit figure')
         self.s = session
         self.refresh_s = refresh_s
         self.x = np.arange(self.s.data.size) if x is None else np.asarray(x, dtype=float)
@@ -242,7 +267,7 @@ class FitPanel:
 
     def show(self) -> None:
         """Display the panel (returns None so a trailing ``panel.show()`` is shown once)."""
-        from IPython.display import display
+        display = _require('IPython.display', 'rendering the panel in a notebook').display
         display(self.widget)
 
     # -- actions -----------------------------------------------------------------
