@@ -96,20 +96,39 @@ def test_missing_gui_dependency_names_the_extra():
     assert 'a_module_that_does_not_exist' in msg, msg
 
 
-def test_gui_extra_covers_what_the_panel_imports():
-    """ipython and cloudpickle were missing from the gui extra even though
-    FitPanel.show() and its n_workers control need them."""
-    import tomllib
+def _extra_line(name):
+    """The `name = [...]` line from [project.optional-dependencies], or None.
+
+    Read as text rather than parsed: tomllib is stdlib only from Python 3.11
+    and this package supports 3.10, and the assertions below only need to know
+    which names appear on which line.
+    """
     from pathlib import Path
     pyproject = Path(__file__).parent.parent.parent / 'pyproject.toml'
     if not pyproject.exists():
+        return None
+    in_extras = False
+    for raw in pyproject.read_text().splitlines():
+        line = raw.strip()
+        if line.startswith('['):
+            in_extras = line == '[project.optional-dependencies]'
+            continue
+        if in_extras and line.split('=')[0].strip() == name:
+            return line.lower()
+    return ''
+
+
+def test_gui_extra_covers_what_the_panel_imports():
+    """ipython and cloudpickle were missing from the gui extra even though
+    FitPanel.show() and its n_workers control need them."""
+    gui = _extra_line('gui')
+    if gui is None:
         pytest.skip('pyproject.toml not available (installed package)')
-    extras = tomllib.loads(pyproject.read_text())['project']['optional-dependencies']
-    gui = ' '.join(extras['gui']).lower()
+    assert gui, 'no gui extra found in [project.optional-dependencies]'
     for pkg in ('ipywidgets', 'matplotlib', 'ipympl', 'ipython', 'cloudpickle'):
-        assert pkg in gui, f'{pkg} missing from the gui extra'
+        assert pkg in gui, f'{pkg} missing from the gui extra: {gui}'
     # and the test extra must let the fitgui tests actually run
-    assert 'ipywidgets' in ' '.join(extras['test']).lower()
+    assert 'ipywidgets' in (_extra_line('test') or '')
 
 
 # --- esfit vary bounds ------------------------------------------------------
