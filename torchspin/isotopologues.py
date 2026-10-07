@@ -292,5 +292,6 @@ def expand_components(sys_or_list, rel_threshold: float = DEFAULT_ISO_CUTOFF) ->
     comps = sys_or_list if isinstance(sys_or_list, (list, tuple)) else [sys_or_list]
     out = []
     for c in comps:
-        out.extend(isotopologues(c, rel_threshold))
+        # Keyword, not positional: the second parameter of isotopologues() is n.
+        out.extend(isotopologues(c, rel_threshold=rel_threshold))
     return out

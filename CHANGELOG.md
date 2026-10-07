@@ -4,6 +4,130 @@ All notable changes to torchspin will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Found by fitting a Cu(II) phthalocyanine spectrum (CuPc in ZnPc: S=1/2,
+A∥(Cu) ≈ 647 MHz, four equivalent 14N) — a system that hit every limit of
+`pepper`'s resonance solvers at once.  Every change below is validated against
+EasySpin on MATLAB R2024b through a new 34-case oracle,
+`tests/data/generate_pepper_cupc_refs.m` →
+`torchspin/tests/test_pepper_cupc_matlab_validation.py`, covering all three
+solvers on the same systems plus natural-abundance isotopologues, tilted and
+anisotropic ligand A tensors, nuclear quadrupole coupling, an enlarged exact
+core, and a two-component model.
+
+### Added — `Options.Method='hybrid'` (EasySpin `Opt.Method='hybrid'`)
+
+Exact diagonalization of a core — all electron spins plus the nuclei named in
+the new `Options.HybridCoreNuclei` (1-based, as in EasySpin) — with the
+remaining nuclei shifting and splitting the core lines.  This is the method for
+a large central hyperfine coupling surrounded by small ligand couplings, where
+the exact treatment is unaffordable and perturbation theory is wrong about the
+central coupling.  Cu + 4×14N needs a 648-dimensional Hilbert space exactly,
+which neither code can put in a fit loop; as hybrid the core is 8-dimensional
+and each nitrogen is a 3×3 problem, and the spectrum takes **0.27 s against
+EasySpin's 0.28 s**.
+
+The implementation follows `resfields.m`: the electron spin operators in the
+hyperfine term are replaced by their expectation values in the two core
+eigenstates at the resonance field, and the resulting nuclear sub-Hamiltonian
+is then diagonalized *exactly*, so the quadrupole and nuclear Zeeman terms and
+the nuclear state mixing are not approximated.  Line amplitudes come from the
+Mims overlap matrix |⟨u_r|v_c⟩|², sub-lines below
+`Options.HybridIntThreshold` (0.005, as EasySpin) are dropped, and the nuclei
+are combined by an outer sum of shifts and an outer product of amplitudes.
+Matches EasySpin's hybrid to cosine 0.9998 on every case.
+
+Against the exact `matrix` result hybrid reaches cosine 0.9805 (Cu + 1×14N) and
+0.9740 (Cu + 2×14N).  **EasySpin's own hybrid gives 0.982 and 0.974 on the same
+comparison** — that gap is the method's first-order decoupling, not a port
+defect.  Second-order perturbation theory gives 0.896 and 0.918 on the same
+systems.  See § Pepper in `KNOWN_LIMITATIONS.md` for when to use which.
+
+### Added — `pepper` supports sets of equivalent nuclei
+
+`SpinSystem.n > 1` now works on the `hybrid` and `perturb` paths, which treat
+nuclei one at a time and combine them combinatorially, so a multiplicity is a
+pure saving rather than an obstacle: four equivalent 14N written as `n=[1,4]`
+take 0.30 s instead of 2.0 s and agree with four explicit nitrogens to cosine
+0.99999999.  A set of `n` equivalent nuclei shares one sub-Hamiltonian, so its
+copies are combined once by multiset enumeration — for four 14N that is 495
+combinations instead of 9⁴ = 6561.
+
+The `matrix` path still rejects `n > 1`, since there the nuclei multiply the
+Hilbert space and cannot be collapsed.  EasySpin's `pepper` rejects `n > 1` for
+every method, so this goes beyond it.
+
+### Fixed — `Method='matrix'` crashed on highly degenerate systems
+
+`pepper(Sys, Exp)` on S=1/2 Cu + 4 equivalent 14N aborted with
+`torch._C._LinAlgError: linalg.eigh: (Batch element 5): The algorithm failed to
+converge … too many repeated eigenvalues (error code: 394590)` after 13 s.  One
+matrix out of a batch of 59 complex 648×648 Hermitians: the input is Hermitian
+to 0.0 and finite, but LAPACK's divide-and-conquer driver stalls on the
+hundreds of exactly equal eigenvalue gaps that four identical nuclei produce.
+
+`_linalg.eigh` and `_linalg.eigvalsh` had no error handling, so one bad matrix
+killed the whole orientation batch.  They now retry a rejected batch matrix by
+matrix — the torch routine alone, then NumPy (a different LAPACK build, and
+`zheevr`/`zheev` rather than divide-and-conquer), then a 1e-14 relative diagonal
+perturbation that breaks the exact ties.  Spectra are invariant under unitary
+rotations inside a degenerate subspace, so none of these changes the result
+beyond round-off.  On the autograd path the NumPy detour is skipped, because it
+would silently drop gradients.
+
+### Fixed — `Options.IsoCutoff` had no effect
+
+`expand_components` passed the cutoff as the second positional argument of
+`isotopologues`, which is `n`, so it was silently discarded and pruning always
+used the 1e-4 default.  Affected `pepper` and `garlic`.  No test caught it
+because every test passed `rel_threshold` by keyword.
+
+### Fixed — the perturbation path built a Hamiltonian it never used
+
+`pepper` built the full `H0`/`mux`/`muy`/`muz` operators before dispatching on
+`Options.Method`, but `resfields_perturb_batch` works from the spin system and
+never receives them.  For Cu + 4×14N that is a 648×648 Kronecker product
+costing about 80 % of the run time, repeated for every isotopologue — which is
+why the cost barely depended on `GridSize`.  They are now built on first use.
+Natural-abundance Cu + 4×N at `[91,4]` goes from **2.70 s to 0.41 s**, now
+faster than EasySpin's 0.71 s, with bit-identical output (verified on 14 systems
+spanning both solvers, strain broadening and multi-component input).
+
+### Fixed — `Options.Method` accepted perturbation orders `pepper` cannot run
+
+`'perturb3'`, `'perturb4'` and `'perturb5'` were accepted and silently run as
+second order, and the requested order was never passed to the solver at all, so
+`'perturb1'` also ran second order.  `pepper` now rejects the orders it does not
+implement and forwards the order it does, and the `Options.Method` docstring
+describes the methods per simulator instead of claiming `'perturb'` means fifth
+order everywhere (that is garlic's convention; pepper's `'perturb'` is second
+order, as in EasySpin).
+
+### Fixed — two examples did not compute what they claimed
+
+`examples/solidstate/copper_nitrogens.py` was titled "Four Equivalent 14N
+Ligands" and labelled its plot "4×14N" while simulating **two**, and had dropped
+the `AFrame` tilts that make the four nitrogens inequivalent in the first place.
+It is now the system from the EasySpin original (Buchanan & Dismukes 1987) and
+shows `perturb` against `hybrid`.  `examples/solidstate/matrixperturb.py` ran
+the matrix method twice, labelled one curve "perturb", and carried a comment
+claiming perturbation theory "is not yet exposed as a pepper option in
+torchspin" — untrue since 0.2.x.  It now calls `Method='perturb'`.
+
+### Fixed — concurrent eigendecompositions could corrupt the thread count
+
+`_linalg._pooled` and `pool_map` save, set and restore `torch.set_num_threads`,
+which is process-global.  `esfit` evaluates objective functions in a thread
+pool, so two concurrent batches could interleave and leave the process pinned
+at one intra-op thread for the rest of the session.  Both now hold a lock
+across the critical section.
+
+### Added — `benchmarks/python/cupc_claims.py`
+
+Reproduces the five reported defects and records the measured before/after
+state, so the performance claims have a ledger rather than an anecdote.
+
 ## [0.3.0] — 2026-10-04
 
 First public release.

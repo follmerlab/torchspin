@@ -461,6 +461,16 @@ def _check_supported(sys: SpinSystem, exp: Experiment, opt: Options) -> None:
             raise NotImplementedError(f'pepper_autograd: Experiment.{name} is not supported.')
     if getattr(sys, 'initState', None) is not None:
         raise NotImplementedError('pepper_autograd: Sys.initState is not supported.')
+    # Without this the matrix branch would silently run below, giving the exact
+    # spectrum of the whole system instead of the hybrid one — a different
+    # forward model from pepper(Method='hybrid'), not just a missing gradient.
+    if str(getattr(opt, 'Method', 'matrix')) == 'hybrid':
+        raise NotImplementedError("pepper_autograd: Options.Method='hybrid' is not "
+                                  "differentiable yet; use 'matrix' or 'perturb'.")
+    if any(v > 1 for v in (getattr(sys, 'n', None) or [])):
+        raise NotImplementedError('pepper_autograd: sets of equivalent nuclei '
+                                  '(SpinSystem.n > 1) are not supported; list each '
+                                  'nucleus separately in Nucs.')
     if int(exp.Harmonic) not in (0, 1, 2):
         raise ValueError('Harmonic must be 0, 1 or 2.')
 

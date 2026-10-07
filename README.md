@@ -133,7 +133,7 @@ These match EasySpin, so parameters transfer directly:
 
 | Category | Modules |
 |----------|---------|
-| CW EPR | `pepper` (powder), `garlic` (solution), `chili` (slow-motion), `salt` (ENDOR) |
+| CW EPR | `pepper` (powder; `matrix`, `perturb` and `hybrid` resonance solvers), `garlic` (solution), `chili` (slow-motion), `salt` (ENDOR) |
 | Pulse EPR | `saffron` (ESEEM/HYSCORE), `spidyan` (arbitrary sequences), `saffron_thyme` (real pulses) |
 | Trajectory | `cardamom` (MD/diffusion/jump), `mdload`, `mdhmm` |
 | Magnetometry | `curry` (susceptibility, magnetization) |

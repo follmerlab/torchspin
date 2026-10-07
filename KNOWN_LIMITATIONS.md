@@ -14,7 +14,7 @@ If you find behavior that contradicts this document, please open an issue.
 
 | Module | Shape parity vs MATLAB | Absolute intensity | Caveats |
 |---|---|---|---|
-| `pepper` (CW powder, crystals, frequency sweeps) | ≥0.999 on 102+12+11 general cases plus 22 crystal, 4 parallel-mode, 10 feature (isotopologues, ModAmp, dispersion, separate) and 26 feature-2 cases (non-equilibrium populations, ordering, photoselection, frequency sweeps) | matches EasySpin from first principles (isotropic closed form to 1e-4, amplitude ratio 1.00±0.02) | See § Pepper |
+| `pepper` (CW powder, crystals, frequency sweeps) | ≥0.999 on 102+12+11 general cases plus 22 crystal, 4 parallel-mode, 10 feature (isotopologues, ModAmp, dispersion, separate) and 26 feature-2 cases (non-equilibrium populations, ordering, photoselection, frequency sweeps), plus 34 Cu(II)+ligand cases covering `matrix`/`perturb`/`hybrid` on the same systems | matches EasySpin from first principles (isotropic closed form to 1e-4, amplitude ratio 1.00±0.02) | See § Pepper |
 | `garlic` (solution) | line positions exact vs EasySpin Breit–Rabi (<1e-6 mT, 18-case suite); spectra cosine >0.9999; components/isotopologues/auto-range 11-case suite identical | matches EasySpin's TransitionRate·dBdE convention to 1e-6 | See § Garlic |
 | `chili` (slow-motion) | 59/60 MATLAB cases at cosine ≥0.999 (general Liouvillian port; intermediates exact) | matches EasySpin's scaling chain | See § Chili |
 | `salt` (ENDOR powder) | 8-case EasySpin-mirroring suite passes (fixed-field mode) | matches in regime | See § ENDOR |
@@ -32,6 +32,76 @@ If you find behavior that contradicts this document, please open an issue.
 | `isotopologues` | EasySpin's 15 `isotopologues_*` tests ported (incl. the `A_` spherical form); pepper/garlic/chili mixtures validated in MATLAB | exact | None |
 
 ---
+
+## Pepper — choosing a method, and what each costs (2026-10-07)
+
+Added after a Cu(II) phthalocyanine fit (CuPc diluted in ZnPc: S=1/2, g =
+[2.049 2.181], A(Cu) = [15.3 646.6] MHz, four effectively isotropic 14N at
+45 MHz, lw 0.54 mT, X-band) ran into every limit of the resonance solvers at
+once.  All timings below are the same machine, `GridSize=[91,4]`, 2667 points,
+with EasySpin on MATLAB R2024b for comparison; the generator is
+`tests/data/generate_pepper_cupc_refs.m` and the comparison
+`torchspin/tests/test_pepper_cupc_matlab_validation.py` (34 cases).
+
+**Accuracy.** Against the exact `matrix` result for the same system:
+
+| Nuclei | `hybrid` | `perturb` (2nd order) |
+|---|---|---|
+| Cu + 1×14N | 0.9805 | 0.896 |
+| Cu + 2×14N | 0.9740 | 0.918 |
+
+These are cosine similarities, and **EasySpin's own hybrid gives 0.982 and 0.974
+on the same comparison** — the deviation is the first-order electron–nuclear
+decoupling that defines the method, not a port defect.  It shrinks as the
+perturbational coupling shrinks (0.9805 → 0.9999 as A(N) goes 45 → 0.1 MHz) and
+as the exact core grows (0.974 → 0.984 when the first nitrogen joins the core).
+Second-order perturbation theory does **not** converge the same way: with
+A∥(Cu) ≈ 650 MHz it is wrong about the copper itself, so it plateaus near 0.95
+however small the nitrogen coupling is.
+
+Pick `matrix` when it is affordable, `hybrid` when a large central hyperfine
+coupling is surrounded by small ligand couplings, and `perturb` only when all
+couplings are small compared with the microwave quantum.
+
+**Cost.** Exact diagonalization grows with the Hilbert space, and the
+natural-abundance isotopologue expansion multiplies whatever that costs
+(Cu + 4N natural abundance is 10 separate simulations):
+
+| System | method | torchspin | EasySpin |
+|---|---|---|---|
+| 63Cu + 2×14N (72 states) | `matrix` | 5.9 s | 16.3 s |
+| 63Cu + 2×14N | `hybrid` | 0.06 s | 0.14 s |
+| 63Cu + 4×14N (648 states) | `matrix` | hours | ~10 min |
+| 63Cu + 4×14N | `hybrid` | 0.27 s | 0.28 s |
+| 63Cu + 4×14N | `perturb` | 0.06 s | 0.04 s |
+| Cu + 4×N, natural abundance | `hybrid` | 2.0 s | 5.6 s |
+| Cu + 4×N, natural abundance | `perturb` | 0.41 s | 0.71 s |
+| Cu + N with `n=[1,4]` | `hybrid` | 0.30 s | not supported |
+
+Two things follow.  `matrix` on Cu + 4×14N is not a fit-loop operation in either
+code — that is what `hybrid` is for.  And if the isotope matters less than the
+run time, name the isotopes (`'63Cu'`, `'14N'`) or raise `Opt.IsoCutoff`:
+natural-abundance copper alone doubles the work for a 0.3 % spectral change.
+
+**Sets of equivalent nuclei.** `pepper` accepts `SpinSystem.n > 1` on the
+`hybrid` and `perturb` paths, where nuclei are treated one at a time and
+combined combinatorially, so a multiplicity is a pure saving — four equivalent
+14N written as `n=[1,4]` cost 0.30 s instead of 2.0 s and agree with four
+explicit nitrogens to cosine 0.99999999.  The `matrix` path still rejects
+`n > 1`, because there the nuclei multiply the Hilbert space and cannot be
+collapsed; EasySpin's `pepper` rejects `n > 1` for every method.  Equivalence
+means *identical couplings and identical orientations*: four nitrogens with
+different `AFrame` tilts are not a set of equivalent nuclei, whatever their
+principal values.
+
+**Default `GridSize=[19,4]` is unconverged for narrow lines on a large
+hyperfine.** For this system the default grid leaves the powder average
+dominated by ripple, and the two codes place that ripple differently: the same
+Cu + 4×N spectrum agrees with EasySpin to cosine 0.9998 at `[91,4]` but only
+0.96–0.97 at `[19,4]`.  Neither result is right — both are unconverged.  There
+is no automatic warning; converge the grid yourself whenever the linewidth is
+small compared with the field spread between neighboring grid points.  The two
+`cupc_grid19_4N_*` cases are kept in the validation suite as the record of this.
 
 ## Pepper — absolute intensity (fixed 2026-09-01)
 
