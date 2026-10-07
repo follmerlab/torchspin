@@ -442,6 +442,19 @@ audit in
 `benchmarks/results/workstation_20260904_verified/BENCHMARK_VERIFICATION.md`.
 `chili` and `cardamom` have no CUDA path at all.
 
+## Expensive tests are opt-in
+
+Two cases in `test_pepper_cupc_matlab_validation.py` are exact diagonalizations
+of a 72-dimensional Hilbert space over a converged grid, and one of them takes
+about ten minutes (EasySpin needs 630 s for the same case).  CI's `full-suite`
+job has no marker filter, so they are skipped unless `TORCHSPIN_RUN_EXPENSIVE=1`
+is set rather than merely marked `slow`.  They are kept because
+`cupc_matrix_aframe` is the largest exact comparison run to completion in both
+codes — torchspin 590 s against EasySpin's 630 s — which is the evidence that
+torchspin's matrix path is not the slower of the two.
+
+---
+
 ## Test counts (v0.3.0, 2026-10-04, clean-room host)
 
 | Outcome | Count |

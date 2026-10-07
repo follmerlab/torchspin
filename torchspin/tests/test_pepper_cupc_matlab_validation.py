@@ -15,6 +15,7 @@ stored MATLAB spectrum, the convention used by the other pepper validation
 suites (default cosine 0.999, amplitude within 2 %).
 """
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -148,7 +149,18 @@ def _run(c):
 # Cases that take more than a few seconds, so that `pytest -m "not slow"` stays
 # quick.  These are the exact-diagonalization runs with ligand nuclei (the cost
 # this work is about: a 72-dimensional Hilbert space over a converged grid) and
-# the widest hybrid expansions.  EasySpin needs 630 s for cupc_matrix_aframe.
+# the widest hybrid expansions.
+#
+# EXPENSIVE is the subset that is minutes rather than seconds, and CI runs the
+# full suite without a marker filter on twelve Python x OS combinations, so
+# those are opt-in: set TORCHSPIN_RUN_EXPENSIVE=1 to include them.  They are
+# worth keeping because cupc_matrix_aframe is the largest exact comparison that
+# was run to completion in both codes (torchspin 590 s against EasySpin's
+# 630 s), which is the evidence that torchspin's matrix path is not the slower
+# of the two.
+EXPENSIVE = {'cupc_matrix_aframe', 'cupc_natural_2N_matrix'}
+_RUN_EXPENSIVE = os.environ.get('TORCHSPIN_RUN_EXPENSIVE', '') not in ('', '0', 'false', 'False')
+
 SLOW = {
     'cupc_natural_1N_matrix', 'cupc_isotope_1N_matrix',
     'cupc_natural_2N_matrix', 'cupc_isotope_2N_matrix',
@@ -163,8 +175,17 @@ def _case_params():
     if not REF_FILE.exists():
         return []
     refs = loadmat(str(REF_FILE), squeeze_me=True, struct_as_record=False)
-    names = [str(c.name) for c in np.atleast_1d(refs['cases'])]
-    return [pytest.param(n, marks=pytest.mark.slow) if n in SLOW else n for n in names]
+    out = []
+    for c in np.atleast_1d(refs['cases']):
+        n = str(c.name)
+        marks = []
+        if n in SLOW:
+            marks.append(pytest.mark.slow)
+        if n in EXPENSIVE and not _RUN_EXPENSIVE:
+            marks.append(pytest.mark.skip(
+                reason='minutes-long exact diagonalization; set TORCHSPIN_RUN_EXPENSIVE=1'))
+        out.append(pytest.param(n, marks=marks) if marks else n)
+    return out
 
 
 @pytest.mark.parametrize("name", _case_params())
