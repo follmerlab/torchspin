@@ -8,16 +8,38 @@ cuSOLVER's batched Jacobi solver only covers matrices up to 32×32; larger batch
 diagonalized one launch at a time and are 5–10× slower than the CPU pool, so they are
 routed to the CPU and copied back.  Results are identical to the serial path (each
 matrix is still handled by the same LAPACK routine).
+
+LAPACK's divide-and-conquer driver (``zheevd``) occasionally fails to converge on
+highly degenerate Hermitian input — a spin system with several identical nuclei
+produces matrices with hundreds of exactly equal eigenvalue gaps.  The failure is
+a property of the driver, not of the input (the matrix is Hermitian and finite),
+so :func:`eigh` and :func:`eigvalsh` retry such matrices individually through
+other routines instead of letting one bad matrix abort a whole orientation batch.
 """
 from __future__ import annotations
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
+import numpy as np
 import torch
 
 _MIN_BATCH = 32            # below this the pool overhead is not worth it
 _CUSOLVER_BATCHED_MAX = 32  # syevjBatched limit
 _executors: dict = {}
+
+# torch.set_num_threads is process-global, so the save/set/restore in _pooled and
+# pool_map must not interleave with another thread doing the same (esfit evaluates
+# objective functions in a thread pool).  Concurrent callers queue instead; they
+# would contend for the same cores anyway.
+_threads_lock = threading.Lock()
+
+_LinAlgError = torch._C._LinAlgError
+
+# Relative size of the diagonal perturbation used as the last-resort retry.  Well
+# below double-precision resolution of the eigenvalues, but enough to break the
+# exact ties that stall the divide-and-conquer driver.
+_JITTER = 1e-14
 
 
 def _executor(w: int) -> ThreadPoolExecutor:
@@ -31,6 +53,61 @@ def _pool_size(nb: int) -> int:
     return max(1, min(torch.get_num_threads(), nb // 8))
 
 
+def _one(fn, np_fn, A: torch.Tensor, allow_numpy: bool = True):
+    """Diagonalize a single Hermitian matrix, working around driver failures.
+
+    Tried in order: the torch routine on its own (a matrix can succeed alone that
+    failed inside a batch), the NumPy routine (a different LAPACK build, and
+    ``zheevr``/``zheev`` rather than the divide-and-conquer driver), and finally a
+    tiny deterministic diagonal perturbation that lifts the exact degeneracies.
+    Spectra are invariant under unitary rotations inside a degenerate subspace, so
+    none of these change the result beyond round-off.
+
+    ``allow_numpy`` is cleared when ``A`` carries gradients, because the NumPy
+    detour would silently drop them.
+    """
+    try:
+        return fn(A)
+    except _LinAlgError:
+        pass
+    if allow_numpy:
+        try:
+            out = np_fn(A.detach().cpu().numpy())
+        except np.linalg.LinAlgError:
+            pass
+        else:
+            if isinstance(out, tuple):
+                return (torch.as_tensor(out[0], dtype=A.real.dtype, device=A.device),
+                        torch.as_tensor(out[1], dtype=A.dtype, device=A.device))
+            return torch.as_tensor(out, dtype=A.real.dtype, device=A.device)
+    scale = float(A.abs().amax().detach()) or 1.0
+    ramp = torch.linspace(-1.0, 1.0, A.shape[-1], dtype=A.real.dtype, device=A.device)
+    return fn(A + torch.diag(ramp * (_JITTER * scale)).to(A.dtype))
+
+
+def _safe(fn, np_fn):
+    """Wrap a batched torch routine so a single bad matrix does not abort the batch."""
+    def run(H: torch.Tensor):
+        try:
+            return fn(H)
+        except _LinAlgError:
+            pass
+        allow_numpy = not H.requires_grad
+        if H.ndim < 3:
+            return _one(fn, np_fn, H, allow_numpy)
+        flat = H.reshape(-1, H.shape[-1], H.shape[-1])
+        outs = [_one(fn, np_fn, flat[i], allow_numpy) for i in range(flat.shape[0])]
+        if isinstance(outs[0], tuple):
+            return (torch.stack([o[0] for o in outs]).reshape(*H.shape[:-1]),
+                    torch.stack([o[1] for o in outs]).reshape(H.shape))
+        return torch.stack(outs).reshape(*H.shape[:-1])
+    return run
+
+
+_safe_eigh = _safe(torch.linalg.eigh, np.linalg.eigh)
+_safe_eigvalsh = _safe(torch.linalg.eigvalsh, np.linalg.eigvalsh)
+
+
 def _pooled(fn, H: torch.Tensor):
     nb = H.shape[:-2].numel()
     n = H.shape[-1]
@@ -38,12 +115,13 @@ def _pooled(fn, H: torch.Tensor):
     if w <= 1 or nb < _MIN_BATCH:
         return fn(H)
     chunks = torch.chunk(H.reshape(nb, n, n), w)
-    prev = torch.get_num_threads()
-    torch.set_num_threads(1)
-    try:
-        res = list(_executor(w).map(fn, chunks))
-    finally:
-        torch.set_num_threads(prev)
+    with _threads_lock:
+        prev = torch.get_num_threads()
+        torch.set_num_threads(1)
+        try:
+            res = list(_executor(w).map(fn, chunks))
+        finally:
+            torch.set_num_threads(prev)
     return res
 
 
@@ -64,7 +142,7 @@ class _EighDegenerateSafe(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, H):
-        L, V = torch.linalg.eigh(H)
+        L, V = _safe_eigh(H)
         ctx.save_for_backward(L, V)
         return L, V
 
@@ -91,14 +169,14 @@ def eigh(H: torch.Tensor):
     if H.requires_grad:
         return _EighDegenerateSafe.apply(H)
     if H.ndim < 3:
-        return torch.linalg.eigh(H)
+        return _safe_eigh(H)
     nb = H.shape[:-2].numel()
     if H.is_cuda:
         if H.shape[-1] <= _CUSOLVER_BATCHED_MAX or nb < 4:
-            return torch.linalg.eigh(H)
+            return _safe_eigh(H)
         E, V = eigh(H.cpu())
         return E.to(H.device), V.to(H.device)
-    res = _pooled(torch.linalg.eigh, H)
+    res = _pooled(_safe_eigh, H)
     if isinstance(res, tuple):
         return res
     E = torch.cat([r[0] for r in res]).reshape(*H.shape[:-1])
@@ -109,13 +187,13 @@ def eigh(H: torch.Tensor):
 def eigvalsh(H: torch.Tensor):
     """Batched ``torch.linalg.eigvalsh`` (see module docstring)."""
     if H.ndim < 3 or H.requires_grad:
-        return torch.linalg.eigvalsh(H)
+        return _safe_eigvalsh(H)
     nb = H.shape[:-2].numel()
     if H.is_cuda:
         if H.shape[-1] <= _CUSOLVER_BATCHED_MAX or nb < 4:
-            return torch.linalg.eigvalsh(H)
+            return _safe_eigvalsh(H)
         return eigvalsh(H.cpu()).to(H.device)
-    res = _pooled(torch.linalg.eigvalsh, H)
+    res = _pooled(_safe_eigvalsh, H)
     if isinstance(res, torch.Tensor):
         return res
     return torch.cat(res).reshape(*H.shape[:-1])
@@ -132,9 +210,10 @@ def pool_map(fn, items: list):
     w = min(torch.get_num_threads(), len(items))
     if w <= 1:
         return [fn(it) for it in items]
-    prev = torch.get_num_threads()
-    torch.set_num_threads(1)
-    try:
-        return list(_executor(w).map(fn, items))
-    finally:
-        torch.set_num_threads(prev)
+    with _threads_lock:
+        prev = torch.get_num_threads()
+        torch.set_num_threads(1)
+        try:
+            return list(_executor(w).map(fn, items))
+        finally:
+            torch.set_num_threads(prev)

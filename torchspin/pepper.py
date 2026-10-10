@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import functools
 import math
+import warnings
 from typing import Optional
 
 import torch
@@ -26,7 +27,8 @@ import numpy as np
 
 from torchspin.convspec import convspec
 from torchspin.isotopologues import expand_components
-from torchspin.experiment import auto_batch_size, Experiment, Options
+from torchspin.experiment import (auto_batch_size, Experiment, Options,
+                                  PEPPER_PERTURB_ORDER)
 from torchspin.ham import ham
 from torchspin.hamsymm import hamsymm
 from torchspin.rotations import erot
@@ -37,6 +39,7 @@ from torchspin.resfields_perturb import resfields_perturb_batch
 from torchspin.resfreqs_matrix import resfreqs_matrix, resfreqs_batch
 from torchspin.sphgrid import sphgrid, _d2h_triangulation, _triangle_areas, grid_triangulation, gridparam
 from torchspin.spinsystem import SpinSystem
+from torchspin.utils import hsdim
 
 __all__ = ['pepper']
 
@@ -1043,12 +1046,28 @@ def pepper(sys_or_list, exp: Experiment, opt: Optional[Options] = None):
     # simulated separately and summed with weight Sys.weight·abundance.  With
     # Opt.separate='components' the isotopologue spectra are returned as rows.
     components = expand_components(sys_or_list, getattr(opt_, 'IsoCutoff', 1e-4))
-    for _s in components:
-        if getattr(_s, 'n', None) is not None and any(v > 1 for v in _s.n):
-            raise ValueError(
-                "pepper does not support sets of equivalent nuclei (SpinSystem.n > 1). "
-                "List each nucleus separately in Nucs, or use garlic for isotropic spectra."
-            )
+    _method = str(getattr(opt_, 'Method', 'matrix'))
+    # Perturbation order: resfields_perturb implements first and second order, so
+    # the higher names that garlic accepts are rejected here rather than silently
+    # run as second order.
+    if _method.startswith('perturb') and _method not in PEPPER_PERTURB_ORDER:
+        raise ValueError(
+            f"pepper does not implement Options.Method='{_method}'. Its perturbation "
+            f"solver is second order: use 'perturb' or 'perturb2' for second order, "
+            f"'perturb1' for first order, or 'hybrid'/'matrix'."
+        )
+    # Sets of equivalent nuclei multiply the Hilbert space, so the exact solver
+    # cannot collapse them (EasySpin pepper rejects Sys.n > 1 outright).  The
+    # perturbation and hybrid solvers treat nuclei one at a time and combine
+    # them combinatorially, so there the multiplicity is a cost saving.
+    if _method in ('matrix', 'exact'):
+        for _s in components:
+            if any(v > 1 for v in (_s.n or [])):
+                raise ValueError(
+                    "pepper's matrix method does not support sets of equivalent nuclei "
+                    "(SpinSystem.n > 1). List each nucleus separately in Nucs, or use "
+                    "Options(Method='hybrid') or Method='perturb', which do support n."
+                )
     rows, B_out = [], None
     for sys in components:
         w = float(getattr(sys, 'weight', 1.0))
@@ -1175,12 +1194,77 @@ def _pepper_single(
     # -----------------------------------------------------------------------
     # Step 1: Build field-independent Hamiltonian and moment operators
     # -----------------------------------------------------------------------
-    H0, mux, muy, muz = ham(sys, B0=None)
+    # EasySpin's pepper runs second order for both 'perturb' and 'perturb2'.
+    pt_order = PEPPER_PERTURB_ORDER.get(str(opt.Method), 2)
+
+    # Hybrid (EasySpin Opt.Method='hybrid') splits the system in two: the
+    # operators below, and everything else that scales with the Hilbert space,
+    # are built from the core — all electron spins plus Opt.HybridCoreNuclei —
+    # while the remaining nuclei only shift and split the core lines, inside
+    # resfields_batch.  Grid symmetry, linewidths and strains stay those of the
+    # system as given, as in EasySpin.
+    #
+    # A component without nuclei has nothing to treat perturbationally, so it is
+    # simulated exactly whatever Method says (EasySpin resfields.m enters the
+    # hybrid branch only `if CoreSys.nNuclei>=1`).  That is what makes
+    # Method='hybrid' usable on a list of components where only some carry
+    # nuclei, such as a metal centre plus a radical impurity.
+    use_hybrid = str(opt.Method) == 'hybrid' and sys.nNuclei >= 1
+    hybrid_info = None
+    ham_sys = sys
+    if use_hybrid:
+        if freq_sweep:
+            raise ValueError("Options.Method='hybrid' is not available for frequency sweeps.")
+        if sys.nn is not None and torch.as_tensor(sys.nn).any():
+            raise ValueError("Options.Method='hybrid' cannot treat nucleus-nucleus "
+                             "couplings (Sys.nn); use Method='matrix'.")
+        from torchspin.resfields_hybrid import core_nuclei_split, core_spin_operators
+        from torchspin.spinsystem import nucspinrmv
+        _core_idx, _perturb_idx = core_nuclei_split(sys, opt.HybridCoreNuclei)
+        _n_sys = list(sys.n or [1] * sys.nNuclei)
+        # A core nucleus is diagonalized exactly, so its copies each need their
+        # own place in the Hilbert space and cannot be collapsed into a
+        # multiplicity.  Only the perturbational nuclei benefit from Sys.n.
+        _bad = [i + 1 for i in _core_idx if _n_sys[i] > 1]
+        if _bad:
+            raise ValueError(
+                f"Options.HybridCoreNuclei names nuclei {_bad}, which have SpinSystem.n > 1. "
+                f"A nucleus in the exactly diagonalized core cannot be a set of equivalent "
+                f"nuclei: list its copies separately in Nucs, or leave it perturbational."
+            )
+        if _perturb_idx:
+            ham_sys = nucspinrmv(sys, _perturb_idx)
+            hybrid_info = {
+                'full_sys': sys,
+                'perturb_idx': _perturb_idx,
+                'n_equiv': list(sys.n or [1] * sys.nNuclei),
+                'int_threshold': float(opt.HybridIntThreshold),
+                'S_core': core_spin_operators(ham_sys),
+            }
+        else:
+            # Every nucleus in the core: this is the matrix method.
+            use_hybrid = False
+
+    dim = hsdim(ham_sys)          # Hilbert space dimension, for batch sizing
+    device = torch.device(opt.device)
+    _ops: list = []
+
+    def _ham_ops():
+        """(H0, mux, muy, muz) on the target device, built and cached on demand.
+
+        The perturbation solver works from the spin system directly and never
+        touches these, while building them is a full Hilbert-space Kronecker
+        product — 648x648 for Cu + 4x14N, which was about 80 % of the run time
+        of a perturbation simulation, once per isotopologue.
+        """
+        if not _ops:
+            _ops.extend(t.to(device) for t in ham(ham_sys, B0=None))
+        return _ops
 
     # Non-equilibrium populations (Sys.initState) → density matrix in the
     # Hamiltonian basis; not available with perturbation theory (EasySpin).
     from torchspin.initstate import init_state_density
-    init_state = init_state_density(sys, H0) if getattr(sys, 'initState', None) is not None else None
+    init_state = init_state_density(ham_sys, _ham_ops()[0]) if getattr(sys, 'initState', None) is not None else None
     if init_state is not None and str(opt.Method).startswith('perturb'):
         raise ValueError('Perturbation theory not available for systems with non-equilibrium populations.')
     # Photoselection (Exp.lightBeam, Sys.tdm): per-orientation weights
@@ -1207,7 +1291,7 @@ def _pepper_single(
     _pt_ok = init_state is None and not freq_sweep
     from dataclasses import replace as _dc_replace_o
     _opt_rf = _dc_replace_o(opt, Threshold=0.0)   # slot-based paths pre-select transitions globally (EasySpin)
-    _pairs_sel = _preselect_pairs(H0, mux, muy, muz, sys, exp, opt,
+    _pairs_sel = _preselect_pairs(*_ham_ops(), ham_sys, exp, opt,
                                   float(exp.Field) if freq_sweep else 0.5 * (exp.Range[0] + exp.Range[1]),
                                   freq_sweep=freq_sweep) if not str(opt.Method).startswith('perturb') else None
 
@@ -1240,18 +1324,38 @@ def _pepper_single(
         else:
             spec = spec + contrib
 
-    def _resonances(H0_, mux_, muy_, muz_, phi_b, theta_b, exp_, opt_, sys_, **kw):
+    def _orientation_batch_size(n_orient: int) -> int:
+        """Orientations per call to the exact solver.
+
+        Hybrid must see every orientation in one call: the nuclear sub-lines are
+        pruned by their amplitude summed over the orientations present, so
+        splitting the grid would let different batches keep different sub-line
+        sets, and a given slot would then mean different lines for different
+        orientations.  The hybrid core is small by construction, so one batch is
+        what the memory budget allows anyway; if it does not, say so rather than
+        silently interpolating across inconsistent slots.
+        """
+        size = auto_batch_size(opt.BatchSize, dim, n_orient)
+        if hybrid_info is None or size >= n_orient:
+            return size
+        raise ValueError(
+            f"Options.Method='hybrid' needs all {n_orient} orientations in one batch, but "
+            f"the {dim}-dimensional core only allows {size}. Move nuclei out of "
+            f"Options.HybridCoreNuclei to shrink the core, or reduce Options.GridSize."
+        )
+
+    def _resonances(phi_b, theta_b, exp_, opt_, sys_, **kw):
+        """Exact resonance search; builds the Hamiltonian operators on first call.
+
+        With Opt.Method='hybrid' the solver sees the core system and the
+        perturbational-nucleus description, and returns the expanded line list.
+        """
         opt_ = kw.pop('opt_override', opt_)
         if freq_sweep:
-            return resfreqs_batch(H0_, mux_, muy_, muz_, phi_b, theta_b, exp_, opt_, sys_, **kw)
-        return resfields_batch(H0_, mux_, muy_, muz_, phi_b, theta_b, exp_, opt_, sys_, **kw)
-
-    # Move operators to target device (GPU if requested)
-    device = torch.device(opt.device)
-    H0  = H0.to(device)
-    mux = mux.to(device)
-    muy = muy.to(device)
-    muz = muz.to(device)
+            return resfreqs_batch(*_ham_ops(), phi_b, theta_b, exp_, opt_, ham_sys, **kw)
+        if hybrid_info is not None:
+            kw['hybrid'] = hybrid_info
+        return resfields_batch(*_ham_ops(), phi_b, theta_b, exp_, opt_, ham_sys, **kw)
 
     # -----------------------------------------------------------------------
     # Step 2: Spherical powder grid
@@ -1302,7 +1406,7 @@ def _pepper_single(
         # EasySpin pepper.m: automatic frequency range from the resonance
         # frequencies of the coarse grid (± spread/5, ≥ 5×strain width, ≥ 5×Σlw)
         pw0 = _photo_w(torch.stack([phi_arr, theta_arr], dim=1).detach().cpu().numpy()) if use_photo else None
-        P_l, _, W_l = _resonances(H0, mux, muy, muz, phi_arr, theta_arr, exp, opt, sys,
+        P_l, _, W_l = _resonances(phi_arr, theta_arr, exp, opt, sys,
                                   init_state=init_state, photo_weights=pw0)
         pos = torch.cat([p_ for p_ in P_l if p_ is not None and p_.numel() > 0])
         f_min, f_max = float(pos.min()), float(pos.max())
@@ -1423,7 +1527,7 @@ def _pepper_single(
         zlab = Rs[:, 2, :]; xlab = Rs[:, 0, :]
         theta_c = torch.tensor(np.arccos(np.clip(zlab[:, 2], -1, 1)), dtype=torch.float64)
         phi_c = torch.tensor(np.arctan2(zlab[:, 1], zlab[:, 0]), dtype=torch.float64)
-        B_l, I_l, W_l = _resonances(H0, mux, muy, muz, phi_c.to(device), theta_c.to(device), exp, opt, sys,
+        B_l, I_l, W_l = _resonances(phi_c.to(device), theta_c.to(device), exp, opt, sys,
                                         R_batch=torch.tensor(Rs, dtype=torch.float64), init_state=init_state, photo_weights=photo_w_c)
         _min_fwhm0 = dx / 100.0
         fwhm_g0, fwhm_l0 = lw_effective[0], lw_effective[1]
@@ -1470,12 +1574,12 @@ def _pepper_single(
                   and not (sys.S[0] > 0.5 and sys.D is not None)
                   and _pt_ok and str(opt.Method).startswith('perturb'))
         if use_pt:
-            Bl, Il = resfields_perturb_batch(sys, phi_arr, theta_arr, exp_search, opt, return_full=True, photo_weights=_pw(0, n_orient))
+            Bl, Il = resfields_perturb_batch(sys, phi_arr, theta_arr, exp_search, opt, order=pt_order, return_full=True, photo_weights=_pw(0, n_orient))
             B0 = Bl[0].detach().cpu().numpy(); I0 = Il[0].detach().cpu().numpy()
             keep = np.isfinite(B0) & (I0 != 0)
             B0, I0 = B0[keep], I0[keep]; W0 = np.zeros_like(B0)
         else:
-            Bl, Il, Wl = _resonances(H0, mux, muy, muz, phi_arr, theta_arr, exp, opt, sys, init_state=init_state, photo_weights=_pw(0, n_orient))
+            Bl, Il, Wl = _resonances(phi_arr, theta_arr, exp, opt, sys, init_state=init_state, photo_weights=_pw(0, n_orient))
             B0 = Bl[0].detach().cpu().numpy(); I0 = Il[0].detach().cpu().numpy()
             W0 = Wl[0].detach().cpu().numpy() if (Wl[0] is not None and Wl[0].numel() == B0.size) else np.zeros_like(B0)
         amp0 = I0 * float(weights_arr[0])            # 4π
@@ -1531,12 +1635,11 @@ def _pepper_single(
         all_intens = [None] * n_orient
         all_widths = [None] * n_orient
         all_pairs = [None] * n_orient
-        batch_size = auto_batch_size(opt.BatchSize, H0.shape[0], n_orient)
+        batch_size = _orientation_batch_size(n_orient)
         for batch_idx in range((n_orient + batch_size - 1) // batch_size):
             s = batch_idx * batch_size
             e = min(s + batch_size, n_orient)
-            B_list, I_list, W_list, P_list = _resonances(
-                H0, mux, muy, muz, phi_arr[s:e], theta_arr[s:e], exp, opt, sys,
+            B_list, I_list, W_list, P_list = _resonances(phi_arr[s:e], theta_arr[s:e], exp, opt, sys,
                 return_pairs=True, init_state=init_state, photo_weights=_pw(s, e), opt_override=_opt_rf, pairs=_pairs_sel
             )
             for j, (B_res, intens, widths, prs) in enumerate(zip(B_list, I_list, W_list, P_list)):
@@ -1604,7 +1707,7 @@ def _pepper_single(
         # Standard path: per-orientation accumulation, with optional
         # spherical interpolation from coarse to fine grid (N_interp > 1).
         # ---------------------------------------------------------------
-        batch_size = auto_batch_size(opt.BatchSize, H0.shape[0], n_orient)
+        batch_size = _orientation_batch_size(n_orient)
         n_batches = (n_orient + batch_size - 1) // batch_size
 
         # Isotropic systems (O3, a single orientation) have nothing to interpolate
@@ -1632,8 +1735,7 @@ def _pepper_single(
                             and not _needs_exact_boltz
                             and _pt_ok and str(opt.Method).startswith('perturb'))
             if _use_perturb:
-                B_list, I_list = resfields_perturb_batch(
-                    sys, phi_arr, theta_arr, exp_search, opt, return_full=True, photo_weights=_pw(0, n_orient)
+                B_list, I_list = resfields_perturb_batch(sys, phi_arr, theta_arr, exp_search, opt, order=pt_order, return_full=True, photo_weights=_pw(0, n_orient)
                 )
                 all_B_res  = B_list
                 all_intens = I_list
@@ -1644,8 +1746,7 @@ def _pepper_single(
                 for batch_idx in range(n_batches):
                     s = batch_idx * batch_size
                     e = min(s + batch_size, n_orient)
-                    B_list, I_list, W_list, P_list = _resonances(
-                        H0, mux, muy, muz, phi_arr[s:e], theta_arr[s:e], exp, opt, sys,
+                    B_list, I_list, W_list, P_list = _resonances(phi_arr[s:e], theta_arr[s:e], exp, opt, sys,
                         return_pairs=True, init_state=init_state, photo_weights=_pw(s, e), opt_override=_opt_rf, pairs=_pairs_sel
                     )
                     for j, (B_res, intens, widths, prs) in enumerate(zip(B_list, I_list, W_list, P_list)):
@@ -1820,16 +1921,14 @@ def _pepper_single(
                 if (sys.nElectrons == 1
                         and not has_strain
                         and not _needs_exact_boltz_d
-                        and _pt_ok and _pt_ok and str(opt.Method).startswith('perturb')):
-                    all_B_d, all_I_d = resfields_perturb_batch(
-                        sys, phi_arr, theta_arr, exp_search, opt, return_full=True, photo_weights=_pw(0, n_orient)
+                        and _pt_ok and str(opt.Method).startswith('perturb')):
+                    all_B_d, all_I_d = resfields_perturb_batch(sys, phi_arr, theta_arr, exp_search, opt, order=pt_order, return_full=True, photo_weights=_pw(0, n_orient)
                     )
                 else:
                     for batch_idx in range(n_batches):
                         s = batch_idx * batch_size
                         e = min(s + batch_size, n_orient)
-                        B_list, I_list, W_list, P_list = _resonances(
-                            H0, mux, muy, muz, phi_arr[s:e], theta_arr[s:e], exp, opt, sys,
+                        B_list, I_list, W_list, P_list = _resonances(phi_arr[s:e], theta_arr[s:e], exp, opt, sys,
                             return_pairs=True, init_state=init_state, photo_weights=_pw(s, e), opt_override=_opt_rf, pairs=_pairs_sel
                         )
                         for j, (B_res, intens, _, prs) in enumerate(zip(B_list, I_list, W_list, P_list)):
@@ -1875,8 +1974,7 @@ def _pepper_single(
                     # Vectorized accumulation: all orientations × transitions in one pass.
                     # resfields_perturb_batch returns (M, n_slots) tensors (return_full=True)
                     # with NaN for out-of-range slots. We scatter all valid sticks at once.
-                    _B_full, _I_full = resfields_perturb_batch(
-                        sys, phi_arr, theta_arr, exp_search, opt, return_full=True, photo_weights=_pw(0, n_orient)
+                    _B_full, _I_full = resfields_perturb_batch(sys, phi_arr, theta_arr, exp_search, opt, order=pt_order, return_full=True, photo_weights=_pw(0, n_orient)
                     )  # each is list of (n_slots,) tensors, length M
                     _B_mat = torch.stack(_B_full, dim=0)   # (M, n_slots)
                     _I_mat = torch.stack(_I_full, dim=0)   # (M, n_slots)
@@ -1912,8 +2010,7 @@ def _pepper_single(
                         phi_b     = phi_arr[start_idx:end_idx]
                         theta_b   = theta_arr[start_idx:end_idx]
                         weights_b = weights_arr[start_idx:end_idx]
-                        B_res_list, intens_list, widths_list = _resonances(
-                            H0, mux, muy, muz, phi_b, theta_b, exp, opt, sys, init_state=init_state, photo_weights=_pw(start_idx, end_idx)
+                        B_res_list, intens_list, widths_list = _resonances(phi_b, theta_b, exp, opt, sys, init_state=init_state, photo_weights=_pw(start_idx, end_idx)
                         )
                         for k_in_batch, (B_res, intens, widths) in enumerate(
                             zip(B_res_list, intens_list, widths_list)

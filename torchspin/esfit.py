@@ -336,6 +336,22 @@ class TorchSpinParameterHandler:
         self.lb_active = self.lb[self.active_mask]
         self.ub_active = self.ub[self.active_mask]
     
+    # Fields that cannot be negative, so that p0 - vary is clipped at zero for
+    # them rather than handing the optimizer an unphysical lower bound (EasySpin
+    # esfit.m: nonnegFieldNames).  Only reachable in this dict style, where the
+    # field name is known; the plain-vector style has no names to go on, which
+    # is also true of EasySpin.
+    _NONNEGATIVE_FIELDS = frozenset({
+        'lw', 'lwpp', 'lwEndor', 'HStrain', 'gStrain', 'DStrain', 'AStrain',
+        'weight', 'initState', 'tcorr', 'Diff', 'T1', 'T2',
+    })
+
+    def _lower_bound(self, field: str, value: float, vary: float) -> float:
+        lb = float(value) - float(vary)
+        if field in self._NONNEGATIVE_FIELDS and lb < 0.0:
+            return 0.0
+        return lb
+
     def _parse_vary(self):
         """Parse vary specification to build parameter map."""
         for key, vary_spec in self.vary_dict.items():
@@ -381,7 +397,7 @@ class TorchSpinParameterHandler:
                             'field': field,
                             'index': idx,
                             'value': float(p0_elem),
-                            'lb': float(p0_elem - vary_elem),
+                            'lb': self._lower_bound(field, p0_elem, vary_elem),
                             'ub': float(p0_elem + vary_elem)
                         })
                         self.pnames.append(f"{key}.{field}[{idx_str}]")
@@ -394,7 +410,7 @@ class TorchSpinParameterHandler:
                         'field': field,
                         'index': None,
                         'value': float(p0_val),
-                        'lb': float(p0_val - vary_scalar),
+                        'lb': self._lower_bound(field, p0_val, vary_scalar),
                         'ub': float(p0_val + vary_scalar)
                     })
                     self.pnames.append(f"{key}.{field}")
@@ -2231,8 +2247,16 @@ def esfit(
         simulators.
     vary : array or dict, optional
         Allowed variation (p0 ± vary). Mutually exclusive with lb/ub.
+
+        In the dict style the field names are known, so fields that cannot be
+        negative (``lw``, ``lwpp``, ``HStrain``, ``gStrain``, ``AStrain``,
+        ``DStrain``, ``weight``, ``tcorr``, ``T1``, ``T2``, ...) get their lower
+        bound clipped at zero when ``p0 - vary`` would go below it, as EasySpin's
+        ``esfit`` does.  A plain parameter vector carries no such information and
+        is used as given, so ``vary`` larger than ``p0`` there means a negative
+        lower bound; pass explicit ``lb``/``ub`` if that matters.
     lb, ub : array or dict, optional
-        Lower/upper bounds. Mutually exclusive with vary.
+        Lower/upper bounds, used exactly as given. Mutually exclusive with vary.
     options : FitOptions, optional
         Fitting options (algorithm, scaling, baseline, etc.)
     

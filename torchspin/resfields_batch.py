@@ -52,6 +52,7 @@ def resfields_batch(
     photo_weights: Optional[torch.Tensor] = None,
     R_batch: Optional[torch.Tensor] = None,
     pairs: Optional[list] = None,
+    hybrid: Optional[dict] = None,
 ) -> tuple:
     """Find resonance fields for a batch of orientations (vectorized).
 
@@ -62,7 +63,14 @@ def resfields_batch(
     phi_batch, theta_batch:
         Orientation angles (radians), shape ``(M,)``.
     exp, opt, sys:
-        Experiment, options, and spin system.
+        Experiment, options, and spin system.  With *hybrid*, ``sys`` is the
+        core system (electrons plus the exactly treated nuclei).
+    hybrid:
+        Enables EasySpin's ``Opt.Method='hybrid'``.  A dict with ``full_sys``
+        (the complete spin system), ``perturb_idx`` (0-based indices of the
+        nuclei treated perturbationally), ``n_equiv`` (``SpinSystem.n``) and
+        ``int_threshold``.  Each core line is replaced by the nuclear sub-lines
+        of :func:`torchspin.resfields_hybrid.hybrid_sublines`.
 
     Returns
     -------
@@ -368,18 +376,79 @@ def resfields_batch(
         pops   = pops / pops.sum(dim=-1, keepdim=True)   # out of place: keeps autograd through Exp
         polar  = (pops[bk, pi_bk] - pops[bk, pj_bk]).real
         intensities_all = intensities_all * polar
-    elif sys is not None and sys.nNuclei > 0:
+    else:
         # Infinite temperature (EasySpin resfields.m): polarization 1 shared
-        # among the nuclear sublevels → 1/prod(2I+1)
-        n_nuc_states = 1.0
-        for I in sys.I:
-            n_nuc_states *= (2 * I + 1)
-        intensities_all = intensities_all / n_nuc_states
+        # among the nuclear sublevels → 1/prod(2I+1).  With hybrid the count is
+        # taken over the full system, not just the exactly treated core, which
+        # is what EasySpin divides by.
+        pol_sys = hybrid['full_sys'] if hybrid is not None else sys
+        if pol_sys is not None and pol_sys.nNuclei > 0:
+            n_nuc_states = 1.0
+            for I, mult in zip(pol_sys.I, pol_sys.n or [1] * pol_sys.nNuclei):
+                n_nuc_states *= (2 * I + 1) ** int(mult)
+            intensities_all = intensities_all / n_nuc_states
 
     # Photoselection weights per orientation (EasySpin Idat = ... * photoWeight)
     if photo_weights is not None:
         pw = photo_weights.to(device=intensities_all.device, dtype=intensities_all.dtype)
         intensities_all = intensities_all * pw[m_idx]
+
+    # ── Strain widths of the core transitions ────────────────────────────────
+    # EasySpin evaluates the strain width of every transition at its own
+    # resonance field (eigenvectors there): batch over all (orientation,
+    # resonance) brackets, one "orientation" per resonance.  Computed before any
+    # hybrid expansion so the sub-lines of one core transition inherit its width
+    # unchanged, as EasySpin does.
+    widths_flat: Optional[torch.Tensor] = None
+    if sys is not None:
+        from torchspin.strainwidth import compute_strain_widths_batch, _has_any_strain
+        if _has_any_strain(sys) and B_res_all.numel() > 0:
+            widths_flat = compute_strain_widths_batch(
+                sys=sys,
+                H0=H0,
+                muzL_batch=muzL[m_idx],
+                phi_batch=phi_batch[m_idx],
+                theta_batch=theta_batch[m_idx],
+                B0_batch=B_res_all.to(torch.float64),
+                pairs_list=None,
+                mwFreq=exp.mwFreq,
+                pairs_flat=torch.stack([pi_bk, pj_bk], dim=1),
+            ).reshape(-1)
+        elif _has_any_strain(sys):
+            widths_flat = torch.zeros(0, dtype=rdtype, device=dev)
+
+    # ── Hybrid: replace every core line by its nuclear sub-lines ─────────────
+    if hybrid is not None and nBrackets > 0:
+        from torchspin.resfields_hybrid import hybrid_sublines
+        nvec = torch.stack([torch.sin(theta_batch) * torch.cos(phi_batch),
+                            torch.sin(theta_batch) * torch.sin(phi_batch),
+                            torch.cos(theta_batch)], dim=1).to(rdtype)
+        shift, amp = hybrid_sublines(
+            sys=hybrid['full_sys'],
+            perturb_idx=hybrid['perturb_idx'],
+            S_core=hybrid['S_core'],
+            psi_u=psi_i, psi_v=psi_j,
+            B_res=B_res_all.to(rdtype), dBdE=dBdE.to(rdtype),
+            nvec=nvec[m_idx],
+            int_threshold=hybrid.get('int_threshold', 0.005),
+            n_equiv=hybrid.get('n_equiv'),
+        )
+        n_sub = shift.shape[1]
+        # Positions add, intensities multiply, everything else is replicated.
+        # Each sub-line keeps its own slot: the pair index is widened so that the
+        # sort below orders by (orientation, core transition, sub-line) and the
+        # slot a sub-line occupies is the same for every orientation.
+        B_res_all = (B_res_all.unsqueeze(-1) + shift).reshape(-1)
+        intensities_all = (intensities_all.unsqueeze(-1) * amp).reshape(-1)
+        sub = torch.arange(n_sub, device=dev, dtype=p_idx.dtype)
+        p_idx = (p_idx.unsqueeze(-1) * n_sub + sub).reshape(-1)
+        nP = nP * n_sub
+        m_idx = m_idx.repeat_interleave(n_sub)
+        pi_bk = pi_bk.repeat_interleave(n_sub)
+        pj_bk = pj_bk.repeat_interleave(n_sub)
+        if widths_flat is not None and widths_flat.numel() > 0:
+            widths_flat = widths_flat.repeat_interleave(n_sub)
+        nBrackets = B_res_all.shape[0]
 
     # ── Step 5: Reassemble per-orientation result lists (tensor ops; one host sync) ──
     # Intensity threshold per orientation (absolute values: emissive lines of
@@ -395,12 +464,16 @@ def resfields_batch(
         keep |= max_per_m[m_idx] <= 0
         B_res_all, intensities_all, pi_bk, pj_bk, p_idx, m_idx = (
             B_res_all[keep], intensities_all[keep], pi_bk[keep], pj_bk[keep], p_idx[keep], m_idx[keep])
+        if widths_flat is not None and widths_flat.numel() > 0:
+            widths_flat = widths_flat[keep]
         nBrackets = B_res_all.shape[0]
     span = float(B_hi) - float(B_lo) + 1.0
     sort_key = (m_idx.to(rdtype) * (nP + 1) + p_idx.to(rdtype)) * span + (B_res_all - float(B_lo)).clamp(min=0.0, max=span)
     order = torch.argsort(sort_key)
     B_res_all, intensities_all, pi_bk, pj_bk, p_idx, m_idx = (
         B_res_all[order], intensities_all[order], pi_bk[order], pj_bk[order], p_idx[order], m_idx[order])
+    if widths_flat is not None and widths_flat.numel() > 0:
+        widths_flat = widths_flat[order]
     counts = torch.bincount(m_idx, minlength=M).tolist()          # the single device→host sync
     empty = torch.zeros(0, dtype=rdtype, device=dev)
     B_split = torch.split(B_res_all, counts)
@@ -412,31 +485,13 @@ def resfields_batch(
     widths_list:  list[Optional[torch.Tensor]] = [None] * M
     _pairs_saved: list                         = [(a, b) if c else None for a, b, c in zip(pi_split, pj_split, counts)]
 
-    # ── Strain widths — one batched call over all resonances ─────────────────
-    # EasySpin evaluates the strain width of every transition at its own
-    # resonance field (eigenvectors there): batch over all (orientation,
-    # resonance) brackets, one "orientation" per resonance.
-    if sys is not None:
-        from torchspin.strainwidth import compute_strain_widths_batch, _has_any_strain
-        if _has_any_strain(sys):
-            if B_res_all.numel() > 0:
-                pairs_flat = torch.stack([pi_bk, pj_bk], dim=1)                    # (K, 2)
-                widths_flat = compute_strain_widths_batch(
-                    sys=sys,
-                    H0=H0,
-                    muzL_batch=muzL[m_idx],
-                    phi_batch=phi_batch[m_idx],
-                    theta_batch=theta_batch[m_idx],
-                    B0_batch=B_res_all.to(torch.float64),
-                    pairs_list=None,
-                    mwFreq=exp.mwFreq,
-                    pairs_flat=pairs_flat,
-                )
-                widths_all = widths_flat.reshape(-1)
-                W_split = torch.split(widths_all, counts)
-                widths_list = [w if c else torch.zeros(0, dtype=rdtype, device=dev) for w, c in zip(W_split, counts)]
-            else:
-                widths_list = [torch.zeros(0, dtype=rdtype, device=dev)] * M
+    # Strain widths, split like the rest (computed above, before any expansion).
+    if widths_flat is not None:
+        if widths_flat.numel() > 0:
+            widths_list = [w if c else torch.zeros(0, dtype=rdtype, device=dev)
+                           for w, c in zip(torch.split(widths_flat, counts), counts)]
+        else:
+            widths_list = [torch.zeros(0, dtype=rdtype, device=dev)] * M
 
     if return_pairs:
         pairs_out = [

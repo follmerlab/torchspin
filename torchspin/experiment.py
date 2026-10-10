@@ -169,9 +169,19 @@ class Experiment:
 
 
 VALID_METHODS = frozenset({
-    'matrix', 'exact', 'perturb',
+    'matrix', 'exact', 'hybrid', 'perturb',
     'perturb1', 'perturb2', 'perturb3', 'perturb4', 'perturb5',
 })
+
+# Perturbation order per method name.  The bare name 'perturb' means different
+# orders in different EasySpin simulators: garlic's Breit-Rabi expansion goes to
+# fifth order, while pepper's resonance-field solver is second order.  Anything
+# pepper cannot deliver is rejected rather than silently run as second order.
+GARLIC_PERTURB_ORDER = {
+    'perturb': 5, 'perturb1': 1, 'perturb2': 2,
+    'perturb3': 3, 'perturb4': 4, 'perturb5': 5,
+}
+PEPPER_PERTURB_ORDER = {'perturb': 2, 'perturb1': 1, 'perturb2': 2}
 
 
 @dataclass
@@ -181,10 +191,34 @@ class Options:
     Parameters
     ----------
     Method:
-        Computational method.  ``'matrix'`` (default; pepper/salt) or, for
-        :func:`garlic`, ``'exact'`` (Breit–Rabi fixed-point solver, EasySpin
+        Computational method.  Which names are accepted depends on the
+        simulator:
+
+        :func:`pepper` — ``'matrix'`` (default) exact diagonalization;
+        ``'perturb'``/``'perturb2'`` second-order perturbation theory
+        (``'perturb1'`` first order); ``'hybrid'`` exact core plus
+        perturbational ligand nuclei, selected with ``HybridCoreNuclei``.
+        ``'perturb3'``–``'perturb5'`` are not implemented here and raise rather
+        than quietly running second order.
+
+        :func:`garlic` — ``'exact'`` (Breit–Rabi fixed-point solver, EasySpin
         default) / ``'perturb'`` / ``'perturb1'``–``'perturb5'`` (perturbation
-        theory of the given order; ``'perturb'`` = 5th order).
+        theory of the given order; ``'perturb'`` = 5th order).  Note that the
+        bare name means different orders in the two simulators, as in EasySpin.
+
+        :func:`salt` ignores ``Method``: it always finds resonance fields by
+        diagonalization and the ENDOR frequencies by first-order perturbation
+        theory.
+    HybridCoreNuclei:
+        ``Method='hybrid'`` only.  1-based indices into ``Sys.Nucs`` of the
+        nuclei to keep in the exactly diagonalized core; all electron spins are
+        always in the core.  Empty (the default) makes every nucleus
+        perturbational.  For Cu(II) with nitrogen ligands, ``[1]`` keeps the
+        copper exact and treats the nitrogens perturbationally.
+    HybridIntThreshold:
+        ``Method='hybrid'`` only.  Nuclear sub-lines whose amplitude summed over
+        the grid is below this fraction of the strongest are dropped
+        (EasySpin default 0.005).
     AccumMethod:
         garlic only.  Spectrum accumulation: ``'binning'`` (nearest-bin stick
         spectrum + convolution; default in the isotropic regime), ``'linear'``
@@ -239,6 +273,8 @@ class Options:
     """
 
     Method: str = 'matrix'
+    HybridCoreNuclei: Union[int, List[int], None] = None   # EasySpin Opt.HybridCoreNuclei (1-based)
+    HybridIntThreshold: float = 0.005                      # EasySpin Opt.HybridIntThreshold
     AccumMethod: Optional[str] = None
     Accuracy: float = 1e-12
     MaxIterations: int = 15

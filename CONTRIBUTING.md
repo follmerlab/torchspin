@@ -24,8 +24,12 @@ the benchmark figures.
 # .mat files are in the repository, so no MATLAB installation is needed)
 pytest -q
 
-# Fast pass: skip the 5 slow stochastic tests and the cross-validation suite
+# Fast pass: skip the slow tests and the cross-validation suite
 pytest -q -m "not slow" -k "not matlab_validation"
+
+# Also run the minutes-long exact-diagonalization comparisons, which are
+# skipped by default (one of them takes about 10 minutes)
+TORCHSPIN_RUN_EXPENSIVE=1 pytest -q -k cupc
 
 # Only the GPU consistency suite (workstations with CUDA)
 pytest torchspin/tests/test_gpu_consistency.py -v
@@ -42,13 +46,17 @@ tests are selected by module name (`-k matlab_validation`); the
 test, so filtering on it deselects nothing.
 
 CI (`.github/workflows/python-tests.yml`) runs a fast cross-platform matrix
-(Linux/macOS/Windows x Python 3.10-3.12, cross-validation deselected) plus one
-`full-suite` job on Linux/3.12 that runs everything with
-`TORCHSPIN_STRICT_REFS=1`, so a missing reference file fails the build instead
-of silently skipping.
+(Linux/macOS/Windows x Python 3.10-3.13, cross-validation deselected) plus one
+`full-suite` job on Linux that runs everything with `TORCHSPIN_STRICT_REFS=1`,
+so a missing reference file fails the build instead of silently skipping.
+That job has no marker filter, so a test that takes minutes costs minutes on
+every build: the two exact-diagonalization CuPc comparisons are therefore
+skipped unless `TORCHSPIN_RUN_EXPENSIVE=1` is set, rather than marked `slow`.
 
-The full passing baseline is **2659 passed, 0 failed, 4 skipped, 3
-documented xfails** (see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)).
+The full passing baseline is **2718 passed, 0 failed, 16 skipped, 3 documented
+xfails** on a CUDA-less machine (14 of the skips need a GPU, 2 are the
+expensive comparisons above).  See
+[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
 
 ## Adding a MATLAB cross-validation test
 

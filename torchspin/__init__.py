@@ -78,6 +78,7 @@ from torchspin.ham_zf import ham_zf, zfsframes
 from torchspin.hamsymm import hamsymm
 from torchspin.makespec import makespec
 from torchspin.pepper import pepper
+from torchspin.gridcheck import GridConvergence, grid_convergence
 from torchspin.pepper_autograd import pepper_autograd
 from torchspin.rotations import erot
 from torchspin.rotutils import (eulang, euler2quat, quat2euler, quat2rotmat,
@@ -157,6 +158,8 @@ __all__ = [
     'blochsteady',
     'BlochOptions',
     'pepper',
+    'grid_convergence',
+    'GridConvergence',
     'garlic',
     'fastmotion',
     'chili',
