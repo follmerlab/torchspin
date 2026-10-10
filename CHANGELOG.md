@@ -4,7 +4,7 @@ All notable changes to torchspin will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] — 2026-10-09
 
 Found by fitting a Cu(II) phthalocyanine spectrum (CuPc in ZnPc: S=1/2,
 A∥(Cu) ≈ 647 MHz, four equivalent 14N) — a system that hit every limit of
@@ -731,5 +731,8 @@ ported to Python/PyTorch with 1820+ passing tests.
 - Euler angles: radians, z-y'-z'' passive rotation
 - Default dtype: `torch.complex128`
 
-[Unreleased]: https://github.com/follmerlab/torchspin/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/follmerlab/torchspin/releases/tag/v0.1.0
+<!-- 0.3.0 was the first public release and the history before it was squashed,
+     so v0.1.0-v0.2.2 have no tags in this repository to link to. -->
+[Unreleased]: https://github.com/follmerlab/torchspin/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/follmerlab/torchspin/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/follmerlab/torchspin/releases/tag/v0.3.0

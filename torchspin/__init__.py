@@ -25,7 +25,7 @@ try:
     __version__ = _pkg_version("torchspin")
 except _PkgNotFound:
     # Editable install during development, or version metadata unavailable.
-    __version__ = "0.3.0+dev"
+    __version__ = "0.4.0+dev"
 
 from torchspin._compile import maybe_compile, set_compile_enabled, is_compile_available
 from torchspin.autograd import differentiable_spectrum
