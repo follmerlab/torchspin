@@ -192,7 +192,7 @@ If you use torchspin in published work, please cite both:
 
 - **EasySpin**, the MATLAB toolbox this port is based on —
   Stoll, S. & Schweiger, A. *J. Magn. Reson.* **178** (2006) 42–55.
-- **TorchSpin** — Follmer, A,H. *arXiv:2610.18924* (2026)
+- **TorchSpin** — Follmer, A.H. *arXiv:2610.18924* (2026) https://arxiv.org/abs/2610.18924.
 
 ---
 
