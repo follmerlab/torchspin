@@ -5,11 +5,12 @@ import os
 import numpy as np
 import pytest
 
-from torchspin.tests.test_spidyan_matlab_validation import _load_data, _cosine, _zsys, DATA_DIR
+from torchspin.tests.test_spidyan_matlab_validation import (
+    _load_data, _assert_matches, _zsys, DATA_DIR)
 from torchspin.spidyan import spidyan, SpidyanOptions
 
 
-def test_spidyan_tp_sweep_cosine():
+def test_spidyan_tp_sweep():
     if not os.path.exists(os.path.join(DATA_DIR, 'spidyan_onedimensional_tp.mat')):
         pytest.skip('reference missing')
     ref = _load_data('spidyan_onedimensional_tp.mat')
@@ -24,4 +25,5 @@ def test_spidyan_tp_sweep_cosine():
     for i, row in enumerate(rows):
         r = ref_re[i][np.isfinite(ref_re[i])]
         n = min(len(row), len(r))
-        assert n > 0 and _cosine(row[:n], r[:n]) > 0.99, f'step {i}: cosine {_cosine(row[:n], r[:n]):.4f}'
+        assert n > 0, f'step {i}: empty signal'
+        _assert_matches(row[:n], r[:n], f'tp sweep step {i}')

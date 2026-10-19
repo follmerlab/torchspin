@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover
     loadmat = None
 
 from torchspin import SpinSystem
+from torchspin.constants import GFREE
 from torchspin.spidyan import spidyan, SpidyanOptions
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "data")
@@ -41,15 +42,29 @@ def _load_data(filename):
     return loadmat(path, simplify_cells=True)["data"]
 
 
-def _cosine(a, b):
-    a = np.asarray(a, dtype=float).ravel()
-    b = np.asarray(b, dtype=float).ravel()
+# Strict comparison. A cosine similarity is scale-invariant and insensitive to
+# a DC offset, so it can see neither an amplitude error nor a wrong modulation:
+# a demodulated <S+> channel sat at exactly half EasySpin's amplitude at cosine
+# 1.000000 until 0.5.0. Assert the relative L2 error instead. Only the
+# full-suite CI job runs these (the matrix deselects matlab_validation), so the
+# tolerance need not absorb cross-platform variation; observed errors are
+# 1e-14..1e-12.
+STRICT_TOL = 1e-8
+
+
+def _rel_l2(a, b) -> float:
+    a = np.asarray(a).ravel()
+    b = np.asarray(b).ravel()
     n = min(len(a), len(b))
     a, b = a[:n], b[:n]
-    na, nb = np.linalg.norm(a), np.linalg.norm(b)
-    if na == 0 or nb == 0:
-        return 0.0
-    return float(abs(np.dot(a, b)) / (na * nb))
+    return float(np.linalg.norm(a - b) / np.linalg.norm(b))
+
+
+def _assert_matches(a, b, label, tol=STRICT_TOL):
+    """Assert a matches the MATLAB reference b in relative L2."""
+    assert len(np.asarray(a).ravel()) > 0, f"{label}: empty signal"
+    err = _rel_l2(a, b)
+    assert err < tol, f"{label}: relative L2 error {err:.3e} >= {tol:g}"
 
 
 def _zsys(zeeman_freq_GHz=33.5, **extra):
@@ -65,8 +80,8 @@ def _zsys(zeeman_freq_GHz=33.5, **extra):
 # ---------------------------------------------------------------------------
 
 
-def test_spidyan_spinonehalf_cosine():
-    """Chirp pi-pulse pair, <Sz> and <S+> detection: cosine >= 0.99."""
+def test_spidyan_spinonehalf():
+    """Chirp pi-pulse pair, <Sz> and <S+> detection, vs MATLAB (strict)."""
     ref = _load_data("spidyan_spinonehalf.mat")
     sys = _zsys()
     exp = {
@@ -84,11 +99,9 @@ def test_spidyan_spinonehalf_cosine():
         sig = sig.T                     # → (nDet, nT)
     ref_re = np.atleast_2d(np.asarray(ref['sig_re'], dtype=float))
     # z1 channel (real)
-    cos_z = _cosine(sig[0].real, ref_re[0])
-    assert cos_z > 0.99, f"spinonehalf <Sz> cosine {cos_z:.4f} < 0.99"
+    _assert_matches(sig[0].real, ref_re[0], "spinonehalf <Sz>")
     # +1 channel (compare real parts of the down-mixed transverse signal)
-    cos_p = _cosine(sig[1].real, ref_re[1])
-    assert cos_p > 0.99, f"spinonehalf <S+> cosine {cos_p:.4f} < 0.99"
+    _assert_matches(sig[1].real, ref_re[1], "spinonehalf <S+>")
 
 
 # ---------------------------------------------------------------------------
@@ -96,10 +109,10 @@ def test_spidyan_spinonehalf_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_spidyan_electronnucleus_cosine():
-    """S=1/2 + 1H (A=[8,45,45] MHz), chirp pulse + delay: cosine >= 0.99."""
+def test_spidyan_electronnucleus():
+    """S=1/2 + 1H (A=[8,45,45] MHz), chirp pulse + delay, vs MATLAB (strict)."""
     ref = _load_data("spidyan_electronnucleus.mat")
-    sys = SpinSystem(S=[0.5], g=[[2.00232, 2.00232, 2.00232]],
+    sys = SpinSystem(S=[0.5], g=[[GFREE, GFREE, GFREE]],
                      Nucs='1H', A=[[8.0, 45.0, 45.0]])
     exp = {
         'Field': 1195.0,
@@ -112,9 +125,9 @@ def test_spidyan_electronnucleus_cosine():
     }
     opt = SpidyanOptions(IntTimeStep=0.0001, SimFreq=32)
     t, sig, _ = spidyan(sys, exp, opt)
-    cos = _cosine(np.asarray(sig).real.ravel(),
-                  np.asarray(ref['sig_re'], dtype=float).ravel())
-    assert cos > 0.99, f"electronnucleus cosine {cos:.4f} < 0.99"
+    _assert_matches(np.asarray(sig).real.ravel(),
+                    np.asarray(ref['sig_re'], dtype=float).ravel(),
+                    "electronnucleus")
 
 
 # ---------------------------------------------------------------------------
@@ -122,10 +135,10 @@ def test_spidyan_electronnucleus_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_spidyan_highspin_cosine():
-    """S=3/2, D=200 MHz, chirp pulse + delay: cosine >= 0.99."""
+def test_spidyan_highspin():
+    """S=3/2, D=200 MHz, chirp pulse + delay, vs MATLAB (strict)."""
     ref = _load_data("spidyan_highspin.mat")
-    sys = SpinSystem(S=[1.5], g=[[2.00232, 2.00232, 2.00232]],
+    sys = SpinSystem(S=[1.5], g=[[GFREE, GFREE, GFREE]],
                      D=[[200.0, 0.0]])
     exp = {
         'Field': 1195.0,
@@ -137,9 +150,9 @@ def test_spidyan_highspin_cosine():
     }
     opt = SpidyanOptions(IntTimeStep=0.0001, SimFreq=32)
     t, sig, _ = spidyan(sys, exp, opt)
-    cos = _cosine(np.asarray(sig).real.ravel(),
-                  np.asarray(ref['sig_re'], dtype=float).ravel())
-    assert cos > 0.99, f"highspin cosine {cos:.4f} < 0.99"
+    _assert_matches(np.asarray(sig).real.ravel(),
+                    np.asarray(ref['sig_re'], dtype=float).ravel(),
+                    "highspin")
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +160,8 @@ def test_spidyan_highspin_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_spidyan_phasecycling_cosine():
-    """[0,+1; pi,-1] phase cycle on 1st and 3rd pulse: cosine >= 0.99."""
+def test_spidyan_phasecycling():
+    """[0,+1; pi,-1] phase cycle on 1st and 3rd pulse, vs MATLAB (strict)."""
     ref = _load_data("spidyan_phasecycling.mat")
     sys = _zsys()
     p = {'Type': 'rectangular', 'tp': 0.1, 'Flip': np.pi}
@@ -165,9 +178,9 @@ def test_spidyan_phasecycling_cosine():
     }
     opt = SpidyanOptions(IntTimeStep=0.0001, SimFreq=32)
     t, sig, _ = spidyan(sys, exp, opt)
-    cos = _cosine(np.asarray(sig).real.ravel(),
-                  np.asarray(ref['sig_re'], dtype=float).ravel())
-    assert cos > 0.99, f"phasecycling cosine {cos:.4f} < 0.99"
+    _assert_matches(np.asarray(sig).real.ravel(),
+                    np.asarray(ref['sig_re'], dtype=float).ravel(),
+                    "phasecycling")
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +188,8 @@ def test_spidyan_phasecycling_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_spidyan_onedimensional_cosine():
-    """3-point sweep of first-pulse flip angle: per-step cosine >= 0.99."""
+def test_spidyan_onedimensional():
+    """3-point sweep of first-pulse flip angle, per step vs MATLAB (strict)."""
     ref = _load_data("spidyan_onedimensional.mat")
     sys = _zsys()
     p = {'Type': 'rectangular', 'tp': 0.1, 'Flip': np.pi}
@@ -201,8 +214,7 @@ def test_spidyan_onedimensional_cosine():
     assert len(rows) == ref_re.shape[0], \
         f"expected {ref_re.shape[0]} steps, got {len(rows)}"
     for i, row in enumerate(rows):
-        cos = _cosine(row, ref_re[i])
-        assert cos > 0.99, f"onedimensional step {i} cosine {cos:.4f} < 0.99"
+        _assert_matches(row, ref_re[i], f"onedimensional step {i}")
 
 
 # ---------------------------------------------------------------------------
@@ -210,12 +222,19 @@ def test_spidyan_onedimensional_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_spidyan_electronelectron_cosine():
-    """Two S=1/2, J=0, chirp pulse + delay: cosine >= 0.99."""
+def test_spidyan_electronelectron():
+    """Two S=1/2, J=0, chirp pulse + delay, vs MATLAB (strict).
+
+    Sys.g must be EasySpin's ``gfree`` constant, not a rounded 2.00232: the
+    generator uses ``Sys.g = [gfree gfree]``, and a 3.5e-7 error in g shifts the
+    precession frequency by ~12 kHz, which accumulates as a phase drift through
+    the 0.5 us free evolution and reads as a 0.5% error. That rounding was
+    mistaken for a simulator defect before 0.5.0.
+    """
     ref = _load_data("spidyan_electronelectron.mat")
     sys = SpinSystem(S=[0.5, 0.5],
-                     g=[[2.00232, 2.00232, 2.00232],
-                        [2.00232, 2.00232, 2.00232]],
+                     g=[[GFREE, GFREE, GFREE],
+                        [GFREE, GFREE, GFREE]],
                      ee=[0.0])
     exp = {
         'Field': 1195.0,
@@ -233,8 +252,7 @@ def test_spidyan_electronelectron_cosine():
     ref_re = np.atleast_2d(np.asarray(ref['sig_re'], dtype=float))
     n_ch = min(sig.shape[0], ref_re.shape[0])
     for i in range(n_ch):
-        cos = _cosine(sig[i].real, ref_re[i])
-        assert cos > 0.99, f"electronelectron ch{i} cosine {cos:.4f} < 0.99"
+        _assert_matches(sig[i].real, ref_re[i], f"electronelectron ch{i}")
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +260,8 @@ def test_spidyan_electronelectron_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_spidyan_relaxation_cosine():
-    """T1=1 µs, T2=0.4 µs relaxation, <Sz> detection: cosine >= 0.99."""
+def test_spidyan_relaxation():
+    """T1=1 µs, T2=0.4 µs relaxation, <Sz> detection, vs MATLAB (strict)."""
     ref = _load_data("spidyan_relaxation.mat")
     sys = _zsys(T1=1.0, T2=0.4)
     exp = {
@@ -257,9 +275,9 @@ def test_spidyan_relaxation_cosine():
     }
     opt = SpidyanOptions(IntTimeStep=0.0001, SimFreq=32, Relaxation=True)
     t, sig, _ = spidyan(sys, exp, opt)
-    cos = _cosine(np.asarray(sig).real.ravel(),
-                  np.asarray(ref['sig_re'], dtype=float).ravel())
-    assert cos > 0.99, f"relaxation cosine {cos:.4f} < 0.99"
+    _assert_matches(np.asarray(sig).real.ravel(),
+                    np.asarray(ref['sig_re'], dtype=float).ravel(),
+                    "relaxation")
 
 
 # ---------------------------------------------------------------------------
@@ -272,14 +290,6 @@ def test_spidyan_relaxation_cosine():
 # normalization is otherwise off by that factor; a purely real or purely
 # imaginary trace (e.g. Sz) is left alone. Omitting it left the demodulated
 # <S+> channel exactly half of EasySpin's at cosine 1.000000.
-
-
-def _rel_l2(a, b) -> float:
-    a = np.asarray(a).ravel()
-    b = np.asarray(b).ravel()
-    n = min(len(a), len(b))
-    a, b = a[:n], b[:n]
-    return float(np.linalg.norm(a - b) / np.linalg.norm(b))
 
 
 def test_spidyan_complex_detection_amplitude_strict():

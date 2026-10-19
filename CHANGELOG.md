@@ -4,11 +4,74 @@ All notable changes to torchspin will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Follow-up to 0.5.0: the pulse-EPR test suites now assert the relative L2 error
+against MATLAB rather than a cosine similarity, and the one physics issue 0.5.0
+left open turned out not to be a physics issue.
+
+### Fixed — the "spidyan multi-spin phase drift" was a test transcription error
+
+0.5.0's `KNOWN_LIMITATIONS` reported an undiagnosed residual in `spidyan` that
+grew linearly through free evolution for multi-spin systems (4.7e-3 for two
+coupled electrons, 6.4e-5 electron-nucleus, 8.8e-6 for S=3/2), and warned that
+it would be worse for longer sequences.  **There is no such defect.**
+
+Fitting the accumulated phase showed torchspin reproducing the analytic Larmor
+frequency exactly (1489.828541 MHz at 1195 mT, g = 2.00232, in the 32 GHz
+simulation frame) while the MATLAB reference sat 11.6 kHz below it.  That
+offset is `(2.00232 - gfree)/2.00232 = 3.47e-7` of the full Larmor frequency:
+`generate_spidyan_refs.m` sets `Sys.g = gfree` (2.0023193043...), and the Python
+tests had transcribed it as a rounded `2.00232`.  A 3.5e-7 error in g shifts the
+precession frequency enough to accumulate visibly as phase over a 0.5 us delay.
+
+The three affected tests are exactly the three whose generator uses
+`Sys.g = gfree`; the cases that set `Sys.ZeemanFreq` were unaffected and had
+always agreed to 1e-13.  With `GFREE` used in place of the rounded value, every
+`spidyan` case agrees to 1e-14..1e-12.  No library code changed.
+
+### Changed — pulse-EPR tests assert relative error, not cosine
+
+`test_spidyan_matlab_validation.py`, `test_spidyan_tp_matlab_validation.py` and
+`test_saffron_matlab_validation.py` now assert the relative L2 error against the
+MATLAB reference (`STRICT_TOL = 1e-8` and `1e-6` respectively) instead of
+`cosine > 0.85..0.99`.  A cosine is scale-invariant and dominated by a pulse-EPR
+trace's DC offset, so it could see neither the eight defects fixed in 0.5.0 nor
+the `gfree` rounding above.
+
+Making them strict required fixing three kinds of harness fault that a cosine
+had been hiding.  **None was a library fault** -- checked against matched
+references, agreement is 1e-16..1e-7 in every case:
+
+- **Accumulation path.** No saffron reference generator sets `Opt.TimeDomain`,
+  so every reference comes from the frequency-binned path, but twelve tests ran
+  with `TimeDomain=True`.  That compares direct time evolution against
+  EasySpin's own binned approximation -- a 7-60% difference in the modulation
+  that is real, expected, and nothing to do with correctness.
+- **Normalization.** Six generators write `y = y/max(abs(y))`; the tests
+  compared torchspin's unnormalized output against them, leaving fixed scale
+  factors of ~4*pi and similar.
+- **Orientation grid.** `saffron_hyscore14n` and `saffron_hyscore_ganiso` are
+  generated at `Opt.GridSize = 181` but were tested at 91, and
+  `saffron_2psimple` is generated at EasySpin's default 31 but was tested at 20.
+  `GridSize` is now stated explicitly in every case rather than inherited from a
+  default that could drift apart between the two codes.
+
+`test_orientation_selective` documents a measured case where the **committed
+fixture** is stale: regenerating it from the local EasySpin gives a reference
+torchspin matches to 4.4e-15, and that fresh reference differs from the stored
+one by 1.4e-6 in overall scale.  Its amplitude is therefore checked at 1e-5 with
+the peak-normalized shape checked strictly, rather than silently loosening
+everything.
+
+The dead cosine helpers are removed, and the tests no longer carry a `_cosine`
+suffix that would misdescribe what they assert.
+
 ## [0.5.0] — 2026-10-19
 
-Found by a flavodoxin HYSCORE feasibility study that compared `saffron`
-against MATLAB EasySpin on its own 13C model and got the modulation wrong
-while the raw cosine stayed at 0.99999.  The existing `saffron` suite scored
+Found while cross-validating `saffron` against MATLAB EasySpin on a 13C
+HYSCORE model, where the modulation came out wrong although the raw cosine
+stayed at 0.99999.  The existing `saffron` suite scored
 agreement with a cosine similarity, which for a pulse-EPR time trace is
 dominated by the DC offset: a HYSCORE trace can have a ~100% wrong modulation
 and still score >0.999.  Every defect below lived in that blind spot.
@@ -139,10 +202,14 @@ one of these cases.
 
 Still open, and recorded in `KNOWN_LIMITATIONS.md`:
 
-- `spidyan` multi-spin systems show a small residual that grows linearly
+- ~~`spidyan` multi-spin systems show a small residual that grows linearly
   through free evolution — a phase drift of order 1e-5 relative — for two
   coupled electrons (4.7e-3 overall), an electron-nucleus pair (6.4e-5) and
-  S=3/2 (8.8e-6).  Single-electron cases are exact to 1e-13.  Not diagnosed.
+  S=3/2 (8.8e-6).  Single-electron cases are exact to 1e-13.  Not diagnosed.~~
+  **Retracted — there is no such defect.** This was a test transcription error
+  (the tests rounded EasySpin's `gfree` to 2.00232); torchspin reproduces the
+  analytic Larmor frequency exactly. See [Unreleased]. The claim is struck
+  through rather than deleted because 0.5.0 shipped with it.
 - `saffron` with real pulses returns per-increment transients
   (`nPoints x nDet x nTime`) where EasySpin returns one detected point per
   increment, and no simple reduction of those transients recovers EasySpin's
