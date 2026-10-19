@@ -9,10 +9,24 @@ They contain ``data`` structs with either:
 - ``data.y1, data.x1, data.y2, data.x2`` (predefined-vs-manual parity tests)
 - ``data.y, data.x`` (single saffron call)
 
-Tolerances are intentionally loose because:
-- Saffron pathway amplitudes can differ by orientation-grid density (GridSize)
-- Frequency-domain output depends on FFT zero-padding conventions
-- Two-sequence tests (y1 vs y2) verify internal consistency, not MATLAB parity
+Comparisons are strict: the relative L2 error against the MATLAB reference,
+not a cosine similarity. A cosine is scale-invariant and dominated by the DC
+offset of a pulse-EPR trace, so it sees neither an amplitude error nor a wrong
+modulation -- eight defects hid behind cosine thresholds here until 0.5.0.
+
+Being strict means the comparison has to be set up correctly, and three
+mismatches had to be fixed to get there. Each reference is reproduced with:
+
+- **the same accumulation path.** None of the generators set ``Opt.TimeDomain``,
+  so every reference comes from the frequency-binned path. Running torchspin
+  with ``TimeDomain=True`` against them compares direct time evolution against
+  EasySpin's own binned approximation, which differs by 7-60% in the
+  modulation. These tests therefore leave ``TimeDomain`` at its default.
+- **the same orientation grid.** ``GridSize`` is stated explicitly for every
+  case rather than relying on a shared default, and matches the generator.
+- **the same normalization.** Where the generator wrote
+  ``y = y/max(abs(y))``, the torchspin signal is normalized the same way
+  before comparison (``normalize=True`` below).
 
 This file is pytest-skipped when the `.mat` fixtures are missing (e.g. in a
 pip install without the source checkout).
@@ -51,24 +65,39 @@ def _load_data(filename: str) -> dict:
     return loadmat(str(p), simplify_cells=True)["data"]
 
 
-def _cosine_1d(a, b) -> float:
-    a = np.asarray(a, dtype=float).ravel()
-    b = np.asarray(b, dtype=float).ravel()
-    na, nb = np.linalg.norm(a), np.linalg.norm(b)
-    if na < 1e-30 or nb < 1e-30:
-        return 0.0
-    return float(np.dot(a, b) / (na * nb))
+# Strict comparison helpers. See the module docstring for why a cosine is not
+# a usable oracle here. Observed errors are 1e-16..1e-7. The tolerance leaves
+# headroom because a few committed fixtures are slightly stale relative to the
+# current EasySpin -- regenerating them moves agreement to ~1e-15 (see
+# test_orientation_selective, which documents a measured case) -- while still
+# being orders of magnitude tighter than needed to catch a real defect: the
+# ones found in 0.5.0 were factors of 2 and 8 and ~100% modulation errors.
+STRICT_TOL = 1e-6
 
 
-def _cosine_complex(a, b) -> float:
-    """Cosine similarity between complex arrays, comparing real parts."""
+def _norm_peak(v):
+    """Scale by max|v|, as the MATLAB generators' ``y = y/max(abs(y))`` does."""
+    v = np.asarray(v)
+    m = np.max(np.abs(v))
+    return v / m if m > 0 else v
+
+
+def _assert_matches(a, b, label, normalize=False, tol=STRICT_TOL):
+    """Assert a matches the MATLAB reference b in relative L2 error."""
     a = np.asarray(a).ravel()
     b = np.asarray(b).ravel()
-    if np.iscomplexobj(a):
-        a = a.real
-    if np.iscomplexobj(b):
-        b = b.real
-    return _cosine_1d(a, b)
+    assert a.size > 0, f"{label}: empty signal"
+    n = min(len(a), len(b))
+    a, b = a[:n], b[:n]
+    if normalize:
+        a, b = _norm_peak(a), _norm_peak(b)
+    denom = np.linalg.norm(b)
+    assert denom > 0, f"{label}: reference is all-zero"
+    err = float(np.linalg.norm(a - b) / denom)
+    assert err < tol, (
+        f"{label}: relative L2 error {err:.3e} >= {tol:g}"
+        f"{' (peak-normalized)' if normalize else ''}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +105,7 @@ def _cosine_complex(a, b) -> float:
 # ---------------------------------------------------------------------------
 
 
-def test_saffron_2pESEEM_cosine():
+def test_saffron_2pESEEM():
     """2pESEEM (1H, A=[5,2], Field=350 mT): cosine vs MATLAB y1.
 
     Fixed 2026-04-19: saffron predefined-experiment path was multiplying by
@@ -95,14 +124,13 @@ def test_saffron_2pESEEM_cosine():
         tau=0.0,
         nPoints=120,
     )
-    opt = SaffronOptions(GridSize=20, TimeDomain=True)
+    opt = SaffronOptions(GridSize=20)
     x, y, info = saffron(sys, exp, opt)
 
     y_ref = np.asarray(ref['y1']).ravel()
     y_py = np.asarray(y).ravel()
     n = min(len(y_ref), len(y_py))
-    cos = _cosine_complex(y_py[:n], y_ref[:n])
-    assert cos > 0.99, f"2pESEEM cosine {cos:.4f} < 0.99 threshold"
+    _assert_matches(y_py[:n], y_ref[:n], "2pESEEM")
 
 
 # ---------------------------------------------------------------------------
@@ -110,8 +138,11 @@ def test_saffron_2pESEEM_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_saffron_2psimple_cosine():
-    """2pESEEM with 14N nucleus: cosine vs MATLAB frequency spectrum."""
+def test_saffron_2psimple():
+    """2pESEEM with 14N + quadrupole vs MATLAB (strict, peak-normalized).
+
+    EasySpin's script sets no Opt.GridSize, so the reference uses its default 31.
+    """
     ref = _load_data("saffron_2psimple.mat")
     Field = 324.9
     # Sys.A = (2)*nuI where nuI is larmorfrq — approximately 2.10 MHz at this field
@@ -131,19 +162,15 @@ def test_saffron_2psimple_cosine():
         nPoints=1001,
         tau=0.001,
     )
-    opt = SaffronOptions(GridSize=20)
+    opt = SaffronOptions(GridSize=31)
     _, y, info = saffron(sys, exp, opt)
 
-    # MATLAB normalized: y = y/max(abs(y))
+    # The generator normalized (y = y/max(abs(y))); normalize=True matches it.
+    # Sys.Q = [e2qQ/h, eta] is converted as EasySpin's validatespinsys does.
     y_ref = np.asarray(ref['y']).ravel()
     y_py = np.asarray(y).ravel()
-    if np.max(np.abs(y_py)) > 0:
-        y_py = y_py / np.max(np.abs(y_py))
-
     n = min(len(y_ref), len(y_py))
-    cos = _cosine_complex(y_py[:n], y_ref[:n])
-    # Sys.Q = [e2qQ/h eta] is converted like EasySpin validatespinsys (cosine 0.99995)
-    assert cos > 0.999, f"2psimple cosine {cos:.4f} < 0.999 threshold"
+    _assert_matches(y_py[:n], y_ref[:n], "2psimple", normalize=True)
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +178,7 @@ def test_saffron_2psimple_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_saffron_3pESEEM_cosine():
+def test_saffron_3pESEEM():
     """3pESEEM (1H, A_=[5,2], Field=350 mT): cosine vs MATLAB y1."""
     ref = _load_data("saffron_3pESEEM.mat")
     sys = SpinSystem(S=[0.5], g=[[2.0023, 2.0023, 2.0023]],
@@ -163,14 +190,13 @@ def test_saffron_3pESEEM_cosine():
         tau=0.1,
         nPoints=120,
     )
-    opt = SaffronOptions(GridSize=20, TimeDomain=True)
+    opt = SaffronOptions(GridSize=20)
     _, y, _ = saffron(sys, exp, opt)
 
     y_ref = np.asarray(ref['y1']).ravel()
     y_py = np.asarray(y).ravel()
     n = min(len(y_ref), len(y_py))
-    cos = _cosine_complex(y_py[:n], y_ref[:n])
-    assert cos > 0.99, f"3pESEEM cosine {cos:.4f} < 0.99 threshold"
+    _assert_matches(y_py[:n], y_ref[:n], "3pESEEM")
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +204,7 @@ def test_saffron_3pESEEM_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_saffron_HYSCORE_cosine_1d():
+def test_saffron_HYSCORE_1d():
     """HYSCORE (1H, Field=324.9 mT) — cosine vs MATLAB y1.
 
     Fixed 2026-04-19 by the same predefined-prefactor fix as 2p/3pESEEM.
@@ -197,15 +223,13 @@ def test_saffron_HYSCORE_cosine_1d():
         t1=0.1,
         t2=0.1,
     )
-    opt = SaffronOptions(GridSize=20, TimeDomain=True)
+    opt = SaffronOptions(GridSize=20)
     _, y, _ = saffron(sys, exp, opt)
 
     y_ref = np.asarray(ref['y1']).ravel()
     y_py = np.asarray(y).ravel()
     n = min(len(y_ref), len(y_py))
-    cos = _cosine_complex(y_py[:n], y_ref[:n])
-    # HYSCORE 2D: even loose cosine is informative
-    assert cos > 0.99, f"HYSCORE cosine {cos:.4f} < 0.99 threshold"
+    _assert_matches(y_py[:n], y_ref[:n], "HYSCORE")
 
 
 # ---------------------------------------------------------------------------
@@ -252,14 +276,7 @@ def test_saffron_matlab_refs_present():
 # ---------------------------------------------------------------------------
 
 
-def _cosine_highspin(y_py, y_ref) -> float:
-    a = np.asarray(y_py, dtype=float).ravel()
-    b = np.asarray(y_ref, dtype=float).ravel()
-    n = min(len(a), len(b))
-    return _cosine_1d(a[:n], b[:n])
-
-
-def test_S1_2pESEEM_cosine():
+def test_S1_2pESEEM():
     """S=1 + 1H 2pESEEM (D=100 MHz): cosine vs MATLAB reference >= 0.90."""
     ref = _load_data("saffron_S1_2pESEEM.mat")
     sys = SpinSystem(
@@ -269,15 +286,14 @@ def test_S1_2pESEEM_cosine():
     )
     exp = PulseExperiment(Field=350.0, Sequence='2pESEEM',
                           dt=0.01, nPoints=256, tau=0.2)
-    opt = SaffronOptions(GridSize=30, TimeDomain=True)
+    opt = SaffronOptions(GridSize=30)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).ravel()
-    cos = _cosine_highspin(y_py, y_ref)
-    assert cos > 0.90, f"S=1 2pESEEM cosine {cos:.4f} < 0.90"
+    _assert_matches(y_py, y_ref, "S=1 2pESEEM")
 
 
-def test_S1_3pESEEM_cosine():
+def test_S1_3pESEEM():
     """S=1 + 1H 3pESEEM (D=100 MHz): cosine vs MATLAB reference >= 0.90."""
     ref = _load_data("saffron_S1_3pESEEM.mat")
     sys = SpinSystem(
@@ -287,15 +303,14 @@ def test_S1_3pESEEM_cosine():
     )
     exp = PulseExperiment(Field=350.0, Sequence='3pESEEM',
                           dt=0.01, nPoints=256, tau=0.2)
-    opt = SaffronOptions(GridSize=30, TimeDomain=True)
+    opt = SaffronOptions(GridSize=30)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).ravel()
-    cos = _cosine_highspin(y_py, y_ref)
-    assert cos > 0.90, f"S=1 3pESEEM cosine {cos:.4f} < 0.90"
+    _assert_matches(y_py, y_ref, "S=1 3pESEEM")
 
 
-def test_S32_HYSCORE_cosine():
+def test_S32_HYSCORE():
     """S=3/2 + 14N HYSCORE (D=50 MHz): cosine vs MATLAB reference >= 0.85."""
     ref = _load_data("saffron_S32_HYSCORE.mat")
     sys = SpinSystem(
@@ -306,15 +321,14 @@ def test_S32_HYSCORE_cosine():
     )
     exp = PulseExperiment(Field=330.0, Sequence='HYSCORE',
                           dt=[0.02, 0.02], nPoints=[64, 64], tau=0.2)
-    opt = SaffronOptions(GridSize=20, TimeDomain=True)
+    opt = SaffronOptions(GridSize=20)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).real.ravel()
-    cos = _cosine_highspin(y_py, y_ref)
-    assert cos > 0.85, f"S=3/2 HYSCORE cosine {cos:.4f} < 0.85"
+    _assert_matches(y_py, y_ref, "S=3/2 HYSCORE")
 
 
-def test_S1_2pESEEM_orisel_cosine():
+def test_S1_2pESEEM_orisel():
     """S=1 + 1H 2pESEEM with orientation selection: cosine >= 0.85."""
     ref = _load_data("saffron_S1_2pESEEM_orisel.mat")
     sys = SpinSystem(
@@ -325,15 +339,14 @@ def test_S1_2pESEEM_orisel_cosine():
     exp = PulseExperiment(Field=350.0, Sequence='2pESEEM',
                           dt=0.01, nPoints=256, tau=0.2,
                           mwFreq=9.5, ExciteWidth=100.0)
-    opt = SaffronOptions(GridSize=30, TimeDomain=True)
+    opt = SaffronOptions(GridSize=30)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).ravel()
-    cos = _cosine_highspin(y_py, y_ref)
-    assert cos > 0.85, f"S=1 orisel 2pESEEM cosine {cos:.4f} < 0.85"
+    _assert_matches(y_py, y_ref, "S=1 orisel 2pESEEM")
 
 
-def test_S1_14N_3pESEEM_cosine():
+def test_S1_14N_3pESEEM():
     """S=1 + 14N 3pESEEM (quadrupole, D=100 MHz): cosine >= 0.85."""
     ref = _load_data("saffron_S1_14N_3pESEEM.mat")
     sys = SpinSystem(
@@ -344,12 +357,11 @@ def test_S1_14N_3pESEEM_cosine():
     )
     exp = PulseExperiment(Field=350.0, Sequence='3pESEEM',
                           dt=0.01, nPoints=256, tau=0.2)
-    opt = SaffronOptions(GridSize=30, TimeDomain=True)
+    opt = SaffronOptions(GridSize=30)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).ravel()
-    cos = _cosine_highspin(y_py, y_ref)
-    assert cos > 0.85, f"S=1 14N 3pESEEM cosine {cos:.4f} < 0.85"
+    _assert_matches(y_py, y_ref, "S=1 14N 3pESEEM")
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +383,7 @@ def _nu_larmor(nuc: str, field_mT: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def test_3psimple_cosine():
+def test_3psimple():
     """14N 3pESEEM (A=2*nuI, Q=[4*0.1*nuI, 0.6]): cosine vs MATLAB >= 0.90."""
     ref = _load_data("saffron_3psimple.mat")
     nuI = _nu_larmor('14N', 324.9)
@@ -383,13 +395,12 @@ def test_3psimple_cosine():
     )
     exp = PulseExperiment(Field=324.9, Sequence='3pESEEM',
                           dt=0.050, nPoints=1001, tau=0.001)
-    opt = SaffronOptions(TimeDomain=True)
+    opt = SaffronOptions(GridSize=31)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).real.ravel()
     n = min(len(y_py), len(y_ref))
-    cos = _cosine_1d(y_py[:n], y_ref[:n])
-    assert cos > 0.90, f"3psimple cosine {cos:.4f} < 0.90"
+    _assert_matches(y_py[:n], y_ref[:n], "3psimple", normalize=True)
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +408,7 @@ def test_3psimple_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_4psimple_cosine():
+def test_4psimple():
     """1H 4pESEEM (A=[2,2,9] MHz): cosine vs MATLAB >= 0.95."""
     ref = _load_data("saffron_4psimple.mat")
     # EasySpin A=[2, 9] axial shorthand → [A_perp, A_perp, A_par]
@@ -406,13 +417,12 @@ def test_4psimple_cosine():
         Nucs='1H', A=[[2.0, 2.0, 9.0]],
     )
     exp = PulseExperiment(Field=350.0, Sequence='4pESEEM', tau=0.1, dt=0.01)
-    opt = SaffronOptions(TimeDomain=True)
+    opt = SaffronOptions(GridSize=31)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).real.ravel()
     n = min(len(y_py), len(y_ref))
-    cos = _cosine_1d(y_py[:n], y_ref[:n])
-    assert cos > 0.95, f"4psimple cosine {cos:.4f} < 0.95"
+    _assert_matches(y_py[:n], y_ref[:n], "4psimple", normalize=True)
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +430,7 @@ def test_4psimple_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_decay_cosine():
+def test_decay():
     """1H 3pESEEM with T1=2 µs, T2=1 µs: cosine vs MATLAB >= 0.95."""
     ref = _load_data("saffron_decay.mat")
     # A_=[5 2] → [3, 3, 9] MHz
@@ -431,13 +441,12 @@ def test_decay_cosine():
     )
     exp = PulseExperiment(Field=350.0, Sequence='3pESEEM',
                           dt=0.01, nPoints=120, tau=0.1)
-    opt = SaffronOptions(GridSize=20, TimeDomain=True)
+    opt = SaffronOptions(GridSize=20)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y1']).real.ravel()
     n = min(len(y_py), len(y_ref))
-    cos = _cosine_1d(y_py[:n], y_ref[:n])
-    assert cos > 0.95, f"decay cosine {cos:.4f} < 0.95"
+    _assert_matches(y_py[:n], y_ref[:n], "decay")
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +454,7 @@ def test_decay_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_hyscore14n_cosine():
+def test_hyscore14n():
     """14N HYSCORE (anisotropic A and Q): cosine vs MATLAB >= 0.85."""
     ref = _load_data("saffron_hyscore14n.mat")
     # A=[-1 -1 2]*0.5+0.8 = [0.3, 0.3, 1.8] MHz
@@ -458,13 +467,12 @@ def test_hyscore14n_cosine():
     )
     exp = PulseExperiment(Field=330.0, Sequence='HYSCORE',
                           tau=0.001, dt=0.1, nPoints=200)
-    opt = SaffronOptions(GridSize=91, TimeDomain=True)
+    opt = SaffronOptions(GridSize=181)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).real.ravel()
     n = min(len(y_py), len(y_ref))
-    cos = _cosine_1d(y_py[:n], y_ref[:n])
-    assert cos > 0.85, f"hyscore14n cosine {cos:.4f} < 0.85"
+    _assert_matches(y_py[:n], y_ref[:n], "hyscore14n", normalize=True)
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +480,7 @@ def test_hyscore14n_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_hyscore_ganiso_cosine():
+def test_hyscore_ganiso():
     """HYSCORE with g=[2, 2, 6] (strongly anisotropic): cosine vs MATLAB >= 0.85."""
     ref = _load_data("saffron_hyscore_ganiso.mat")
     # EasySpin g=[2, 6] axial → [g_perp, g_perp, g_par]
@@ -483,13 +491,12 @@ def test_hyscore_ganiso_cosine():
     )
     exp = PulseExperiment(Field=330.0, Sequence='HYSCORE',
                           tau=0.001, dt=0.01, nPoints=200)
-    opt = SaffronOptions(GridSize=91, TimeDomain=True)
+    opt = SaffronOptions(GridSize=181)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).real.ravel()
     n = min(len(y_py), len(y_ref))
-    cos = _cosine_1d(y_py[:n], y_ref[:n])
-    assert cos > 0.85, f"hyscore_ganiso cosine {cos:.4f} < 0.85"
+    _assert_matches(y_py[:n], y_ref[:n], "hyscore_ganiso", normalize=True)
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +504,7 @@ def test_hyscore_ganiso_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_mimssimple_cosine():
+def test_mimssimple():
     """1H MimsENDOR: cosine vs MATLAB >= 0.90."""
     ref = _load_data("saffron_mimssimple.mat")
     nuI_1H = _nu_larmor('1H', 325.0)
@@ -509,13 +516,12 @@ def test_mimssimple_cosine():
     endor_range = [nuI_1H - 10.0, nuI_1H + 10.0]
     exp = PulseExperiment(Field=325.0, Sequence='MimsENDOR',
                           tau=0.1, Range=endor_range)
-    opt = SaffronOptions(TimeDomain=True)
+    opt = SaffronOptions(GridSize=31)
     _, y, _ = saffron(sys, exp, opt)
     y_py = np.asarray(y).real.ravel()
     y_ref = np.asarray(ref['y']).real.ravel()
     n = min(len(y_py), len(y_ref))
-    cos = _cosine_1d(y_py[:n], y_ref[:n])
-    assert cos > 0.90, f"mimssimple cosine {cos:.4f} < 0.90"
+    _assert_matches(y_py[:n], y_ref[:n], "mimssimple", normalize=True)
 
 
 # ---------------------------------------------------------------------------
@@ -523,8 +529,16 @@ def test_mimssimple_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_orientation_selective_cosine():
-    """2pESEEM with orientation selection (g=[2,2,2.2], ExciteWidth=200 MHz): cosine >= 0.90."""
+def test_orientation_selective():
+    """2pESEEM with orientation selection (g=[2,2,2.2], ExciteWidth=200 MHz).
+
+    The committed fixture is slightly stale: regenerating it from the local
+    EasySpin gives a reference that torchspin matches to 4.4e-15, and that
+    fresh reference differs from this stored one by 1.4e-6 in overall scale
+    (the shape is identical). So the amplitude here is checked at 1e-5 rather
+    than STRICT_TOL, while the peak-normalized shape is checked strictly --
+    the stale factor is in the fixture, not the code.
+    """
     ref = _load_data("saffron_orientation_selective.mat")
     # EasySpin A=[1, 6] axial → [1, 1, 6] MHz; g=[2, 2.2] axial → [2, 2, 2.2]
     sys = SpinSystem(
@@ -536,13 +550,15 @@ def test_orientation_selective_cosine():
         mwFreq=9.5, dt=0.015, nPoints=128,
         ExciteWidth=200.0, tau=0.001,
     )
-    opt = SaffronOptions(GridSize=91, TimeDomain=True)
+    opt = SaffronOptions(GridSize=91)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).real.ravel()
     n = min(len(y_py), len(y_ref))
-    cos = _cosine_1d(y_py[:n], y_ref[:n])
-    assert cos > 0.90, f"orientation_selective cosine {cos:.4f} < 0.90"
+    _assert_matches(y_py[:n], y_ref[:n], "orientation_selective shape",
+                    normalize=True)
+    _assert_matches(y_py[:n], y_ref[:n], "orientation_selective amplitude",
+                    tol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +566,7 @@ def test_orientation_selective_cosine():
 # ---------------------------------------------------------------------------
 
 
-def test_customsequence_cosine():
+def test_customsequence():
     """14N HYSCORE via custom pulse sequence: cosine vs MATLAB >= 0.95.
 
     EasySpin: saffron_customsequence.m, {p90 tau p90 t0 p180 t0 p90 tau}.
@@ -575,13 +591,12 @@ def test_customsequence_cosine():
         t=[0.080, 0.0, 0.0, 0.080],
         dt=[0.1, 0.1], nPoints=[32, 32],
     )
-    opt = SaffronOptions(TimeDomain=True)
+    opt = SaffronOptions(GridSize=31)
     _, _, info = saffron(sys, exp, opt)
     y_py = np.asarray(info['td']).real.ravel()
     y_ref = np.asarray(ref['y']).real.ravel()
     n = min(len(y_py), len(y_ref))
-    cos = _cosine_1d(y_py[:n], y_ref[:n])
-    assert cos > 0.95, f"customsequence cosine {cos:.4f} < 0.95"
+    _assert_matches(y_py[:n], y_ref[:n], "customsequence")
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +635,7 @@ def test_thyme_indirectdimensions_shape():
 # ---------------------------------------------------------------------------
 
 
-def test_crystalorientations_cosine():
+def test_crystalorientations():
     """Single-crystal 3pESEEM via SampleFrame: cosine vs MATLAB >= 0.99.
 
     EasySpin: saffron_crystalorientations.m. A_=[5 2] → A=[3, 3, 9] MHz.
@@ -637,8 +652,7 @@ def test_crystalorientations_cosine():
                            SampleFrame=[0, -np.pi / 2, 0])
     _, y1, _ = saffron(sys, exp1, opt)
     y_ref = np.asarray(ref['y'], dtype=float).ravel()
-    cos1 = _cosine_1d(np.asarray(y1).real.ravel(), y_ref)
-    assert cos1 > 0.99, f"crystal single-orientation cosine {cos1:.4f} < 0.99"
+    _assert_matches(np.asarray(y1).real.ravel(), y_ref, "crystal single-orientation")
 
     exp2 = PulseExperiment(Field=350.0, Sequence='3pESEEM',
                            dt=0.01, tau=0.1, nPoints=120,
@@ -646,11 +660,10 @@ def test_crystalorientations_cosine():
                            SampleFrame=[[0, -np.pi / 2, 0], [0, 0, 0]])
     _, y2, _ = saffron(sys, exp2, opt)
     y_ref2 = np.asarray(ref['y2'], dtype=float).ravel()
-    cos2 = _cosine_1d(np.asarray(y2).real.ravel(), y_ref2)
-    assert cos2 > 0.99, f"crystal two-orientation cosine {cos2:.4f} < 0.99"
+    _assert_matches(np.asarray(y2).real.ravel(), y_ref2, "crystal two-orientation")
 
 
-def test_crystal_hyscore_cosine():
+def test_crystal_hyscore():
     """P212121 crystal (4 sites) HYSCORE: cosine vs MATLAB >= 0.95.
 
     EasySpin: saffron_crystal.m (upgraded from smoke test to cosine).
@@ -665,8 +678,7 @@ def test_crystal_hyscore_cosine():
                           CrystalSymmetry='P212121')
     _, y, _ = saffron(sys, exp, SaffronOptions())
     y_ref = np.asarray(ref['y'], dtype=float).ravel()
-    cos = _cosine_1d(np.asarray(y).real.ravel(), y_ref)
-    assert cos > 0.95, f"P212121 HYSCORE cosine {cos:.4f} < 0.95"
+    _assert_matches(np.asarray(y).real.ravel(), y_ref, "P212121 HYSCORE")
 
 
 def test_thyme_crystalorientations_consistency():
@@ -704,7 +716,7 @@ def test_thyme_crystalorientations_consistency():
                                atol=np.abs(y1).max() * 1e-8)
 
 
-def test_twocomponents_cosine():
+def test_twocomponents():
     """Two-component MimsENDOR ({Sys1, Sys2}, weight 0.3): cosine >= 0.98.
 
     EasySpin: saffron_twocomponents.m. Also checks separate='components'.
@@ -718,12 +730,11 @@ def test_twocomponents_cosine():
                       weight=0.3)
     exp = PulseExperiment(Field=325.0, Sequence='MimsENDOR', tau=0.1,
                           Range=[nuI_1H - 10.0, nuI_1H + 10.0])
-    x, y, info = saffron([sys1, sys2], exp, SaffronOptions())
+    x, y, info = saffron([sys1, sys2], exp, SaffronOptions(GridSize=31))
     y_py = np.asarray(y).real.ravel()
     y_ref = np.asarray(ref['y'], dtype=float).ravel()
     n = min(len(y_py), len(y_ref))
-    cos = _cosine_1d(y_py[:n], y_ref[:n])
-    assert cos > 0.98, f"twocomponents cosine {cos:.4f} < 0.98"
+    _assert_matches(y_py[:n], y_ref[:n], "twocomponents", normalize=True)
 
     # separate='components': stacked signals whose weighted sum = combined
     opt_sep = SaffronOptions(separate='components')
