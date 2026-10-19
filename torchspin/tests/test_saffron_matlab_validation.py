@@ -688,32 +688,35 @@ def test_thyme_crystalorientations_consistency():
     EasySpin: saffron_thyme_crystalorientations.m. The crystal orientation
     machinery itself is MATLAB-validated in the fast path (cosine 1.0000);
     here we check the thyme path uses it correctly: two stacked sample
-    orientations must equal the average of the individual runs, and
-    different orientations must give different signals (anisotropic A).
+    orientations must equal the *sum* of the individual runs (EasySpin gives
+    each crystal orientation the weight 4*pi and does not renormalize the
+    sum), and different orientations must give different signals
+    (anisotropic A). Exp.mwFreq is on resonance for g = 1.8985 at 350 mT, as
+    in EasySpin's own test.
     """
     from torchspin.saffron_thyme import saffron_thyme
     sys = SpinSystem(S=[0.5], g=[[1.8985, 1.8985, 1.8985]],
                      Nucs='1H', A=[[3.0, 3.0, 9.0]])
 
     def run(sample_frame):
-        exp = PulseExperiment(Field=350.0, Sequence='3pESEEM',
+        exp = PulseExperiment(Field=350.0, mwFreq=9.3, Sequence='3pESEEM',
                               dt=0.01, tau=0.1, T=0.5, nPoints=[8],
+                              DetWindow=0.0, DetPhase=0.0,
                               MolFrame=[0, 0, 0], SampleFrame=sample_frame)
-        opt = SaffronOptions(TimeDomain=True)
+        opt = SaffronOptions(SimulationMode='thyme', IntTimeStep=1e-4)
         _, y, _ = saffron_thyme(sys, exp, opt)
         return np.asarray(y).ravel()
 
-    y1 = run([0, -np.pi / 2, 0])
-    y2 = run([0, 0, 0])
+    y1 = run([[0, -np.pi / 2, 0]])
+    y2 = run([[0, 0, 0]])
     y12 = run([[0, -np.pi / 2, 0], [0, 0, 0]])
 
     assert np.max(np.abs(y1)) > 0, "orientation 1 signal is zero"
     # Anisotropic A → different orientations give different signals
     assert not np.allclose(y1, y2, atol=np.abs(y1).max() * 1e-3), \
         "signals identical for different crystal orientations"
-    # Stacked orientations = weighted mean of the individual runs
-    np.testing.assert_allclose(y12, (y1 + y2) / 2,
-                               atol=np.abs(y1).max() * 1e-8)
+    # Stacked orientations = sum of the individual runs
+    np.testing.assert_allclose(y12, y1 + y2, atol=np.abs(y1).max() * 1e-10)
 
 
 def test_twocomponents():

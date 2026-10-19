@@ -24,7 +24,32 @@ import numpy as np
 from torchspin.rfmixer import rfmixer
 
 
-__all__ = ['signalprocessing']
+__all__ = ['signalprocessing', 'trace_kind']
+
+
+def trace_kind(trace) -> str:
+    """Classify a trace as EasySpin's ``signalprocessing.m`` does.
+
+    Returns ``"real"``, ``"imag"`` or ``"complex"``. MATLAB divides by
+    ``max(imag(x))`` and ``max(real(x))`` -- the max of the *signed* parts,
+    not of their magnitudes -- and relies on division by zero giving ``Inf``,
+    so an exactly real trace classifies as real. Guarding the zero divisor
+    instead calls an exactly real trace complex, which doubles it.
+    """
+    a = np.asarray(trace)
+    if a.size == 0:
+        return "complex"
+    max_abs = np.max(np.abs(a))
+    if max_abs == 0.0:
+        return "complex"
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio_imag = max_abs / np.max(a.imag)
+        ratio_real = max_abs / np.max(a.real)
+    if ratio_imag > 1e8:
+        return "real"
+    if ratio_real > 1e8:
+        return "imag"
+    return "complex"
 
 
 def signalprocessing(
@@ -179,24 +204,20 @@ def _demod_trace(t: np.ndarray, signal: np.ndarray, freq_ghz: float) -> np.ndarr
     if freq_ghz == 0.0:
         return signal.copy()
 
-    # Detect signal type: purely real, purely imaginary, or complex
-    max_abs = np.max(np.abs(signal))
-    if max_abs < 1e-30:
+    if np.max(np.abs(signal)) < 1e-30:
         return signal.copy()
 
-    max_imag = np.max(np.abs(np.imag(signal)))
-    max_real = np.max(np.abs(np.real(signal)))
-
-    purely_imag = False
-    if max_imag > 0 and max_abs / max_imag > 1e8:
-        # Purely real
+    # Detect signal type: purely real, purely imaginary, or complex
+    kind = trace_kind(signal)
+    purely_imag = kind == "imag"
+    if kind == "real":
         rf_signal = np.real(signal)
-    elif max_real > 0 and max_abs / max_real > 1e8:
-        # Purely imaginary
+    elif kind == "imag":
         rf_signal = np.imag(signal)
-        purely_imag = True
     else:
-        # Complex (S+ or S-)  — normalize by factor of 2
+        # Complex (S+ or S-) — the analytic-signal normalization is off by a
+        # factor of two, and this branch only runs when the trace is being
+        # demodulated, so correcting it here is safe.
         rf_signal = 2 * signal
 
     # Detect non-uniform time steps (breaks from undetected events)

@@ -280,6 +280,44 @@ def test_spidyan_relaxation():
                     "relaxation")
 
 
+def test_spidyan_relaxation_complex_detection():
+    """T1/T2 relaxation with <S+> detection, real *and* imaginary parts.
+
+    The <Sz> case above compares only the real part, and an <Sz> trace is
+    purely real, so neither half of it can see a density matrix that is
+    propagated transposed. Relaxation goes through the Liouville-space
+    commutator superoperator, and building that with EasySpin's column-major
+    kron() order while flattening row-major propagates conj(rho) -- which
+    conjugates this trace and leaves the <Sz> one untouched. Compare the
+    imaginary part explicitly so that cannot pass again.
+    """
+    ref = _load_data("spidyan_relaxationcomplexdetection.mat")
+    sys = _zsys(T1=1.0, T2=0.4)
+    pulse = dict(CHIRP_PULSE)
+    pulse['Flip'] = np.pi / 2
+    exp = {
+        'Field': 1240.0,
+        'mwFreq': 33.5,
+        'Sequence': [pulse, 0.5],
+        'DetSequence': [1, 1],
+        'DetOperator': ['+1'],
+        'DetFreq': [33.5],
+        'DetPhase': 0.0,
+    }
+    opt = SpidyanOptions(IntTimeStep=0.0001, SimFreq=32, Relaxation=True)
+    t, sig, _ = spidyan(sys, exp, opt)
+    sig = np.asarray(sig).ravel()
+    ref_im = np.asarray(ref['sig_im'], dtype=float).ravel()
+    # Guard the guard: the reference must actually have an imaginary part,
+    # otherwise this test could not see the conjugation it is checking for.
+    assert np.linalg.norm(ref_im) > 0.1 * np.linalg.norm(
+        np.asarray(ref['sig_re'], dtype=float))
+    _assert_matches(sig.real, np.asarray(ref['sig_re'], dtype=float).ravel(),
+                    "relaxation complex detection (real)")
+    _assert_matches(sig.imag, ref_im,
+                    "relaxation complex detection (imag)")
+
+
 # ---------------------------------------------------------------------------
 # Strict checks (relative L2, not cosine)
 # ---------------------------------------------------------------------------

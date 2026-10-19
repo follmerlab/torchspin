@@ -56,7 +56,7 @@ jobs:
           TZ: UTC
 
   full-suite:
-    # One cell that runs everything, including the 673 MATLAB cross-validation
+    # One cell that runs everything, including the 756 MATLAB cross-validation
     # tests the matrix deselects. This is the job that would have caught the
     # NumPy 2.0 and case-sensitive-filesystem breakage fixed in v0.3.0, so it
     # must stay in the required set even though it is the slow one.
