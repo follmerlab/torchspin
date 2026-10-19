@@ -4,6 +4,165 @@ All notable changes to torchspin will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-10-19
+
+Found by a flavodoxin HYSCORE feasibility study that compared `saffron`
+against MATLAB EasySpin on its own 13C model and got the modulation wrong
+while the raw cosine stayed at 0.99999.  The existing `saffron` suite scored
+agreement with a cosine similarity, which for a pulse-EPR time trace is
+dominated by the DC offset: a HYSCORE trace can have a ~100% wrong modulation
+and still score >0.999.  Every defect below lived in that blind spot.
+
+New oracle: `tests/data/generate_saffron_phase_refs.m` →
+`torchspin/tests/test_saffron_phase_matlab_validation.py` (25 cases, MATLAB
+R2024b), plus a strict `spidyan` amplitude case.  It asserts the **mean-centered** relative L2 error — the modulation
+— as well as the raw error, at tolerances near double-precision roundoff.  All
+26 strict cases, 25 of them fail on 0.4.0 and pass here (the 26th, two-nucleus
+Mims ENDOR, is the one case 0.4.0's hardcoded `EndorMethod=1` got right).  Agreement across the predefined
+2p/3p/4pESEEM, HYSCORE and Mims-ENDOR routes, direct and frequency-binned,
+powder and explicit single crystal, S=1/2 and S=3/2, with and without
+orientation selection and nuclear quadrupole coupling, is now 1e-16 to 1e-14
+rather than "cosine ≥ 0.98".
+
+### Fixed — `saffron` tau phase factor in all four predefined ESEEM/HYSCORE routes
+
+`saffron.m` builds the tau-dependent phase factor as
+`Q_ = exp(-2i*pi*Ea*tau)*exp(-2i*pi*Eb*tau)'`, and MATLAB's `'` is a
+**conjugate** transpose, so element *(i,j)* is `exp(-2i*pi*(Ea_i - Eb_j)*tau)`
+— a *difference* of the two manifold energies.  torchspin formed the outer
+product without conjugating the second factor, giving their *sum*.  The error
+vanishes at `tau = 0`, which is why it survived.
+
+Fixed for `exp_id` 1, 2, 3 and 4 (2pESEEM, 3pESEEM, 4pESEEM, HYSCORE); the
+Mims-ENDOR branch already conjugated correctly.  On the in-repo
+`saffron_HYSCORE.mat` case (tau = 0.08 µs) the mean-centered error against
+MATLAB drops from **112% to roundoff**, while the raw cosine moves only from
+0.999991 to 1.000000.
+
+### Fixed — `saffron` alpha/beta manifold assignment for S=1/2
+
+EasySpin's `Transitions = [1 2]` makes `Ea` the **upper** manifold
+(`<S> = +1/2·n`) and `Eb` the lower.  The S=1/2 fast path had them swapped,
+while torchspin's own S>1/2 path assigned them correctly — an internal
+inconsistency.  Invisible while the nuclear Hamiltonian is linear in **I**
+(the two HYSCORE coherence-transfer pathways then symmetrize the swap away),
+it becomes a 7–33% error as soon as a nuclear quadrupole makes the manifold
+eigenvectors non-trivial.
+
+### Fixed — `saffron` dimension order of the 2D frequency-bin accumulation
+
+`sf_peaks.c` bins a 2D spectrum at `idx = nu1 + nu2*nPoints1`, i.e. dimension
+1 carries `nu1`.  `saffron_peaks.py` computed `idx2 * n_points1 + idx1` into a
+row-major `(n_points1, n_points2)` buffer, which **transposes** the spectrum
+and mis-strides it when the two dimensions differ in length.  Fixed at all
+five 2D increment schemes (11–15, 17).  The binned and direct paths of
+torchspin itself disagreed by 2% before this; a new test asserts they agree,
+which catches this class of bug without any MATLAB reference.
+
+### Fixed — `saffron` `Opt.OriThreshold` reference level under orientation selection
+
+EasySpin takes the pruning threshold from the **unweighted**
+`|<i|SyLab|j>|` maximum and only then multiplies in the excitation amplitude,
+so a narrow `Exp.ExciteWidth` discards more transitions.  torchspin took the
+maximum after excitation weighting and so kept transitions EasySpin drops,
+giving a 75% modulation error for S=3/2 + 14N at `ExciteWidth = 100` MHz.
+Affects S>1/2 with `Exp.ExciteWidth` only.
+
+### Fixed — `saffron` `Opt.Expand` and `Opt.EndorMethod` defaults are conditional in EasySpin
+
+Both were hardcoded to a single value, so the default-argument path silently
+ran a different algorithm than EasySpin:
+
+- `Opt.Expand` defaults to **4 for 1D and 2 for 2D** sequences
+  (`saffron.m:751`); torchspin always used 4, changing the zero-fill of every
+  binned HYSCORE.
+- `Opt.EndorMethod` defaults to **0 for a single SHF nucleus or under
+  `ProductRule`, else 1** (`saffron.m:729`); torchspin always used 1, which
+  selects a different RF-pulse model.  For one nucleus this put the ENDOR
+  amplitude 40% out and changed the lineshape, at cosine 0.996.
+
+Both now accept `None` (the default) to mean EasySpin's rule; an explicit
+integer still overrides it.
+
+### Fixed — `saffron`/`saffron_thyme` treated `Exp.SampleFrame` alone as a single crystal
+
+EasySpin decides sample type from `CrystalSymmetry` or `MolFrame` only
+(`p_sampletype.m:26`): `Exp.SampleFrame` rotates the sample, but a disordered
+powder stays a powder.  `saffron` and `saffron_thyme` also keyed on
+`SampleFrame`, so `SampleFrame` alone silently simulated a **single crystal
+where EasySpin simulates a powder** — a different physical sample, not a
+numerical discrepancy.  `pepper` already had this right; `saffron` now matches
+it.  Code that relied on `SampleFrame` alone to select a crystal must now pass
+`CrystalSymmetry` (e.g. `'P1'`) or `MolFrame`, as EasySpin requires.
+
+### Fixed — `saffron` custom sequences were not divided by their pathway prefactor
+
+For a user-defined sequence (`Exp.Sequence` given as pulses and delays, not a
+predefined name) `saffron.m:1669` divides the signal by the largest surviving
+pathway prefactor.  torchspin omitted this, leaving a custom HYSCORE-style
+sequence a factor of **8** too small.  Shape was unaffected, so the cosine was
+1.000000 and the existing `cosine > 0.95` test passed.  Predefined sequences
+are deliberately *not* renormalized this way, and are unchanged.
+
+### Fixed — `spidyan` complex detection operators were half amplitude
+
+`signalprocessing.m` multiplies a **complex** detection trace (`S+`/`S-`) by
+two when it is demodulated, because the analytic-signal normalization is
+otherwise off by that factor; a purely real or purely imaginary trace (`Sz`) is
+left alone.  torchspin applied the demodulation phase but not the factor, so a
+demodulated `<S+>` channel came out at exactly half EasySpin's amplitude — at
+cosine 1.000000, under a `cosine >= 0.99` assertion.  The `<Sz>` channel in the
+same simulation was already correct, which is why it went unnoticed.
+
+### Audit of the remaining pulse-EPR routes
+
+Prompted by the above, the routes that were scored only by cosine were
+re-checked against fresh MATLAB references with strict metrics.  Now at
+roundoff and covered by tests: custom user sequences (direct and binned),
+`ProductRule` x `TimeDomain` for two nuclei (all four combinations),
+multi-component input with `Sys.weight`, and S=1 systems.
+
+Several apparent discrepancies turned out to be **test-harness** faults rather
+than library faults, and are worth knowing about before trusting an old
+number: `test_3psimple`, `test_4psimple`, `test_hyscore14n`,
+`test_hyscore_ganiso`, `test_mimssimple` and `test_twocomponents` compare
+torchspin's unnormalized output against a MATLAB reference its generator had
+normalized (`y = y/max(abs(y))`), so they sat at a fixed scale factor of 4*pi
+or similar; and `test_saffron_2pESEEM`, `test_saffron_3pESEEM`,
+`test_saffron_HYSCORE_cosine_1d`, `test_S1_*`, `test_S32_HYSCORE`,
+`test_orientation_selective` and `test_customsequence` run with
+`TimeDomain=True` against references generated *without* `Opt.TimeDomain`,
+i.e. they compare direct time evolution against EasySpin's own
+frequency-binned approximation.  Both faults are invisible to a cosine.
+Checked against matched references, the library agrees to roundoff in every
+one of these cases.
+
+Still open, and recorded in `KNOWN_LIMITATIONS.md`:
+
+- `spidyan` multi-spin systems show a small residual that grows linearly
+  through free evolution — a phase drift of order 1e-5 relative — for two
+  coupled electrons (4.7e-3 overall), an electron-nucleus pair (6.4e-5) and
+  S=3/2 (8.8e-6).  Single-electron cases are exact to 1e-13.  Not diagnosed.
+- `saffron` with real pulses returns per-increment transients
+  (`nPoints x nDet x nTime`) where EasySpin returns one detected point per
+  increment, and no simple reduction of those transients recovers EasySpin's
+  trace — the closest is ~3% off after fitting an arbitrary scale.  Treat the
+  real-pulse route as unvalidated; `saffron_thyme` remains without MATLAB
+  cross-validation.
+- `saffron` accepts a predefined `Exp.Sequence` together with real pulses
+  (`Exp.tp`) and silently routes it to the thyme engine; EasySpin rejects that
+  combination outright.  The output is therefore unvalidated.
+- EasySpin's shaped/chirped pulses (`Type`, `trise`, `Frequency`),
+  `Exp.DetWindow`/`DetPhase` and `Opt.SimulationMode` are not implemented in
+  `saffron_thyme`, so EasySpin's own thyme test cases cannot be run against it.
+
+### Note
+
+`saffron` gradients are unaffected in form: a finite-difference check against
+the corrected simulator at nonsymmetric hyperfine values agrees to 1e-10.
+Gradients taken before this release were consistent with the *old*, incorrect
+forward model.
+
 ## [0.4.0] — 2026-10-09
 
 Found by fitting a Cu(II) phthalocyanine spectrum (CuPc in ZnPc: S=1/2,
@@ -733,6 +892,6 @@ ported to Python/PyTorch with 1820+ passing tests.
 
 <!-- 0.3.0 was the first public release and the history before it was squashed,
      so v0.1.0-v0.2.2 have no tags in this repository to link to. -->
-[Unreleased]: https://github.com/follmerlab/torchspin/compare/v0.4.0...HEAD
+[0.5.0]: https://github.com/follmerlab/torchspin/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/follmerlab/torchspin/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/follmerlab/torchspin/releases/tag/v0.3.0

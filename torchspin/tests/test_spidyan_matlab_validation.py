@@ -260,3 +260,56 @@ def test_spidyan_relaxation_cosine():
     cos = _cosine(np.asarray(sig).real.ravel(),
                   np.asarray(ref['sig_re'], dtype=float).ravel())
     assert cos > 0.99, f"relaxation cosine {cos:.4f} < 0.99"
+
+
+# ---------------------------------------------------------------------------
+# Strict checks (relative L2, not cosine)
+# ---------------------------------------------------------------------------
+#
+# The cosine checks above are scale-invariant, so they cannot see an amplitude
+# error. EasySpin's signalprocessing.m multiplies a *complex* detection trace
+# (S+/S-) by two when it is demodulated, because the analytic-signal
+# normalization is otherwise off by that factor; a purely real or purely
+# imaginary trace (e.g. Sz) is left alone. Omitting it left the demodulated
+# <S+> channel exactly half of EasySpin's at cosine 1.000000.
+
+
+def _rel_l2(a, b) -> float:
+    a = np.asarray(a).ravel()
+    b = np.asarray(b).ravel()
+    n = min(len(a), len(b))
+    a, b = a[:n], b[:n]
+    return float(np.linalg.norm(a - b) / np.linalg.norm(b))
+
+
+def test_spidyan_complex_detection_amplitude_strict():
+    """<Sz> (DetFreq=0) and demodulated <S+> (DetFreq=33.5 GHz), strictly.
+
+    The <S+> channel is the one carrying the factor-of-two normalization; the
+    <Sz> channel is not demodulated and must stay unscaled, so this pins both
+    halves of the rule at once.
+    """
+    ref = _load_data("spidyan_spinonehalf.mat")
+    sys = _zsys()
+    exp = {
+        'Field': 1240.0,
+        'mwFreq': 33.5,
+        'Sequence': [dict(CHIRP_PULSE), 0.5, dict(CHIRP_PULSE)],
+        'DetSequence': [1, 1, 1],
+        'DetOperator': ['z1', '+1'],
+        'DetFreq': [0.0, 33.5],
+    }
+    opt = SpidyanOptions(IntTimeStep=0.0001, SimFreq=32)
+    _, sig, _ = spidyan(sys, exp, opt)
+    sig = np.atleast_2d(np.asarray(sig))
+    if sig.shape[0] > sig.shape[1]:
+        sig = sig.T
+    ref_re = np.atleast_2d(np.asarray(ref['sig_re'], dtype=float))
+
+    err_z = _rel_l2(sig[0].real, ref_re[0])
+    assert err_z < 1e-9, f"<Sz> (undemodulated) relative error {err_z:.3e}"
+    err_p = _rel_l2(sig[1].real, ref_re[1])
+    assert err_p < 1e-9, (
+        f"demodulated <S+> relative error {err_p:.3e} -- an error near 0.5 "
+        f"means the complex-trace factor of two is missing"
+    )

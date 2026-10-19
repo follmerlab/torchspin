@@ -18,7 +18,7 @@ If you find behavior that contradicts this document, please open an issue.
 | `garlic` (solution) | line positions exact vs EasySpin Breit–Rabi (<1e-6 mT, 18-case suite); spectra cosine >0.9999; components/isotopologues/auto-range 11-case suite identical | matches EasySpin's TransitionRate·dBdE convention to 1e-6 | See § Garlic |
 | `chili` (slow-motion) | 59/60 MATLAB cases at cosine ≥0.999 (general Liouvillian port; intermediates exact) | matches EasySpin's scaling chain | See § Chili |
 | `salt` (ENDOR powder) | 8-case EasySpin-mirroring suite passes (fixed-field mode) | matches in regime | See § ENDOR |
-| `saffron` (pulse EPR) | 26 MATLAB cases (2p/3p/4p ESEEM incl. 14N + quadrupole, HYSCORE, MimsENDOR, S>1/2, custom sequences, single crystals, two components): cosine ≥0.98, most ≥0.999 | not a current parity target | HYSCORE performance |
+| `saffron` (pulse EPR) | 25 strict cases (raw + mean-centered rel. error 1e-16..1e-14) over 2p/3p/4p ESEEM, HYSCORE, MimsENDOR, direct + binned, S=1/2 and S=3/2, quadrupole, orientation selection, P1 crystal, custom sequences, ProductRule, multi-component; plus 26 older cosine-only cases | matches to roundoff on the strict cases | See § Pulse |
 | `spidyan` (arbitrary pulse) | 8 MATLAB cases (incl. `tp` sweeps), cosine > 0.99 | n/a | See § Pulse |
 | `saffron_thyme` (real-pulse) | internal-consistency tests only (incl. crystal orientations) | n/a | See § Pulse |
 | `curry`, `blochsteady` | 5 MATLAB cases within 0.5–1 % | n/a | None |
@@ -254,10 +254,62 @@ falls back to the absorption stick spectrum (EasySpin's auto-harmonic).
 `saffron()` is cross-validated on 25 MATLAB reference cases: predefined
 2p/3p/4p ESEEM, HYSCORE and MimsENDOR, S>1/2 systems, custom sequences,
 `ProductRule` (with and without `TimeDomain`), single crystals
-(`SampleFrame`/`CrystalSymmetry`/`MolFrame`, all 230 space groups via
-`sitetransforms`) and two-component input. Cosine ≥0.98 throughout (crystal
-HYSCORE 0.989, two components >0.98, everything else ≥0.999). HYSCORE
-remains much slower than EasySpin.
+(`CrystalSymmetry`/`MolFrame`, all 230 space groups via `sitetransforms`) and
+two-component input. Cosine ≥0.98 throughout (crystal HYSCORE 0.989, two
+components >0.98, everything else ≥0.999). HYSCORE remains much slower than
+EasySpin.
+
+**A cosine similarity is a weak oracle for pulse EPR, and these 25 cases
+should not be read as tight agreement.** A predefined ESEEM/HYSCORE trace is
+dominated by its DC offset, so the modulation — the entire physical content of
+the experiment — can be ~100% wrong at cosine >0.999. Six defects were found
+in exactly that blind spot after 0.4.0 (tau phase conjugation, S=1/2 manifold
+assignment, 2D bin dimension order, `OriThreshold` reference level, and the
+`Expand`/`EndorMethod` conditional defaults); see the CHANGELOG. Agreement on
+the routes covered by
+`torchspin/tests/test_saffron_phase_matlab_validation.py` is now 1e-16 to
+1e-14 on both the raw and the mean-centered signal. **New pulse-EPR
+comparisons should assert the mean-centered relative error, not a cosine.**
+Custom user sequences, `ProductRule` x `TimeDomain`, multi-component input and
+S=1 systems have since been re-checked at roundoff as well.
+
+Four things remain open in the pulse-EPR routes:
+
+- **`spidyan` multi-spin phase drift.** Two coupled electrons, an
+  electron–nucleus pair and S=3/2 all show a residual that grows linearly
+  through free evolution — a relative phase drift of order 1e-5, i.e. 4.7e-3
+  overall for two electrons, 6.4e-5 for electron–nucleus, 8.8e-6 for S=3/2.
+  Single-electron cases are exact to 1e-13. The cause is not diagnosed; the
+  existing cosine ≥0.99 tests do not resolve it.
+- **Real pulses do not reproduce EasySpin, and have a different output
+  contract.** `saffron()` with nonzero `Exp.tp` returns per-increment
+  transients (`nPoints × nDet × nTime`), where EasySpin returns one detected
+  point per increment. Reducing the transients (sum, mean, centre point, or
+  sum of magnitudes) does not recover EasySpin's trace: the closest reduction
+  still differs by ~3% *after* fitting an arbitrary scale factor, and the
+  scale itself is unexplained. Treat the real-pulse route as unvalidated;
+  `saffron_thyme` has no MATLAB cross-validation.
+- **Predefined sequence + real pulses is an unvalidated extension.**
+  `saffron()` accepts e.g. `Sequence='3pESEEM'` together with `Exp.tp` and
+  routes it to the thyme engine. EasySpin rejects that combination
+  ("You cannot use predefined sequences with real pulses"), so nothing
+  cross-validates the result.
+- **Shaped pulses are not implemented.** `saffron_thyme` has no `Type`,
+  `trise` or `Frequency` pulse shaping, and no `Exp.DetWindow`/`DetPhase` or
+  `Opt.SimulationMode`, so EasySpin's own thyme test cases cannot be run
+  against it.
+
+Finally, a caution when reading the older cosine-based tests: several of them
+compare across a mismatch that a cosine cannot see. `test_3psimple`,
+`test_4psimple`, `test_hyscore14n`, `test_hyscore_ganiso`, `test_mimssimple`
+and `test_twocomponents` compare unnormalized output against a reference their
+MATLAB generator normalized; `test_saffron_2pESEEM`, `test_saffron_3pESEEM`,
+`test_saffron_HYSCORE_cosine_1d`, `test_S1_*`, `test_S32_HYSCORE`,
+`test_orientation_selective` and `test_customsequence` use `TimeDomain=True`
+against references generated without `Opt.TimeDomain`, i.e. direct evolution
+against EasySpin's frequency-binned approximation. Against matched references
+the library agrees to roundoff in all of these; the apparent discrepancy is in
+the test, not the code.
 
 The former `saffron_2psimple` xfail (14N + quadrupole) is resolved: the test
 had used a quadrupole coupling ten times smaller than EasySpin's own test, and

@@ -1341,6 +1341,30 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
+def _complex_trace_needs_doubling(trace: np.ndarray) -> bool:
+    """Replicate EasySpin signalprocessing.m's purely-real/imaginary test.
+
+    For a trace that is neither essentially purely real nor essentially purely
+    imaginary -- i.e. a genuinely complex S+/S- signal -- EasySpin corrects the
+    normalization by a factor of two before demodulating it
+    (``signalprocessing.m``, "the normalization is wrong by a factor of two").
+    Purely real or purely imaginary traces (e.g. Sz) are not scaled.
+    """
+    a = np.asarray(trace)
+    max_abs = np.max(np.abs(a)) if a.size else 0.0
+    if max_abs == 0.0:
+        return False
+    # MATLAB compares against max() of the signed parts, not their magnitude.
+    max_imag = np.max(a.imag) if a.size else 0.0
+    max_real = np.max(a.real) if a.size else 0.0
+    if max_imag != 0.0 and max_abs / max_imag > 1e8:
+        return False        # purely real
+    if max_real != 0.0 and max_abs / max_real > 1e8:
+        return False        # purely imaginary
+    return True
+
+
 def spidyan(
     sys: SpinSystem,
     exp: dict,
@@ -1487,6 +1511,8 @@ def spidyan(
                 translation = -freq
                 if signal_array.ndim == 1:
                     if translation[0] != 0:
+                        if _complex_trace_needs_doubling(signal_array):
+                            signal_array = signal_array * 2.0
                         signal_array = signal_array * np.exp(
                             1j * 2 * np.pi * translation[0] * 1e3 * time_array)
                 else:
@@ -1496,7 +1522,10 @@ def spidyan(
                         f_t = (translation[i] if i < len(translation)
                                else 0.0)
                         if f_t != 0:
-                            signal_array[..., i, :] = signal_array[..., i, :] * \
+                            tr = signal_array[..., i, :]
+                            if _complex_trace_needs_doubling(tr):
+                                tr = tr * 2.0
+                            signal_array[..., i, :] = tr * \
                                 np.exp(1j * 2 * np.pi * f_t * 1e3 * time_array)
 
     # Build info
