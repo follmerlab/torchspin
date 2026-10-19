@@ -69,8 +69,13 @@ class SaffronOptions:
     GridSymmetry: str = 'auto'
     ProductRule: bool = False
     TimeDomain: bool = False
-    EndorMethod: int = 1                 # 0=pop swap, 1=sum transitions, 2=sweep
-    Expand: int = 4                      # frequency-domain zero-fill 2^Expand
+    # EasySpin's default is conditional: 0 (adjacent-level population swap)
+    # for a single SHF nucleus or under ProductRule, else 1. ``None`` selects
+    # that rule; an explicit int overrides it.
+    EndorMethod: int | None = None       # 0=pop swap, 1=sum transitions, 2=sweep
+    # EasySpin default is dimension-dependent: 4 for 1D, 2 for 2D sequences.
+    # ``None`` selects that rule; an explicit int overrides it.
+    Expand: int | None = None            # frequency-domain zero-fill 2^Expand
     Window: str = 'ham+'                 # apodization window
     ZeroFillFactor: int = 2
     OriThreshold: float = 0.005
@@ -606,6 +611,8 @@ def saffron(
         pf = [1.0] * n_pathways
         is_endor = (exp_id == 5)
         custom_pathways = None
+        # Only custom sequences are renormalized by their pathway prefactors.
+        pathway_pf_max = None
     else:
         # Custom pulse sequence
         exp_id = -1
@@ -684,6 +691,10 @@ def saffron(
         if n_pathways == 0:
             raise ValueError("No pathways with nonzero amplitude for this sequence.")
         pf = pf_array.tolist()
+        # saffron.m:1669 divides a custom sequence's signal by the largest
+        # surviving pathway prefactor (after the <1e-6 pathways are dropped,
+        # saffron.m:605). Predefined sequences are not renormalized this way.
+        pathway_pf_max = float(np.max(np.abs(pf_array)))
 
         # Extract incremented-interval indices for sf_peaks/sf_evolve
         inc_mask = [v != 0 for v in exp.Inc]
@@ -739,6 +750,12 @@ def saffron(
     else:
         shf_nuclei = list(range(n_nuclei))
 
+    # EasySpin: Opt.EndorMethod defaults to 0 for a single SHF nucleus (or when
+    # ProductRule splits the problem into one-nucleus subspaces), else 1.
+    endor_method = opt.EndorMethod
+    if endor_method is None:
+        endor_method = 0 if (len(shf_nuclei) == 1 or opt.ProductRule) else 1
+
     # --- Determine algorithm path ---
     n_electrons = sys.nElectrons
     two_manifolds = (n_electrons == 1 and float(sys.S[0]) == 0.5)
@@ -787,9 +804,23 @@ def saffron(
     hstrain_local = sys.HStrain if sys.HStrain is not None else torch.zeros(3, dtype=torch.float64)
 
     # --- Orientation grid ---
-    crystal_mode = (exp.SampleFrame is not None
-                    or exp.CrystalSymmetry is not None
+    # EasySpin (p_sampletype.m) decides sample type from CrystalSymmetry or
+    # MolFrame only: Exp.SampleFrame alone rotates the sample but leaves a
+    # disordered powder a powder. This matches pepper()'s crystal_sample rule.
+    crystal_mode = (exp.CrystalSymmetry is not None
                     or exp.MolFrame is not None)
+    if exp.SampleFrame is not None and not crystal_mode:
+        # torchspin <= 0.4.0 treated SampleFrame alone as a single crystal,
+        # which EasySpin does not. Warn rather than change results silently.
+        warnings.warn(
+            "Exp.SampleFrame was given without Exp.CrystalSymmetry or "
+            "Exp.MolFrame, so this is a powder simulation and SampleFrame has "
+            "no effect on it (EasySpin p_sampletype.m). torchspin 0.4.0 and "
+            "earlier simulated a single crystal here. For a single crystal, "
+            "set Exp.CrystalSymmetry (e.g. 'P1') or Exp.MolFrame.",
+            UserWarning,
+            stacklevel=2,
+        )
     if crystal_mode:
         # Single crystal: enumerate symmetry-related sites (EasySpin
         # p_crystalorientations). Each orientation gets weight 4*pi.
@@ -815,7 +846,9 @@ def saffron(
     n_orient = phi_arr.shape[0]
 
     # --- Prepare output buffers ---
-    expansion_factor = 2 ** opt.Expand
+    # EasySpin: Opt.Expand defaults to 4 for 1D and 2 for 2D sequences.
+    expand = opt.Expand if opt.Expand is not None else (4 if n_dims == 1 else 2)
+    expansion_factor = 2 ** expand
     n_points_exp = [n * expansion_factor for n in exp.nPoints]
 
     if is_endor:
@@ -887,8 +920,8 @@ def saffron(
             quant_axis = g_mol.T @ zLab_M
             quant_axis = quant_axis / quant_axis.norm()
             manifold_S = [
-                -0.5 * quant_axis,  # alpha (ms = -1/2), i_m=0
-                +0.5 * quant_axis,  # beta  (ms = +1/2), i_m=1
+                +0.5 * quant_axis,  # EasySpin Ea = upper manifold, i_m=0
+                -0.5 * quant_axis,  # EasySpin Eb = lower manifold, i_m=1
             ]
             if orientation_selection:
                 if g.ndim == 1:
@@ -929,12 +962,14 @@ def saffron(
             # Transition matrix |<i|SyLab|j>| in eigenbasis, optionally excitation-weighted
             SyLab_e = yLab_M[0]*Sx_e + yLab_M[1]*Sy_e + yLab_M[2]*Sz_e
             SyLab_eig = (V_eig.conj().T @ SyLab_e @ V_eig).abs()
+            # EasySpin takes the OriThreshold reference level from the
+            # *unweighted* |<i|SyLab|j>| matrix, before excitation weighting.
+            maxSy = SyLab_eig.max().item()
             if orientation_selection:
                 # E_eig ascending; lower triangle (row a > col b) has E_a > E_b
                 dE = E_eig.unsqueeze(1) - E_eig.unsqueeze(0)
                 excit_amp = torch.exp(-((dE - exp.mwFreq * 1e3) / exp.ExciteWidth)**2)
                 SyLab_eig = SyLab_eig * excit_amp
-            maxSy = SyLab_eig.max().item()
             if maxSy < 1e-30:
                 n_skipped += 1
                 continue
@@ -1003,7 +1038,7 @@ def saffron(
                     T1r = Mt.clone()
                     if exp.tau > 0:
                         Q_ = (torch.exp(-2j * math.pi * Ea * exp.tau).unsqueeze(1) *
-                              torch.exp(-2j * math.pi * Eb * exp.tau).unsqueeze(0))
+                              torch.exp(+2j * math.pi * Eb * exp.tau).unsqueeze(0))
                         G = Q_ * G
                         D = Q_.conj() * D
 
@@ -1028,7 +1063,7 @@ def saffron(
                 elif exp_id == 2:
                     # 3pESEEM: two pathways +alpha- and +beta-, IncSchemeID=1
                     Q_ = (torch.exp(-2j * math.pi * Ea * exp.tau).unsqueeze(1) *
-                          torch.exp(-2j * math.pi * Eb * exp.tau).unsqueeze(0))
+                          torch.exp(+2j * math.pi * Eb * exp.tau).unsqueeze(0))
                     G_ = (pf[0] * prefactor) * Q_ * M
                     D_ = Q_.conj() * M
                     G1 = G_ @ Mt
@@ -1066,7 +1101,7 @@ def saffron(
                 elif exp_id == 3:
                     # 4pESEEM: two pathways, IncSchemeID=2
                     Q_ = (torch.exp(-2j * math.pi * Ea * exp.tau).unsqueeze(1) *
-                          torch.exp(-2j * math.pi * Eb * exp.tau).unsqueeze(0))
+                          torch.exp(+2j * math.pi * Eb * exp.tau).unsqueeze(0))
                     G_ = (pf[0] * prefactor) * Q_ * M
                     D_ = Q_.conj() * M
                     G1 = G_ @ Mt
@@ -1110,7 +1145,7 @@ def saffron(
                 elif exp_id == 4:
                     # HYSCORE: two pathways, IncSchemeID=11 (2D)
                     Q_ = (torch.exp(-2j * math.pi * Ea * exp.tau).unsqueeze(1) *
-                          torch.exp(-2j * math.pi * Eb * exp.tau).unsqueeze(0))
+                          torch.exp(+2j * math.pi * Eb * exp.tau).unsqueeze(0))
                     G_ = (pf[0] * prefactor) * Q_ * M
                     D_ = Q_.conj() * M
                     G1 = G_ @ Mt
@@ -1188,7 +1223,7 @@ def saffron(
                     pre_endor = math.sqrt(2 / math.pi) / Gam
                     rf_t = torch.tensor(rf, dtype=torch.float64, device=device)
 
-                    if opt.EndorMethod == 0:
+                    if endor_method == 0:
                         # Population swap (adjacent levels)
                         # G1 = upper (Eb) manifold, G2 = lower (Ea) manifold
                         for j in range(n_nuc_states - 1):
@@ -1210,7 +1245,7 @@ def saffron(
                             endorspc += (ampl2 * pre_endor *
                                          np.exp(-2 * ((rf - freq2) / Gam)**2))
 
-                    elif opt.EndorMethod == 1:
+                    elif endor_method == 1:
                         # Sum-over-transitions with bandwidth-limited Iy pulse
                         # G1 = upper (Vb) manifold, G2 = lower (Va) manifold
                         IyLab = (yLab_M[0] * sub.Ix +
@@ -1243,7 +1278,7 @@ def saffron(
                                 endorspc += (sig2 * pre_endor *
                                              np.exp(-((rf - freq2) / Gam)**2))
 
-                    elif opt.EndorMethod == 2:
+                    elif endor_method == 2:
                         # Sweep method
                         # G1 = upper (Vb) manifold, G2 = lower (Va) manifold
                         IyLab = (yLab_M[0] * sub.Ix +
@@ -1417,7 +1452,7 @@ def saffron(
         endorspc /= eq_density_trace
         endorspc /= n_pathways
 
-        if opt.EndorMethod == 2:
+        if endor_method == 2:
             from torchspin.convspec import convspec
             endorspc_t = torch.tensor(endorspc, dtype=torch.float64)
             dx = rf[1] - rf[0]
@@ -1445,6 +1480,9 @@ def saffron(
     # --- Normalize ---
     td = td / eq_density_trace
     td = td / n_pathways
+    if pathway_pf_max is not None:
+        # EasySpin saffron.m:1669, custom (non-predefined) sequences only.
+        td = td / pathway_pf_max
 
     # --- Time axes ---
     if exp_id == 1:

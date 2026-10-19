@@ -187,7 +187,7 @@ def sf_peaks(inc_scheme_id: int,
         idx2_4d = idx2.unsqueeze(1).unsqueeze(2).expand(N, N, N, N)  # i,l dims
 
         # Flatten for scatter_add_ on flattened 2D buffer
-        flat_idx = (idx2_4d * n_points1 + idx1_4d).reshape(-1)
+        flat_idx = (idx1_4d * n_points2 + idx2_4d).reshape(-1)
         buff_re.reshape(-1).scatter_add_(0, flat_idx, amp_ijkl.real.reshape(-1))
         buff_im.reshape(-1).scatter_add_(0, flat_idx, amp_ijkl.imag.reshape(-1))
 
@@ -212,7 +212,7 @@ def sf_peaks(inc_scheme_id: int,
 
         idx1 = _dft_bin(nu1, dt[0], n_points1)
         idx2 = _dft_bin(nu2, dt[1], n_points2)
-        flat_idx = (idx2 * n_points1 + idx1).reshape(-1)
+        flat_idx = (idx1 * n_points2 + idx2).reshape(-1)
         buff_re.reshape(-1).scatter_add_(0, flat_idx, amp.real.reshape(-1))
         buff_im.reshape(-1).scatter_add_(0, flat_idx, amp.imag.reshape(-1))
 
@@ -235,7 +235,7 @@ def sf_peaks(inc_scheme_id: int,
 
         idx1 = _dft_bin(nu1, dt[0], n_points1)
         idx2 = _dft_bin(nu2, dt[1], n_points2)
-        flat_idx = (idx2 * n_points1 + idx1).reshape(-1)
+        flat_idx = (idx1 * n_points2 + idx2).reshape(-1)
         buff_re.reshape(-1).scatter_add_(0, flat_idx, amp.real.reshape(-1))
         buff_im.reshape(-1).scatter_add_(0, flat_idx, amp.imag.reshape(-1))
 
@@ -288,7 +288,7 @@ def sf_peaks(inc_scheme_id: int,
 
         idx1 = _dft_bin(nu1, dt[0], n_points1)
         idx2 = _dft_bin(nu2, dt[1], n_points2)
-        flat_idx = (idx2 * n_points1 + idx1).reshape(-1)
+        flat_idx = (idx1 * n_points2 + idx2).reshape(-1)
         buff_re.reshape(-1).scatter_add_(0, flat_idx, amp_full.real.reshape(-1))
         buff_im.reshape(-1).scatter_add_(0, flat_idx, amp_full.imag.reshape(-1))
 
@@ -318,7 +318,7 @@ def sf_peaks(inc_scheme_id: int,
 
         idx1 = _dft_bin(nu1, dt[0], n_points1)
         idx2 = _dft_bin(nu2, dt[1], n_points2)
-        flat_idx = (idx2 * n_points1 + idx1).reshape(-1)
+        flat_idx = (idx1 * n_points2 + idx2).reshape(-1)
         buff_re.reshape(-1).scatter_add_(0, flat_idx, amp_full.real.reshape(-1))
         buff_im.reshape(-1).scatter_add_(0, flat_idx, amp_full.imag.reshape(-1))
 

@@ -1158,7 +1158,12 @@ class TestInternalConsistency:
     def test_mimsproduct_productrule_consistency(self):
         """MimsENDOR ProductRule=0 vs ProductRule=1: normalized signals agree.
 
-        EasySpin: saffron_mimsproduct.m.
+        EasySpin: saffron_mimsproduct.m, which pins Opt.EndorMethod = 1 for
+        both runs. That is required, not incidental: EasySpin's default
+        EndorMethod is 0 for one nucleus or under ProductRule and 1 otherwise,
+        so leaving it unset here would compare ProductRule=True at method 0
+        against ProductRule=False at method 1 -- two different RF-pulse
+        models, which legitimately disagree.
         """
         from torchspin.utils import larmorfrq
         nuI = np.asarray(larmorfrq('1H', 350.0)).reshape(-1)[0].item()
@@ -1169,8 +1174,8 @@ class TestInternalConsistency:
         exp = PulseExperiment(Field=350.0, Sequence='MimsENDOR',
                               tau=0.01, Range=[0.5, nuI * 2 + 2],
                               nPoints=256)
-        opt0 = SaffronOptions(GridSize=10, ProductRule=False)
-        opt1 = SaffronOptions(GridSize=10, ProductRule=True)
+        opt0 = SaffronOptions(GridSize=10, ProductRule=False, EndorMethod=1)
+        opt1 = SaffronOptions(GridSize=10, ProductRule=True, EndorMethod=1)
 
         _, y0, _ = saffron(sys, exp, opt0)
         _, y1, _ = saffron(sys, exp, opt1)

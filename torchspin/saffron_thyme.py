@@ -27,6 +27,7 @@ Usage::
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Optional
 
 import numpy as np
@@ -105,9 +106,23 @@ def saffron_thyme(
     is_echo_detection = single_point_det
 
     # --- Orientation grid ---
-    crystal_mode = (exp.SampleFrame is not None
-                    or exp.CrystalSymmetry is not None
+    # EasySpin (p_sampletype.m) decides sample type from CrystalSymmetry or
+    # MolFrame only: Exp.SampleFrame alone rotates the sample but leaves a
+    # disordered powder a powder. This matches pepper()'s crystal_sample rule.
+    crystal_mode = (exp.CrystalSymmetry is not None
                     or exp.MolFrame is not None)
+    if exp.SampleFrame is not None and not crystal_mode:
+        # torchspin <= 0.4.0 treated SampleFrame alone as a single crystal,
+        # which EasySpin does not. Warn rather than change results silently.
+        warnings.warn(
+            "Exp.SampleFrame was given without Exp.CrystalSymmetry or "
+            "Exp.MolFrame, so this is a powder simulation and SampleFrame has "
+            "no effect on it (EasySpin p_sampletype.m). torchspin 0.4.0 and "
+            "earlier simulated a single crystal here. For a single crystal, "
+            "set Exp.CrystalSymmetry (e.g. 'P1') or Exp.MolFrame.",
+            UserWarning,
+            stacklevel=2,
+        )
     if crystal_mode:
         # Single crystal: enumerate symmetry-related sites (EasySpin
         # p_crystalorientations). Each orientation gets weight 4*pi.
