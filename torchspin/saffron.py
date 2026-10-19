@@ -44,7 +44,8 @@ class PulseExperiment:
     T: float = 0.0                       # µs — mixing time
     t1: float = 0.0                      # µs — HYSCORE initial t1
     t2: float = 0.0                      # µs — HYSCORE initial t2
-    mwFreq: Optional[float] = None       # GHz — for orientation selection
+    mwFreq: Optional[float] = None       # GHz — orientation selection;
+                                         # required for real pulses
     ExciteWidth: Optional[float] = None  # MHz — excitation bandwidth
     Range: Optional[list] = None         # [lo, hi] MHz — ENDOR range
     tprf: float = 20.0                   # µs — ENDOR RF pulse length
@@ -60,6 +61,19 @@ class PulseExperiment:
     t: Optional[list] = None             # initial delays (µs)
     tp: Optional[list] = None            # pulse durations (µs, 0=ideal)
     Filter: Optional[str] = None
+    # Real-pulse ("thyme") detection fields — EasySpin s_sequencer.m 255-325.
+    # Ignored by the fast (ideal-pulse) algorithm.
+    DetWindow: Union[float, list, None] = None   # µs, scalar or [t1, t2]
+    DetSequence: Union[int, list, str, None] = None  # per-event detection flags
+    DetPhase: Optional[float] = None     # rad, detection phase (default 0)
+    DetFrequency: Optional[float] = None # GHz, down-conversion (default mwFreq)
+    DetIntegrate: bool = False           # integrate the echo transient
+    DetOperator: Optional[object] = None # spidyan-only; rejected by saffron
+    # Real-pulse ("thyme") sequence fields. Exp.Sequence may be a list of
+    # pulse dicts and delays, as in EasySpin's general method.
+    Dim1: Optional[list] = None          # e.g. ['d1,d2', 0.5]
+    Dim2: Optional[list] = None
+    PhaseCycle: Optional[object] = None  # dict {pulse_index: [[phase, w], ...]}
 
 
 @dataclass
@@ -79,6 +93,14 @@ class SaffronOptions:
     Window: str = 'ham+'                 # apodization window
     ZeroFillFactor: int = 2
     OriThreshold: float = 0.005
+    # Engine selection, as in EasySpin's Opt.SimulationMode: 'fast' is the
+    # ideal-pulse algorithm, 'thyme' the real-pulse density-matrix engine.
+    # ``None`` keeps torchspin's historical behavior of inferring the engine
+    # from nonzero Exp.tp / a list-valued Exp.Sequence / Exp.DetWindow.
+    SimulationMode: Optional[str] = None  # 'fast' | 'thyme'
+    # Real-pulse engine only (EasySpin Opt.IntTimeStep / Opt.SimFreq).
+    IntTimeStep: Optional[float] = None  # µs, propagation time step
+    SimFreq: Optional[float] = None      # GHz, simulation-frame frequency
     Nuclei: Optional[list] = None        # subset of nuclei (1-based)
     Transitions: Optional[list] = None
     separate: str = ''                   # '' or 'components'
@@ -533,6 +555,19 @@ def saffron(
             ``signal`` and ``info['td']``/``info['fd']`` are torch tensors on the
             autograd graph instead.
         info : dict — contains 'td' and 'fd' fields
+
+    Notes
+    -----
+    ``Opt.SimulationMode`` selects the engine, as in EasySpin: ``'fast'`` is
+    the ideal-pulse algorithm implemented here, ``'thyme'`` the real-pulse
+    density-matrix engine in :func:`torchspin.saffron_thyme.saffron_thyme`.
+    Left unset, the engine is inferred: real pulses (nonzero ``Exp.tp``), a
+    list-valued ``Exp.Sequence`` or an ``Exp.DetWindow`` select ``'thyme'``.
+
+    The real-pulse engine has a different output contract -- one detected
+    point per increment for single-point detection, with the transient axis
+    appended to the indirect axes otherwise -- and requires ``Exp.mwFreq``.
+    See its docstring.
     """
     if opt is None:
         opt = SaffronOptions()
@@ -595,8 +630,61 @@ def saffron(
         import dataclasses as _dc
         opt = _dc.replace(opt, TimeDomain=True)
 
-    # --- Parse experiment ---
+    # --- Engine selection (EasySpin Opt.SimulationMode, saffron.m 246-261) ---
+    # EasySpin selects the engine explicitly and defaults to 'fast'; torchspin
+    # historically inferred it from nonzero Exp.tp. Opt.SimulationMode=None
+    # keeps that inference, an explicit value overrides it.
     predefined = isinstance(exp.Sequence, str) and exp.Sequence in _EXP_NAMES
+    sim_mode = opt.SimulationMode
+    if sim_mode is not None:
+        sim_mode = str(sim_mode).lower()
+        if sim_mode not in ('fast', 'thyme'):
+            raise ValueError(
+                f"Opt.SimulationMode must be 'fast' or 'thyme', got "
+                f"{opt.SimulationMode!r}.")
+    else:
+        real_pulses = (exp.tp is not None
+                       and any(float(v) != 0.0 for v in np.atleast_1d(exp.tp)))
+        sequence_is_list = (not isinstance(exp.Sequence, str)
+                            and exp.Sequence is not None)
+        if exp.DetWindow is not None or sequence_is_list or real_pulses:
+            sim_mode = 'thyme'
+        else:
+            sim_mode = 'fast'
+
+    if sim_mode == 'thyme':
+        from torchspin.saffron_thyme import saffron_thyme
+        return saffron_thyme(sys, exp, opt)
+
+    # --- Fast (ideal-pulse) algorithm from here on ---
+    # EasySpin saffron.m:303 rejects the spidyan-only detection fields, and
+    # saffron.m:351 rejects predefined sequences with real pulses.
+    for _f in ('DetSequence', 'DetOperator'):
+        if getattr(exp, _f, None) is not None:
+            raise ValueError(
+                f"Exp.{_f} is specific to spidyan and cannot be used with "
+                f"saffron's fast algorithm. Remove it, or select the "
+                f"real-pulse engine with Opt.SimulationMode='thyme'.")
+    if exp.DetIntegrate:
+        raise ValueError(
+            "Exp.DetIntegrate only applies to the real-pulse engine. Set "
+            "Opt.SimulationMode='thyme' to use it.")
+    if predefined and exp.tp is not None and any(
+            float(v) != 0.0 for v in np.atleast_1d(exp.tp)):
+        raise ValueError(
+            "You cannot use predefined sequences (Exp.Sequence) with real "
+            "pulses (Exp.tp) in the fast algorithm. Set "
+            "Opt.SimulationMode='thyme' to run a predefined sequence with "
+            "real pulses.")
+    if not isinstance(exp.Sequence, str):
+        raise ValueError(
+            "The fast algorithm needs Exp.Sequence to be a predefined "
+            f"experiment name ({', '.join(sorted(_EXP_NAMES))}) with "
+            "Exp.Flip/Exp.t/Exp.Inc for a custom sequence. A list-valued "
+            "Exp.Sequence is the real-pulse syntax; it requires "
+            "Opt.SimulationMode='thyme'.")
+
+    # --- Parse experiment ---
     if predefined:
         exp_id = _EXP_NAMES[exp.Sequence]
         n_intervals, n_dims, inc_scheme_id, n_pathways, pf_doc = _EXP_PARAMS[exp_id]
@@ -649,11 +737,9 @@ def saffron(
         # Default pulse durations (0 = ideal)
         if exp.tp is None:
             exp.tp = [0.0] * n_intervals
+        # Real (finite-duration) pulses were dispatched to the thyme engine
+        # above, so every pulse is ideal here.
         ideal_pulse = [tp == 0.0 for tp in exp.tp]
-        if not all(ideal_pulse):
-            # Dispatch to thyme engine for real (finite-duration) pulses
-            from torchspin.saffron_thyme import saffron_thyme
-            return saffron_thyme(sys, exp, opt)
 
         # Determine refocusing pathways
         from torchspin.saffron_pathways import find_refocusing_pathways
@@ -761,8 +847,11 @@ def saffron(
     two_manifolds = (n_electrons == 1 and float(sys.S[0]) == 0.5)
     if n_electrons > 1:
         raise NotImplementedError(
-            "saffron fast algorithm requires a single electron spin. "
-            "For multi-electron systems, use Opt.SimulationMode='thyme'."
+            "saffron's fast algorithm requires a single electron spin "
+            "(EasySpin: 'Fast mode does not work for more than one electron "
+            "spin'). For multi-electron systems use the real-pulse engine: "
+            "set Opt.SimulationMode='thyme' and give every pulse a finite "
+            "length (Exp.tp, or a pulse dict with 'tp' in Exp.Sequence)."
         )
 
     # --- Build nuclear subspaces ---

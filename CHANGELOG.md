@@ -7,8 +7,173 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 Follow-up to 0.5.0: the pulse-EPR test suites now assert the relative L2 error
-against MATLAB rather than a cosine similarity, and the one physics issue 0.5.0
-left open turned out not to be a physics issue.
+against MATLAB rather than a cosine similarity, the one physics issue 0.5.0
+left open turned out not to be a physics issue, and the real-pulse
+(`saffron_thyme`) route — the last pulse-EPR route with no cross-validation at
+all — is now EasySpin-equivalent and MATLAB-validated on 18 cases.
+
+### Fixed — the real-pulse `saffron` route now reproduces EasySpin
+
+Two new oracles, 28 MATLAB cases in all (MATLAB R2024b), agreeing on both the
+raw and the mean-centered signal at 3e-13..8e-12:
+
+- `tests/data/generate_saffron_thyme_refs.m` →
+  `torchspin/tests/test_saffron_thyme_matlab_validation.py` (18 cases,
+  rectangular pulses): powder and single-crystal samples, transient and
+  single-point detection, echo integration, detection phase, explicit
+  simulation frame, relaxation, one and two indirect dimensions, and
+  predefined 2pESEEM / 3pESEEM / HYSCORE run through the real-pulse engine.
+- `tests/data/generate_saffron_thyme_shaped_refs.m` →
+  `torchspin/tests/test_saffron_thyme_shaped_matlab_validation.py` (10 cases,
+  transcribed from EasySpin's own `tests/saffron_thyme_*.m`): `quartersin/
+  linear` chirps with `Pulse.trise` and a swept `Pulse.Frequency`, relaxation
+  during a chirp, `Opt.SimFreq = 15` against the automatic 32 GHz, a delay
+  sweep crossed with a pulse-parameter sweep (`Exp.Dim2 = {'p1.Flip' pi/3}`,
+  which regenerates the chirp at every point), `Sys.gFrame`/`Sys.AFrame`
+  tensor tilts against an equivalent sample tilt, and a predefined sequence
+  detected over a transient window.
+
+Shaped pulses needed no new code: `torchspin/pulse.py` already built them for
+`spidyan`, and a pulse dict in a list-valued `Exp.Sequence` passes through to
+it unchanged. What had kept EasySpin's own thyme cases from running was the
+propagation and detection, below.
+
+0.5.0 reported that this route "does not reproduce EasySpin and has a different
+output contract", and that no reduction of its per-increment transients
+recovered EasySpin's trace. That was correct, and the cause was not only the
+missing detection stage: the propagation was wrong too. Six separate problems,
+each of which alone makes the comparison meaningless:
+
+- **The pulses were never given a carrier.** `Exp.mwFreq` was not passed to the
+  sequencer, so `FrameShift` was 0 and every pulse was built as a DC envelope
+  and applied in the lab frame, against an electron Zeeman term of ~9.5 GHz.
+  Nothing was excited. `Exp.mwFreq` is now required, as in EasySpin's
+  `s_sequencer`, and the simulation frame is entered by the same isotropic
+  g shift EasySpin uses (`saffron.m` 1838-1846).
+- **The Hamiltonian and the operators were in different frames.** The
+  Hamiltonian was built in the molecular frame with the field rotated into it,
+  while the initial state (`-Sz`), excitation (`Sx`) and detection (`S+`)
+  operators stayed lab-frame. Any orientation with a nonzero phi angle was
+  therefore wrong, and rotating the operators instead is not an option because
+  `s_thyme` builds its pulse propagators from `real(xOp)` and
+  `1i*imag(xOp)`, which presumes `xOp = Sx`. The Hamiltonian is now
+  transformed into the lab-frame basis with the spin-rotation operator
+  `exp(-i*phi*Jz) exp(-i*theta*Jy) exp(-i*chi*Jz)` over all spins, which is
+  the same operator EasySpin's `rotatesystem` + `ham(Sys_L, [0 0 B])`
+  produces (agreement 5e-13) without needing per-interaction tensor rotation.
+- **The orientation sum was renormalized.** EasySpin sums over orientations
+  weighted by `Exp.OriWeights` and does not divide by the total weight, which
+  is `4*pi`. Dividing by it scaled a powder down by ~12.6 and turned a
+  multi-site crystal stack into a mean instead of a sum.
+- **The whole detection stage was missing** (`saffron.m` 1884-1940):
+  `Exp.DetPhase`, `Exp.DetIntegrate` echo integration, down-conversion through
+  `signalprocessing.m` and the `Exp.DetWindow` time axis. `Exp.DetWindow` is
+  applied the way EasySpin applies it, by shifting the last sequence element
+  by `DetWindow(1)` and appending the detected event — a zero-length one for
+  single-point detection — rather than by slicing the transient afterwards,
+  which would move the echo rather than the window. The output contract is now
+  EasySpin's: one detected point per increment for single-point detection,
+  and the transient axis appended to the indirect axes otherwise.
+- **`Opt.IntTimeStep`'s default did not match.** EasySpin takes the Nyquist
+  time of the highest simulation-frame frequency, divides by 50 and rounds to
+  two significant digits; torchspin divided by 10 and did not round. The two
+  codes therefore integrated with different steps whenever the step was left
+  implicit.
+- **A zero-length detected delay produced no signal**, so EasySpin's way of
+  expressing single-point detection yielded an empty trace.
+
+### Fixed — relaxation propagated `conj(rho)` in Liouville space
+
+`spidyan`'s Liouville-space commutator superoperator was written as EasySpin
+writes it, `kron(I,H) - kron(H.',I)`, which is correct for MATLAB's
+column-major `vec()`. numpy flattens row-major, where
+`vec_r(A@rho@B) = kron(A, B.T) @ vec_r(rho)`, so the two Kronecker factors
+swap. With EasySpin's order the relaxation path propagated `rho.T`, which for
+a Hermitian density matrix is `conj(rho)`. The same applies to the transform
+of the relaxation superoperator into the Hamiltonian eigenbasis.
+
+This affects `spidyan` and the real-pulse `saffron` route whenever relaxation
+is active. A real detection trace (`Sz`) is untouched, which is why the
+existing `spidyan` relaxation reference — `Exp.DetOperator = {'z1'}`, compared
+on its real part only — could not see it; a demodulated `S+` trace was wrong
+by a factor of several. `generate_spidyan_refs.m` gains case 8,
+`spidyan_relaxationcomplexdetection.mat`, which detects `S+` under relaxation
+and is compared on its imaginary part as well as its real part. Regenerating
+the other seven spidyan references reproduced the committed files bit for bit.
+
+### Added — `Exp.Det*` fields and `Opt.SimulationMode` on saffron
+
+`PulseExperiment` gains `DetWindow`, `DetSequence`, `DetPhase`,
+`DetFrequency`, `DetIntegrate` and `DetOperator`, plus `Dim1`, `Dim2` and
+`PhaseCycle` and support for a list-valued `Exp.Sequence` (EasySpin's general
+pulse syntax: pulse dicts and delays). `SaffronOptions` gains
+`SimulationMode` (`'fast'` | `'thyme'`), `IntTimeStep` and `SimFreq`.
+
+Engine selection now follows EasySpin: `Opt.SimulationMode` chooses
+explicitly, and leaving it unset keeps torchspin's inference from nonzero
+`Exp.tp`, a list-valued `Exp.Sequence` or an `Exp.DetWindow`. The fast
+algorithm raises EasySpin's errors rather than ignoring the input: a
+predefined sequence with nonzero `Exp.tp` is rejected (`saffron.m` 351) where
+torchspin used to ignore `Exp.tp` and silently return an ideal-pulse result,
+and `Exp.DetSequence`/`Exp.DetOperator` are rejected (`saffron.m` 303). The
+real-pulse engine warns about the fast-only fields it ignores, as EasySpin's
+`s_sequencer` reports them.
+
+### Fixed — misleading `NotImplementedError` for multi-electron saffron
+
+`saffron.py` told users to set `Opt.SimulationMode='thyme'` for multi-electron
+systems, an option `SaffronOptions` did not have. The option now exists, and
+the message says what else is needed (a finite length for every pulse).
+
+### Not changed — the ideal-pulse and real-pulse routes do not converge
+
+The plan this work followed expected that as `Exp.tp -> 0` the real-pulse
+result would approach the ideal-pulse result for the same sequence, as a
+reference-free check on the normalization. It does not, and that is EasySpin's
+behavior too: at matched settings torchspin reproduces EasySpin's own
+ideal-vs-real mismatch to 1e-7 in scale (measured at four pulse lengths from
+20 ns down to 2.5 ns), so there is nothing here for torchspin to fix. Three
+reasons, none of them a defect:
+
+- With single-point detection EasySpin does not down-convert, so the detected
+  point carries the simulation-frame carrier phase, which advances ~50 cycles
+  per 20 ns increment.
+- A single detected point contains coherence pathways that the ideal route
+  excludes analytically; the two-step cycles EasySpin's own templates use do
+  not remove them for this observable.
+- As `tp -> 0` at fixed flip angle the required B1 grows without bound and
+  eventually exceeds the carrier frequency, so the rotating-wave picture
+  breaks down and a rectangular real pulse does not approach an ideal one.
+
+Putting the simulation frame on the carrier to remove the first effect is not
+a neutral change: it removes the carrier from the pulse too, so the linearly
+polarized field becomes a rotating-frame field of twice the strength.
+
+What that check was reaching for is covered instead by three relations that
+need no reference and do hold: a single-site P1 crystal equals `4*pi` times
+the independently validated `spidyan` result (1e-12); an isotropic powder
+equals a single crystal; and a nominal `Pulse.Flip` of `pi/2` delivers full
+transverse magnetization while `pi` delivers none, which is the sharpest cheap
+guard against the pulse amplitude slipping by a factor of two.
+
+### Changed — `spidyan`'s default detection, and `Exp.DetSequence` strings
+
+With neither `Exp.DetWindow` nor `Exp.DetSequence` given, `_sequencer` used to
+detect only the last free evolution event. EasySpin's documented default is
+`Exp.DetSequence = ones(1, length(Exp.Sequence))` — detection active during
+the entire sequence — and that is now what happens. Calls that state their
+detection explicitly, which is every cross-validated case, are unaffected.
+`Exp.DetSequence` also accepts EasySpin's `'last'` and `'all'` strings, and a
+length that is neither 1 nor `length(Exp.Sequence)` now raises instead of
+being silently truncated.
+
+### Fixed — `rfmixer` could drop the last sample
+
+The output time axis was built with `np.arange(t[0], t[-1] + dt/2, dt)` and
+then clipped to `t <= t[-1]`, so floating-point round-off in the last step
+could discard the final point and return a signal one sample shorter than its
+input. MATLAB's `tIn(1):Opt.dt:tIn(end)` does not, and the axis is now built
+from a step count.
 
 ### Fixed — the "spidyan multi-spin phase drift" was a test transcription error
 

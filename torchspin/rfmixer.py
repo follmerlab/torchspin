@@ -16,6 +16,8 @@ Example
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from scipy.interpolate import interp1d
 
@@ -123,10 +125,12 @@ def rfmixer(
     # Mix: multiply by exp(j*2π*LO*t)
     signal_mixed = signal * np.exp(2j * np.pi * LO * 1e3 * t)
 
-    # Resample to output time grid
-    t_out = np.arange(t[0], t[-1] + dt * 0.5, dt)
-    # Clip to not exceed original range
-    t_out = t_out[t_out <= t[-1]]
+    # Resample to output time grid. MATLAB's `tOut = tIn(1):Opt.dt:tIn(end)`
+    # reproduces tIn exactly when Opt.dt equals the input step; building the
+    # axis from a step count rather than np.arange's endpoint test avoids
+    # dropping the last sample to floating-point round-off.
+    n_out = int(math.floor((t[-1] - t[0]) / dt + 1e-9))
+    t_out = t[0] + np.arange(n_out + 1) * dt
 
     if len(t_out) == len(t) and np.allclose(t_out, t):
         signal_out = signal_mixed

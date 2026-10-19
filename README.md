@@ -171,8 +171,12 @@ example collection in `examples/{solidstate,liquids,slowmotion,endor,fitting,mag
 
 Every simulator with an EasySpin counterpart is checked against stored MATLAB
 reference output on each commit. Agreement is cosine ≥ 0.999 (most
-0.9999–1.0000) for `pepper`, `garlic`, `salt`, `saffron`, `spidyan` and
-`curry`, with absolute intensities matched where EasySpin defines them.
+0.9999–1.0000) for `pepper`, `garlic`, `salt` and `curry`, with absolute
+intensities matched where EasySpin defines them. The pulse-EPR routes
+(`saffron`, `saffron_thyme`, `spidyan`) are held to a stricter metric — the
+relative L2 error on the raw *and* the mean-centered signal, 1e-16..1e-7 —
+because a cosine is scale-invariant and dominated by a pulse-EPR trace's DC
+offset.
 `chili` and the stochastic `cardamom` have documented caveats. Details per
 simulator, with the evidence: [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
 

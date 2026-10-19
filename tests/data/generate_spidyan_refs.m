@@ -229,5 +229,43 @@ data.t = t(:)'; data.sig_re = real(signal(:))'; data.sig_im = imag(signal(:))';
 save('spidyan_relaxation.mat','data','-v7');
 fprintf('  saved spidyan_relaxation.mat (%d pts)\n\n', numel(t));
 
+% =========================================================================
+% Case 8: relaxation with a *complex* detection operator (S+), demodulated.
+% Case 7 detects z1, whose trace is purely real, so it cannot see an error
+% that conjugates the density matrix. A Liouville-space commutator
+% superoperator built with MATLAB's column-major kron() ordering but applied
+% to a row-major flattened density matrix propagates rho.' = conj(rho); this
+% case is the regression test for that, and only the imaginary part sees it.
+% =========================================================================
+fprintf('Case 8: relaxation, complex detection...\n');
+clear Sys Exp Opt Pulse data
+Sys.S = 1/2;
+Sys.ZeemanFreq = 33.500;
+Sys.T1 = 1;
+Sys.T2 = 0.4;
+
+Pulse.Type = 'quartersin/linear';
+Pulse.trise = 0.015;
+Pulse.tp = 0.1;
+Pulse.Flip = pi/2;
+Pulse.Frequency = 1000*[-0.100 0.100];
+
+Exp.Sequence = {Pulse 0.5};
+Exp.Field = 1240;
+Exp.mwFreq = 33.5;
+Exp.DetSequence = [1 1];
+Exp.DetPhase = 0;
+Exp.DetOperator = {'+1'};
+Exp.DetFreq = 33.5;
+
+Opt.IntTimeStep = 0.0001;
+Opt.SimFreq = 32;
+Opt.Relaxation = 1;
+
+[t, signal] = spidyan(Sys,Exp,Opt);
+data.t = t(:)'; data.sig_re = real(signal(:))'; data.sig_im = imag(signal(:))';
+save('spidyan_relaxationcomplexdetection.mat','data','-v7');
+fprintf('  saved spidyan_relaxationcomplexdetection.mat (%d pts)\n\n', numel(t));
+
 warning(orig_state);
 fprintf('All spidyan reference files generated.\n');

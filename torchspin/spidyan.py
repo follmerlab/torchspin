@@ -10,6 +10,7 @@ All times in **microseconds**, frequencies in **GHz**, fields in **mT**.
 """
 
 import math
+import warnings
 
 import numpy as np
 import scipy.linalg as la
@@ -22,6 +23,16 @@ from torchspin.spinops import sop
 from torchspin.constants import PLANCK, BMAGN, GFREE
 from torchspin.pulse import pulse as generate_pulse
 from torchspin.rfmixer import rfmixer
+from torchspin.signalprocessing import signalprocessing, trace_kind
+
+
+def _round_significant(x: float, digits: int) -> float:
+    """MATLAB's ``round(x, digits, 'significant')``."""
+    if x == 0 or not np.isfinite(x):
+        return float(x)
+    mag = math.floor(math.log10(abs(x)))
+    factor = 10.0 ** (digits - 1 - mag)
+    return float(round(x * factor) / factor)
 
 
 def _parse_sop_string(spins, s):
@@ -433,31 +444,91 @@ def _sequencer(exp, opt):
                 frame_shift = float(fs)
                 freq_shift = freq_shift - frame_shift
 
-    # Time step from Nyquist of the highest sim-frame frequency
-    sim_max_freq = max(max_freq - frame_shift, abs(freq_shift), 0.0)
+    # Time step from the Nyquist criterion of the highest sim-frame frequency.
+    # EasySpin (s_sequencer.m 435-451): NyquistTime = 1/(2*maxPulseFreq)/1000,
+    # and the default integration step is that divided by IntStepFactor = 50
+    # and rounded to two significant digits. torchspin <= 0.5.0 divided by 10
+    # and did not round, which gave a different step from EasySpin's whenever
+    # Opt.IntTimeStep was not stated explicitly.
+    sim_max_freq = max(max_freq - frame_shift, freq_shift, 0.0)
     if sim_max_freq > 0:
-        int_time_step = 1e-3 / (2 * sim_max_freq) / 10
+        nyquist_time = 1e-3 / (2 * sim_max_freq)
+        int_time_step = _round_significant(nyquist_time / 50, 2)
     else:
         int_time_step = 0.001  # 1 ns default
 
     if opt.IntTimeStep is not None:
-        int_time_step = opt.IntTimeStep
+        int_time_step = float(opt.IntTimeStep)
 
-    # Determine detection
+    # Determine detection (EasySpin s_sequencer.m 255-325)
     det_window = exp.get('DetWindow', None)
     det_sequence = exp.get('DetSequence', None)
     single_point_detection = False
 
     if det_window is not None:
-        if det_window == 0:
-            single_point_detection = True
-    elif det_sequence is not None:
-        # EasySpin: a scalar DetSequence applies to every event
-        ds = np.atleast_1d(det_sequence)
-        if ds.size == 1:
-            det_sequence = [bool(ds[0])] * len(sequence)
+        # Exp.DetWindow is applied by *shifting the last sequence element* by
+        # DetWindow(1) and appending the detected event, not by slicing the
+        # transient afterwards.
+        dw = np.atleast_1d(np.asarray(det_window, dtype=float))
+        last_is_pulse = isinstance(sequence[-1], dict) and 'tp' in sequence[-1]
+        if det_sequence is not None:
+            warnings.warn(
+                "Both Exp.DetWindow and Exp.DetSequence were given; "
+                "Exp.DetSequence is ignored.", UserWarning, stacklevel=3)
+        if np.any(dw < 0) and last_is_pulse:
+            raise ValueError(
+                "Exp.DetWindow has a negative value but the last element of "
+                "Exp.Sequence is a pulse. Detection into a pulse is not "
+                "possible; append a free evolution event.")
+        if not last_is_pulse and dw.min() < 0 and \
+                abs(dw.min()) > float(sequence[-1]):
+            raise ValueError(
+                "Exp.DetWindow extends beyond the last free evolution into a "
+                "pulse. Shorten the window or lengthen the free evolution.")
+        sequence = list(sequence)
+        if last_is_pulse:
+            if dw[0] > 0:
+                sequence.append(float(dw[0]))
         else:
-            det_sequence = [bool(v) for v in ds]
+            sequence[-1] = float(sequence[-1]) + float(dw[0])
+        if dw.size == 1 or dw[0] == dw[1]:
+            single_point_detection = True
+            sequence.append(0.0)
+        else:
+            sequence.append(float(dw[1] - dw[0]))
+        det_sequence = [False] * (len(sequence) - 1) + [True]
+    elif det_sequence is not None:
+        if isinstance(det_sequence, str):
+            if det_sequence == 'last':
+                det_sequence = [False] * (len(sequence) - 1) + [True]
+            elif det_sequence == 'all':
+                det_sequence = [True] * len(sequence)
+            else:
+                raise ValueError(
+                    f"Exp.DetSequence string {det_sequence!r} not recognized; "
+                    "use 'last' or 'all'.")
+        else:
+            # EasySpin: a scalar DetSequence applies to every event
+            ds = np.atleast_1d(det_sequence)
+            if ds.size == 1:
+                det_sequence = [bool(ds[0])] * len(sequence)
+            elif ds.size == len(sequence):
+                det_sequence = [bool(v) for v in ds]
+            else:
+                raise ValueError(
+                    "The lengths of Exp.Sequence and Exp.DetSequence do not "
+                    "match. Exp.DetSequence must have length 1 or "
+                    f"{len(sequence)}, got {ds.size}.")
+        # A single detected zero-length delay is single-point detection
+        if sum(det_sequence) == 1:
+            i_det = det_sequence.index(True)
+            elem = sequence[i_det]
+            if not (isinstance(elem, dict) and 'tp' in elem) \
+                    and float(elem) == 0.0:
+                single_point_detection = True
+    else:
+        # EasySpin default: detection is active during the entire sequence
+        det_sequence = [True] * len(sequence)
 
     # Determine relaxation flag per event
     global_relaxation = opt.Relaxation if opt.Relaxation is not None else False
@@ -520,11 +591,7 @@ def _sequencer(exp, opt):
             evt.Relaxation = global_relaxation
             evt.FrameShift = frame_shift
 
-            # Detection during pulse — only if det_sequence says so
-            if det_sequence is not None and i < len(det_sequence):
-                evt.Detection = bool(det_sequence[i])
-            else:
-                evt.Detection = False
+            evt.Detection = bool(det_sequence[i])
 
             evt.StateTrajectories = opt.StateTrajectories
 
@@ -535,38 +602,19 @@ def _sequencer(exp, opt):
             duration = float(elem)
             evt = DelayEvent()
             evt.t = duration
-            evt.TimeStep = (int_time_step if int_time_step < duration
-                            else duration)
+            # EasySpin (s_sequencer.m 785) stores Opt.IntTimeStep on every
+            # event, pulses and delays alike; a detected delay shorter than
+            # one step is then simply not propagated, and Exp.DetWindow's
+            # output axis uses this step.
+            evt.TimeStep = int_time_step
             evt.Relaxation = global_relaxation
             evt.FrameShift = frame_shift
 
-            # Detection for delays
-            if single_point_detection:
-                evt.Detection = False  # Will detect at end
-            elif det_sequence is not None and i < len(det_sequence):
-                evt.Detection = bool(det_sequence[i])
-            else:
-                # Default: detect last delay
-                evt.Detection = False
+            evt.Detection = bool(det_sequence[i])
 
             evt.StateTrajectories = opt.StateTrajectories
 
             events.append(evt)
-
-    # If single-point detection, mark last event for detection
-    if single_point_detection:
-        events[-1].Detection = True
-
-    # If no detection set and no det_sequence/det_window, detect the last delay
-    has_detection = any(
-        e.Detection for e in events
-    )
-    if not has_detection and det_sequence is None and det_window is None:
-        # Detect last free evolution event
-        for e in reversed(events):
-            if e.type == 'free evolution':
-                e.Detection = True
-                break
 
     # Build Vary structure for indirect dimensions
     vary = None
@@ -765,6 +813,18 @@ def _propagator(Ham, dt):
     return la.expm(-1j * Ham * dt)
 
 
+def _gamma_to_eigenbasis(gamma, U):
+    """Transform a relaxation superoperator with the Hamiltonian eigenbasis.
+
+    EasySpin (``saffron.m`` 1872-1876, ``spidyan.m``) uses
+    ``R = kron(transpose(U), U')`` and ``Gamma -> R'*Gamma*R``, written for
+    MATLAB's column-major ``vec()``. The row-major equivalent swaps the two
+    Kronecker factors, for the same reason as in :func:`_liouvillian`.
+    """
+    R = np.kron(U.conj().T, U.T)
+    return R.conj().T @ gamma @ R
+
+
 def _liouvillian(Ham, Gamma, eq_state_vec, dt):
     """Compute Liouville space propagator and steady state.
 
@@ -777,7 +837,13 @@ def _liouvillian(Ham, Gamma, eq_state_vec, dt):
     """
     n = Ham.shape[0]
     I_n = np.eye(n)
-    ham_su = np.kron(I_n, Ham) - np.kron(Ham.T, I_n)
+    # EasySpin writes the commutator superoperator as kron(I,H) - kron(H.',I),
+    # which is correct for MATLAB's column-major vec(). numpy flattens
+    # row-major, and vec_r(A@rho@B) = kron(A, B.T) @ vec_r(rho), so the two
+    # Kronecker factors swap. Using EasySpin's order with a row-major flatten
+    # propagates rho.T = conj(rho), which conjugates every complex (S+)
+    # detection trace while leaving a real (Sz) one untouched.
+    ham_su = np.kron(Ham, I_n) - np.kron(I_n, Ham.T)
     L_full = -1j * ham_su - Gamma
     sigma_ss = Gamma @ eq_state_vec
     # Solve for steady state. Use pinv as fallback for singular matrices.
@@ -1167,6 +1233,15 @@ def _build_pulse_propagators(evt, Ham0_rad, relaxation, n):
             evt.Propagation = {'Utotal': U_total}
 
 
+def _detection_array(det_ops, n_det, n):
+    """Normalized, flattened detection operators (EasySpin s_thyme.m 479-487)."""
+    det_array = np.zeros((n_det, n * n), dtype=complex)
+    for i_det in range(n_det):
+        d_vec = det_ops[i_det].T.reshape(-1)
+        det_array[i_det] = d_vec / np.vdot(d_vec, d_vec)
+    return det_array
+
+
 def _propagate_pulse(sigma, evt, det_ops, n_det, t_offset):
     """Propagate through a pulse event.
 
@@ -1188,11 +1263,7 @@ def _propagate_pulse(sigma, evt, det_ops, n_det, t_offset):
             t_vec[i + 1] = t_offset + evt.t[i] if i < len(evt.t) else t_vec[i]
 
         # Initial detection
-        det_array = np.zeros((n_det, n * n), dtype=complex)
-        for i_det in range(n_det):
-            d_vec = det_ops[i_det].T.reshape(-1)
-            norm = np.vdot(d_vec, d_vec)
-            det_array[i_det] = d_vec / norm
+        det_array = _detection_array(det_ops, n_det, n)
         signal[:, 0] = det_array @ sigma.reshape(-1)
 
     density_matrices = []
@@ -1268,15 +1339,27 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
     use_relaxation = evt.Relaxation and relaxation is not None
 
     if duration <= 0:
-        return sigma, None, None, None
+        # EasySpin (s_thyme.m 474-489): a detected zero-length delay yields a
+        # single point, the expectation value of the state entering it. This
+        # is how Exp.DetWindow expresses single-point detection.
+        if not evt.Detection:
+            return sigma, None, None, None
+        det_array = _detection_array(det_ops, n_det, n)
+        signal = np.zeros((n_det, 1), dtype=complex)
+        signal[:, 0] = det_array @ sigma.reshape(-1)
+        return (sigma, signal, np.array([t_offset]),
+                [sigma.copy()] if evt.StateTrajectories else None)
 
     # Determine time steps
     if evt.Detection:
+        # EasySpin builds tvector = 0:TimeStep:t, so a duration that is not a
+        # multiple of the time step is truncated (floor), not rounded, and a
+        # delay shorter than one step is not propagated at all.
         time_step = evt.TimeStep
-        if time_step <= 0 or time_step > duration:
+        if time_step <= 0:
             time_step = duration
-        t_vec = np.arange(0, duration + time_step / 2, time_step) + t_offset
-        n_steps = len(t_vec) - 1
+        n_steps = int(math.floor(duration / time_step + 1e-9))
+        t_vec = np.arange(n_steps + 1) * time_step + t_offset
     else:
         n_steps = 1
         time_step = duration
@@ -1305,11 +1388,7 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
     signal = None
     if evt.Detection:
         signal = np.zeros((n_det, len(t_vec)), dtype=complex)
-        det_array = np.zeros((n_det, n * n), dtype=complex)
-        for i_det in range(n_det):
-            d_vec = det_ops[i_det].T.reshape(-1)
-            norm = np.vdot(d_vec, d_vec)
-            det_array[i_det] = d_vec / norm
+        det_array = _detection_array(det_ops, n_det, n)
         signal[:, 0] = det_array @ sigma.reshape(-1)
 
     density_matrices = []
@@ -1351,18 +1430,7 @@ def _complex_trace_needs_doubling(trace: np.ndarray) -> bool:
     (``signalprocessing.m``, "the normalization is wrong by a factor of two").
     Purely real or purely imaginary traces (e.g. Sz) are not scaled.
     """
-    a = np.asarray(trace)
-    max_abs = np.max(np.abs(a)) if a.size else 0.0
-    if max_abs == 0.0:
-        return False
-    # MATLAB compares against max() of the signed parts, not their magnitude.
-    max_imag = np.max(a.imag) if a.size else 0.0
-    max_real = np.max(a.real) if a.size else 0.0
-    if max_imag != 0.0 and max_abs / max_imag > 1e8:
-        return False        # purely real
-    if max_real != 0.0 and max_abs / max_real > 1e8:
-        return False        # purely imaginary
-    return True
+    return trace_kind(trace) == 'complex'
 
 
 def spidyan(
@@ -1472,11 +1540,8 @@ def spidyan(
 
     # Transform relaxation superoperator to system frame
     if relaxation is not None:
-        U_eig, _ = np.linalg.eigh(np.real(Ham0))
-        # Use eigenvectors of Hermitian part
         _, U_vecs = np.linalg.eigh(Ham0)
-        R = np.kron(U_vecs.T, U_vecs.conj().T)
-        relaxation.Gamma = R.conj().T @ relaxation.Gamma @ R
+        relaxation.Gamma = _gamma_to_eigenbasis(relaxation.Gamma, U_vecs)
 
     # Run propagation
     time_array, signal_array, final_states, state_traj, events = _thyme(
