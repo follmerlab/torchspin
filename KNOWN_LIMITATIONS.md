@@ -403,6 +403,20 @@ reference — `Exp.DetOperator = {'z1'}`, compared on its real part only —
 could not see it. There is now a reference that detects `S+` under relaxation
 and is checked on its imaginary part too.
 
+**A sample tilt and the equivalent tensor tilt agree to ~1e-12, not to
+machine precision.** `Sys.gFrame`/`Sys.AFrame` and an equal `Exp.SampleFrame`
+describe the same physics, and EasySpin's own test asserts the two signals
+agree to `1e-12` absolute. torchspin reaches them by different arithmetic:
+EasySpin rotates the interaction tensors, while torchspin conjugates the
+molecular-frame Hamiltonian into the lab-frame basis, which is the identity
+for an untilted sample and two matrix exponentials for a tilted one. The two
+Hamiltonians agree to 2e-16 relative, but integrating that over a detection
+window turns it into a phase error growing linearly in time — 2e-11 absolute
+on a signal of magnitude 12 after 0.3 µs. Both sides are separately validated
+against MATLAB at ~1e-12 relative L2, so this is a round-off floor and not a
+frame-handling error; it is worth knowing only if you compare the two setups
+to each other over a long transient.
+
 ---
 
 ## Cardamom — validated against EasySpin (2026-09-02)

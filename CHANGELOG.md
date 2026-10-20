@@ -4,6 +4,23 @@ All notable changes to torchspin will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed — a flaky tolerance in the real-pulse frame-rotation test
+
+`test_frame_tilts_match_an_equivalent_sample_tilt` asserted that a tensor tilt
+and an equal sample tilt agree to `1e-12` of the peak, copying EasySpin's own
+`areequal(y1, y2, 1e-12, 'abs')`. That bound sits below the round-off floor of
+torchspin's route, which conjugates the Hamiltonian into the lab-frame basis
+rather than rotating the interaction tensors: the two Hamiltonians agree to
+2e-16 relative, but integrating that over the 0.3 µs detection window makes a
+phase error growing linearly in time, 2e-11 absolute on a signal of magnitude
+12. The test passed on two CI runners and failed on a third with identical
+code. It is now scored as a relative L2 error (measured 1.8e-12 against a
+1e-9 bound) plus a per-point bound at 1e-9 of the peak, and the mechanism is
+written down in the docstring and in KNOWN_LIMITATIONS.md. Library code is
+unchanged; both sides remain validated against MATLAB at ~1e-12.
+
 ## [0.6.0] — 2026-10-19
 
 Follow-up to 0.5.0: the pulse-EPR test suites now assert the relative L2 error

@@ -270,12 +270,28 @@ def opt_rect(**kw) -> SaffronOptions:
 def test_frame_tilts_match_an_equivalent_sample_tilt(refs):
     """Tensor tilts and an equal sample tilt give the same signal.
 
-    EasySpin saffron_thyme_framerotations asserts this equality to 1e-12 and
-    nothing else; here both sides are also pinned against MATLAB, so a shared
-    error in the frame handling cannot pass. It is the only real-pulse case
-    that exercises ``Sys.gFrame``/``Sys.AFrame``, and the sequence ends in a
+    EasySpin saffron_thyme_framerotations asserts this equality and nothing
+    else; here both sides are also pinned against MATLAB, so a shared error in
+    the frame handling cannot pass. It is the only real-pulse case that
+    exercises ``Sys.gFrame``/``Sys.AFrame``, and the sequence ends in a
     *pulse*, which is the ``Exp.DetWindow`` branch that appends a detection
     event instead of lengthening a delay.
+
+    Scored as a relative L2 error, not at EasySpin's
+    ``areequal(y1, y2, 1e-12, 'abs')``, which this route cannot meet and which
+    it is not a defect to miss. EasySpin reaches both sides by rotating the
+    interaction tensors, so its two Hamiltonians come out of nearly the same
+    arithmetic. torchspin instead conjugates the molecular-frame Hamiltonian
+    into the lab-frame basis (``_to_lab_basis``), and the two sides are not
+    symmetric in it: the tensor-tilt side has zero Euler angles and takes the
+    identity shortcut, while the sample-tilt side goes through two matrix
+    exponentials. The resulting Hamiltonians agree to 2e-16 relative --
+    machine epsilon -- but integrating that difference over the 0.3 us
+    detection window makes a phase error that grows linearly in t, reaching
+    2e-11 absolute on a signal of magnitude 12. So an absolute 1e-12 bound
+    sits below the method's round-off floor: it passed on two CI runners and
+    failed on a third, with identical code. The measured relative L2 is
+    1.8e-12, which RAW_TOL clears by ~500x.
     """
     _, y_tensor, _ = saffron(_sys_frames(True), _exp_frames([0, 0, 0]),
                              opt_rect())
@@ -283,8 +299,20 @@ def test_frame_tilts_match_an_equivalent_sample_tilt(refs):
                              opt_rect())
     _check(y_tensor, refs['frames_tensor_tilt'], "frames_tensor_tilt")
     _check(y_sample, refs['frames_sample_tilt'], "frames_sample_tilt")
-    np.testing.assert_allclose(y_tensor, y_sample, rtol=0,
-                               atol=1e-12 * np.max(np.abs(y_tensor)))
+    raw, centered = _errors(y_tensor, y_sample)
+    assert raw < RAW_TOL, (
+        f"tensor tilt vs sample tilt: raw relative error {raw:.3e} "
+        f">= {RAW_TOL:g}")
+    assert centered < CENTERED_TOL, (
+        f"tensor tilt vs sample tilt: mean-centered relative error "
+        f"{centered:.3e} >= {CENTERED_TOL:g}")
+    # A per-point bound as well, so a frame error confined to a few points
+    # cannot average away in the L2 norm. 1e-9 of the peak is ~600x the
+    # round-off floor explained above.
+    np.testing.assert_allclose(
+        y_tensor, y_sample, rtol=0,
+        atol=1e-9 * np.max(np.abs(y_tensor)),
+        err_msg="tensor tilt vs sample tilt, per point")
 
 
 # ---------------------------------------------------------------------------
