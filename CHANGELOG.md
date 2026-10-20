@@ -4,13 +4,23 @@ All notable changes to torchspin will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] — 2026-10-19
 
 Follow-up to 0.5.0: the pulse-EPR test suites now assert the relative L2 error
 against MATLAB rather than a cosine similarity, the one physics issue 0.5.0
 left open turned out not to be a physics issue, and the real-pulse
 (`saffron_thyme`) route — the last pulse-EPR route with no cross-validation at
-all — is now EasySpin-equivalent and MATLAB-validated on 18 cases.
+all — is now EasySpin-equivalent and MATLAB-validated on 28 cases. Every
+`saffron` route, ideal-pulse and real-pulse, rectangular and shaped, is now
+cross-validated against MATLAB EasySpin.
+
+Minor rather than patch: the real-pulse route's output changes (it was not
+reproducing EasySpin before), and one input that used to be accepted now
+raises. A predefined sequence with a nonzero `Exp.tp` was answered with a
+silent *ideal*-pulse result; it now raises, as in `saffron.m` 351. Scripts
+relying on that fallback were getting a wrong answer, and need either
+`Exp.tp = 0` to keep the ideal-pulse result or a list-valued `Exp.Sequence`
+to get the real-pulse one.
 
 ### Fixed — the real-pulse `saffron` route now reproduces EasySpin
 
@@ -1124,6 +1134,7 @@ ported to Python/PyTorch with 1820+ passing tests.
 
 <!-- 0.3.0 was the first public release and the history before it was squashed,
      so v0.1.0-v0.2.2 have no tags in this repository to link to. -->
+[0.6.0]: https://github.com/follmerlab/torchspin/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/follmerlab/torchspin/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/follmerlab/torchspin/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/follmerlab/torchspin/releases/tag/v0.3.0
