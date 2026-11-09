@@ -370,3 +370,8 @@ __all__ = [
     'exciteprofile',
     'resonator',
 ]
+
+# Ligand-field tools (Telser's programs, differentiable); a subpackage, see torchspin/lft/__init__.py
+from torchspin import lft  # noqa: E402
+
+__all__.append('lft')
