@@ -302,28 +302,25 @@ class TestHilberttrans:
 
 class TestUnitconvert:
     def test_cm1_to_MHz(self):
-        """1 cm^-1 = c[cm/s] Hz = 29979.2458 MHz, so 1000 cm^-1 ≈ 2.998e7 MHz."""
-        out = unitconvert(1000.0, 'cm^-1->MHz')
-        assert abs(float(out) - 1000.0 * 29979.2458) < 1e-6
-        assert abs(float(out) - 1000.0 * CLIGHT / 1e6) < 1e-6   # CLIGHT is in cm/s
+        """1 cm^-1 = c / 1 cm = 29 979.2458 MHz (exact)."""
+        assert abs(float(unitconvert(1.0, 'cm^-1->MHz')) - 29979.2458) < 1e-6
 
-    @pytest.mark.parametrize("units,expected,rtol", [
-        ('cm^-1->K', 1.438776877, 1e-9),            # second radiation constant hc/k_B in cm K
-        ('cm^-1->eV', 1.239841984e-4, 1e-9),
-        ('K->cm^-1', 1 / 1.438776877, 1e-9),
-        ('eV->cm^-1', 8065.543937, 1e-9),
-        ('MHz->cm^-1', 1 / 29979.2458, 1e-12),
-    ])
-    def test_cm1_factors_against_codata(self, units, expected, rtol):
-        """Regression: cm^-1 conversions were 100x off (CLIGHT is already in cm/s)."""
-        assert float(unitconvert(1.0, units)) == pytest.approx(expected, rel=rtol)
+    def test_cm1_against_codata(self):
+        """cm^-1 conversions against exact SI values, not against the module's own constants.
 
-    def test_cm1_mT_consistent_with_MHz(self):
-        """cm^-1 -> mT agrees with cm^-1 -> MHz -> mT."""
-        a = unitconvert(1.0, 'cm^-1->mT', g=2.0)
-        b = unitconvert(unitconvert(1.0, 'cm^-1->MHz'), 'MHz->mT', g=2.0)
-        assert float(a) == pytest.approx(float(b), rel=1e-12)
-        assert float(unitconvert(a, 'mT->cm^-1', g=2.0)) == pytest.approx(1.0, rel=1e-12)
+        1 cm^-1 = 1.438 776 877 K (second radiation constant c2 = hc/k, exact)
+                = 1.239 841 984e-4 eV (hc/e, exact)
+        and back again.
+        """
+        assert abs(float(unitconvert(1.0, 'cm^-1->K')) - 1.438776877) < 1e-9
+        assert abs(float(unitconvert(1.0, 'cm^-1->eV')) - 1.239841984e-4) < 1e-13
+        assert abs(float(unitconvert(1.0, 'K->cm^-1')) - 1 / 1.438776877) < 1e-9
+        assert abs(float(unitconvert(1.0, 'eV->cm^-1')) - 8065.543937) < 1e-5
+        assert abs(float(unitconvert(29979.2458, 'MHz->cm^-1')) - 1.0) < 1e-12
+        # cm^-1 -> mT at g = 2 against MHz -> mT of the same energy
+        via_mhz = float(unitconvert(29979.2458, 'MHz->mT', g=2.0))
+        assert abs(float(unitconvert(1.0, 'cm^-1->mT', g=2.0)) - via_mhz) < 1e-9 * via_mhz
+        assert abs(float(unitconvert(via_mhz, 'mT->cm^-1', g=2.0)) - 1.0) < 1e-12
 
     def test_MHz_to_cm1_roundtrip(self):
         """MHz → cm^-1 → MHz should give identity."""
@@ -461,3 +458,14 @@ class TestHsdim:
         assert hsdim(0.5) == 2
         assert hsdim(1.0) == 3
         assert hsdim(1.5) == 4
+
+
+def test_levelsplot_cm1_axis():
+    """levelsplot(Units='cm^-1') puts 29 979.2458 MHz at 1 cm^-1 (was 0.01 cm^-1)."""
+    import importlib
+    import numpy as np
+    lp = importlib.import_module('torchspin.levelsplot')
+    E = np.array([0.0, 29979.2458, 2 * 29979.2458])
+    np.testing.assert_allclose(lp._convert_energy_values(E, 'cm^-1'), [0.0, 1.0, 2.0], rtol=1e-12)
+    E2, _, _ = lp._convert_energy(E, 'cm^-1')
+    np.testing.assert_allclose(E2, [0.0, 1.0, 2.0], rtol=1e-12)

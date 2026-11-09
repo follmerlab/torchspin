@@ -500,7 +500,7 @@ def unitconvert(
 
     Examples
     --------
-    >>> unitconvert(1000.0, 'cm^-1->MHz')     # ≈ 2.998e7 MHz (1 cm^-1 = 29979.2458 MHz)
+    >>> unitconvert(1.0, 'cm^-1->MHz')        # 29979.2458 MHz
     >>> unitconvert(340.0, 'mT->MHz', g=2.0)  # ≈ 9520 MHz
     """
     value = np.asarray(value, dtype=float)
