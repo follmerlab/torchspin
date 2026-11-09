@@ -3,6 +3,8 @@
 Ported from telser-tools (``telser_tools_diff``).  Modules carry Telser's program names:
 
 ``lft.ddn``           d^n ligand-field levels and doublet g (DDN)
+``lft.ddnloop``       levels and transitions vs field magnitude, angle or a parameter (DDNLOOP)
+``lft.ddnpow``        powder EPR / FDMR directly from the d^n model (DDNPOW)
 ``lft.ddnfit``        fit d^n parameters to band energies (DDNFIT)
 ``lft.ddnsus``        chi(T), chi T, mu_eff; and fits to them (DDNSUS)
 ``lft.ddnmag``        M(B, T); and fits to it (DDNMAG)
@@ -29,7 +31,7 @@ derivatives), not ``torchspin._linalg.eigh``, whose gauge-zeroing backward is ri
 spectra but drops f'(lambda) tr(dH A) inside degenerate levels.
 """
 
-from . import bridge, ddn, ddnfit, ddnmag, ddnsus, dipole, dlsd5, dpn, dpnfit, dsoxf, dtd, fit, grids, ligand_field, tanabe_sugano, units
+from . import bridge, ddn, ddnfit, ddnloop, ddnpow, ddnmag, ddnsus, dipole, dlsd5, dpn, dpnfit, dsoxf, dtd, fit, grids, ligand_field, tanabe_sugano, units
 from .bridge import dn2sys
 from .ligand_field import (AOM_MODES, Ligand, aom, aom_from_angles, aom_from_frames, aom_isotropic, crystal_field,
                            octahedron, orbital_matrix, rotation, tetrahedron)
