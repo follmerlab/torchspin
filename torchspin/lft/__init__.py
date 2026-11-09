@@ -3,6 +3,11 @@
 Ported from telser-tools (``telser_tools_diff``).  Modules carry Telser's program names:
 
 ``lft.ddn``           d^n ligand-field levels and doublet g (DDN)
+``lft.ddnfit``        fit d^n parameters to band energies (DDNFIT)
+``lft.ddnsus``        chi(T), chi T, mu_eff; and fits to them (DDNSUS)
+``lft.ddnmag``        M(B, T); and fits to it (DDNMAG)
+``lft.fit``           joint fits of one model to bands, g, chi, M and EPR spectra (exact Jacobians)
+``lft.grids``         field-direction grids for magnetometry (Gauss hemisphere, DDN igloo, ...)
 ``lft.ligand_field``  AOM, Ballhausen crystal field, orbital energies (also exported here:
                       ``lft.aom``, ``lft.aom_isotropic``, ``lft.crystal_field``, ...)
 ``lft.bridge``        ``dn2sys``: ligand-field parameters -> SpinSystem with full g
@@ -17,11 +22,11 @@ derivatives), not ``torchspin._linalg.eigh``, whose gauge-zeroing backward is ri
 spectra but drops f'(lambda) tr(dH A) inside degenerate levels.
 """
 
-from . import bridge, ddn, ligand_field, units
+from . import bridge, ddn, ddnfit, ddnmag, ddnsus, fit, grids, ligand_field, units
 from .bridge import dn2sys
 from .ligand_field import (AOM_MODES, Ligand, aom, aom_from_angles, aom_from_frames, aom_isotropic, crystal_field,
                            octahedron, orbital_matrix, rotation, tetrahedron)
 
 __all__ = ["AOM_MODES", "Ligand", "aom", "aom_from_angles", "aom_from_frames", "aom_isotropic", "bridge",
-           "crystal_field", "ddn", "dn2sys", "ligand_field", "octahedron", "orbital_matrix", "rotation",
+           "crystal_field", "ddn", "ddnfit", "ddnmag", "ddnsus", "dn2sys", "fit", "grids", "ligand_field", "octahedron", "orbital_matrix", "rotation",
            "tetrahedron", "units"]
