@@ -302,10 +302,28 @@ class TestHilberttrans:
 
 class TestUnitconvert:
     def test_cm1_to_MHz(self):
-        """1000 cm^-1 → 29979 MHz (c = 2.998e10 cm/s)."""
+        """1 cm^-1 = c[cm/s] Hz = 29979.2458 MHz, so 1000 cm^-1 ≈ 2.998e7 MHz."""
         out = unitconvert(1000.0, 'cm^-1->MHz')
-        expected = 1000.0 * 100 * CLIGHT / 1e6
-        assert abs(float(out) - expected) < 1e-6
+        assert abs(float(out) - 1000.0 * 29979.2458) < 1e-6
+        assert abs(float(out) - 1000.0 * CLIGHT / 1e6) < 1e-6   # CLIGHT is in cm/s
+
+    @pytest.mark.parametrize("units,expected,rtol", [
+        ('cm^-1->K', 1.438776877, 1e-9),            # second radiation constant hc/k_B in cm K
+        ('cm^-1->eV', 1.239841984e-4, 1e-9),
+        ('K->cm^-1', 1 / 1.438776877, 1e-9),
+        ('eV->cm^-1', 8065.543937, 1e-9),
+        ('MHz->cm^-1', 1 / 29979.2458, 1e-12),
+    ])
+    def test_cm1_factors_against_codata(self, units, expected, rtol):
+        """Regression: cm^-1 conversions were 100x off (CLIGHT is already in cm/s)."""
+        assert float(unitconvert(1.0, units)) == pytest.approx(expected, rel=rtol)
+
+    def test_cm1_mT_consistent_with_MHz(self):
+        """cm^-1 -> mT agrees with cm^-1 -> MHz -> mT."""
+        a = unitconvert(1.0, 'cm^-1->mT', g=2.0)
+        b = unitconvert(unitconvert(1.0, 'cm^-1->MHz'), 'MHz->mT', g=2.0)
+        assert float(a) == pytest.approx(float(b), rel=1e-12)
+        assert float(unitconvert(a, 'mT->cm^-1', g=2.0)) == pytest.approx(1.0, rel=1e-12)
 
     def test_MHz_to_cm1_roundtrip(self):
         """MHz → cm^-1 → MHz should give identity."""
