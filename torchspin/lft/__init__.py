@@ -38,6 +38,7 @@ from .ligand_field import (AOM_MODES, Ligand, aom, aom_from_angles, aom_from_fra
 
 __all__ = [
     "aom", "aom_from_angles", "aom_from_frames", "aom_isotropic", "AOM_MODES", "bridge", "crystal_field", "ddn",
-    "ddnfit", "ddnmag", "ddnsus", "dipole", "dlsd5", "dn2sys", "dpn", "dpnfit", "dsoxf", "dtd", "fit", "grids", "Ligand", "ligand_field", "octahedron",
-    "orbital_matrix", "rotation", "tanabe_sugano", "tetrahedron", "units",
+    "ddnfit", "ddnloop", "ddnmag", "ddnpow", "ddnsus", "dipole", "dlsd5", "dn2sys", "dpn", "dpnfit", "dsoxf",
+    "dtd", "fit", "grids", "Ligand", "ligand_field", "octahedron", "orbital_matrix", "rotation", "tanabe_sugano",
+    "tetrahedron", "units",
 ]
