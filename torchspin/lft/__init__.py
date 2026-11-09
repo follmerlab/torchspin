@@ -6,6 +6,8 @@ Ported from telser-tools (``telser_tools_diff``).  Modules carry Telser's progra
 ``lft.ddnfit``        fit d^n parameters to band energies (DDNFIT)
 ``lft.ddnsus``        chi(T), chi T, mu_eff; and fits to them (DDNSUS)
 ``lft.ddnmag``        M(B, T); and fits to it (DDNMAG)
+``lft.dpn``           p^n ligand-field levels and doublet g (DPN); its own p-shell AOM/crystal field
+``lft.dpnfit``        fit p^n parameters to band energies (DPNFIT)
 ``lft.dsoxf``         single term + spin-orbit + low-symmetry field, d and f shells (DSOXF)
 ``lft.tanabe_sugano`` Tanabe-Sugano blocks and diagrams (DTANSUG)
 ``lft.fit``           joint fits of one model to bands, g, chi, M and EPR spectra (exact Jacobians)
@@ -24,13 +26,13 @@ derivatives), not ``torchspin._linalg.eigh``, whose gauge-zeroing backward is ri
 spectra but drops f'(lambda) tr(dH A) inside degenerate levels.
 """
 
-from . import bridge, ddn, ddnfit, ddnmag, ddnsus, dsoxf, fit, grids, ligand_field, tanabe_sugano, units
+from . import bridge, ddn, ddnfit, ddnmag, ddnsus, dpn, dpnfit, dsoxf, fit, grids, ligand_field, tanabe_sugano, units
 from .bridge import dn2sys
 from .ligand_field import (AOM_MODES, Ligand, aom, aom_from_angles, aom_from_frames, aom_isotropic, crystal_field,
                            octahedron, orbital_matrix, rotation, tetrahedron)
 
 __all__ = [
     "aom", "aom_from_angles", "aom_from_frames", "aom_isotropic", "AOM_MODES", "bridge", "crystal_field", "ddn",
-    "ddnfit", "ddnmag", "ddnsus", "dn2sys", "dsoxf", "fit", "grids", "Ligand", "ligand_field", "octahedron",
+    "ddnfit", "ddnmag", "ddnsus", "dn2sys", "dpn", "dpnfit", "dsoxf", "fit", "grids", "Ligand", "ligand_field", "octahedron",
     "orbital_matrix", "rotation", "tanabe_sugano", "tetrahedron", "units",
 ]
