@@ -1,0 +1,113 @@
+{
+"source": "telser-tools tests/reference/dpn_fortran.json (stdin of each reference run only)",
+"cases": {
+"p1_xf_zeta": {
+"stdin": "o.txt\np1_xf_zeta\n1\n300.0\n1.0 1.0 1.0\nX\n500.0\n100.0\ny\n0.0\nn\n6\nn\ny\n1\n6\nn\ny\ny\ny\n1\n5\n2\n6\n0.0\n",
+"returncode": 0
+},
+"p1_xf_field": {
+"stdin": "o.txt\np1_xf_field\n1\n300.0\n0.9 0.8 0.7\nX\n500.0\n100.0\ny\n20000.0\nn\n6\nn\ny\nn\ny\ny\n1\n6\nn\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\ny\ny\n1\n6\nn\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\ny\ny\n1\n6\nn\ny\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\n",
+"returncode": 0
+},
+"p1_porb_field": {
+"stdin": "o.txt\np1_porb_field\n1\n200.0\n0.8 0.9 0.7\nP\n1000.0\n0.0\n3000.0\ny\n30000.0\nn\n6\nn\ny\nn\ny\ny\n1\n6\nn\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\ny\ny\n1\n6\nn\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\ny\ny\n1\n6\nn\ny\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\n",
+"returncode": 0
+},
+"p1_aom_axial": {
+"stdin": "o.txt\np1_aom_axial\n1\n500.0\n1.0 1.0 1.0\nA\n2\nax1\n0.0\n0.0\n0.0\nax2\n180.0\n0.0\n0.0\n3\n5000.0\n1200.0\n1200.0\n5000.0\n1200.0\n1200.0\ny\ny\n0.0\nn\n6\nn\ny\n1\n6\nn\ny\ny\ny\n1\n5\n2\n6\n0.0\n",
+"returncode": 0
+},
+"p1_aom_tilted_nozeta": {
+"stdin": "o.txt\np1_aom_tilted_nozeta\n1\n0.0\n1.0 1.0 1.0\nA\n1\nL\n45.0\n0.0\n0.0\n1\n1000.0\ny\ny\n0.0\nn\n6\nn\ny\n1\n6\nn\ny\ny\ny\n1\n5\n2\n6\n0.0\n",
+"returncode": 0
+},
+"p1_aom_tilted": {
+"stdin": "o.txt\np1_aom_tilted\n1\n300.0\n1.0 1.0 1.0\nA\n3\nA\n35.0\n20.0\n0.0\nB\n110.0\n140.0\n25.0\nC\n75.0\n260.0\n0.0\n3\n5000.0\n600.0\n900.0\n3500.0\n400.0\n300.0\n4200.0\n800.0\n800.0\ny\ny\n0.0\nn\n6\nn\ny\n1\n6\nn\ny\ny\ny\n1\n5\n2\n6\n0.0\n",
+"returncode": 0
+},
+"p1_epr_range": {
+"stdin": "o.txt\np1_epr_range\n1\n300.0\n1.0 1.0 1.0\nX\n500.0\n100.0\ny\n5000.0\nn\n6\nn\ny\nn\nn\nn\ny\nn\nn\ny\ny\nn\ny\nF\n1\n5\n2\n40\n",
+"returncode": 0
+},
+"p5_xf_field": {
+"stdin": "o.txt\np5_xf_field\n5\n2000.0\n0.95 0.9 0.85\nX\n700.0\n-150.0\ny\n8000.0\nn\n6\nn\ny\nn\ny\ny\n1\n6\nn\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\ny\ny\n1\n6\nn\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\ny\ny\n1\n6\nn\ny\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\n",
+"returncode": 0
+},
+"p5_aom_inplane_field": {
+"stdin": "o.txt\np5_aom_inplane_field\n5\n1500.0\n1.0 1.0 1.0\nA\n4\nax\n0.0\n0.0\n0.0\ne1\n90.0\n0.0\n0.0\ne2\n90.0\n100.0\n20.0\ne3\n90.0\n230.0\n0.0\n3\n6000.0\n1000.0\n1000.0\n4000.0\n500.0\n700.0\n4500.0\n600.0\n300.0\n3000.0\n200.0\n200.0\ny\ny\n10000.0\nn\n6\nn\ny\nn\ny\ny\n1\n6\nn\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\ny\ny\n1\n6\nn\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\ny\ny\n1\n6\nn\ny\ny\ny\n1\n5\n2\n6\n0.0\ny\nF\n1\n5\n2\n6\n",
+"returncode": 0
+},
+"p5_porb": {
+"stdin": "o.txt\np5_porb\n5\n1800.0\n1.0 1.0 1.0\nP\n0.0\n400.0\n2500.0\ny\n0.0\nn\n6\nn\ny\n1\n6\nn\ny\ny\ny\n1\n5\n2\n6\n0.0\n",
+"returncode": 0
+},
+"p2_free_ion": {
+"stdin": "o.txt\np2_free_ion\n2\n28.0\n1.0 1.0 1.0\n46000.0\n0.0\nX\n0.0\n0.0\ny\n0.0\nn\n15\nn\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\n",
+"returncode": 0
+},
+"p2_heavy_trees": {
+"stdin": "o.txt\np2_heavy_trees\n2\n5000.0\n1.0 1.0 1.0\n32000.0\n-150.0\nX\n0.0\n0.0\ny\n0.0\nn\n15\nn\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\n",
+"returncode": 0
+},
+"p2_xf": {
+"stdin": "o.txt\np2_xf\n2\n800.0\n1.0 1.0 1.0\n40000.0\n-200.0\nX\n1500.0\n300.0\ny\n0.0\nn\n15\nn\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\n",
+"returncode": 0
+},
+"p2_xf_field": {
+"stdin": "o.txt\np2_xf_field\n2\n800.0\n0.9 0.95 0.8\n40000.0\n0.0\nX\n1500.0\n300.0\ny\n20000.0\nn\n15\nn\ny\nn\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\n",
+"returncode": 0
+},
+"p2_aom_inplane_field": {
+"stdin": "o.txt\np2_aom_inplane_field\n2\n500.0\n1.0 1.0 1.0\n30000.0\n0.0\nA\n4\nax\n0.0\n0.0\n0.0\ne1\n90.0\n0.0\n0.0\ne2\n90.0\n100.0\n20.0\ne3\n90.0\n230.0\n0.0\n3\n6000.0\n1000.0\n1000.0\n4000.0\n500.0\n700.0\n4500.0\n600.0\n300.0\n3000.0\n200.0\n200.0\ny\ny\n15000.0\nn\n15\nn\ny\nn\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\n",
+"returncode": 0
+},
+"p2_aom_tilted": {
+"stdin": "o.txt\np2_aom_tilted\n2\n500.0\n1.0 1.0 1.0\n30000.0\n0.0\nA\n3\nA\n35.0\n20.0\n0.0\nB\n110.0\n140.0\n25.0\nC\n75.0\n260.0\n0.0\n3\n5000.0\n600.0\n900.0\n3500.0\n400.0\n300.0\n4200.0\n800.0\n800.0\ny\ny\n0.0\nn\n15\nn\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\n",
+"returncode": 0
+},
+"p2_porb_pop": {
+"stdin": "o.txt\np2_porb_pop\n2\n600.0\n1.0 1.0 1.0\n35000.0\n0.0\nP\n300.0\n0.0\n2000.0\ny\n10000.0\ny\n30.0\n0.001\ny\ny\ny\n9.5\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\n",
+"returncode": 0
+},
+"p2_coefficients": {
+"stdin": "o.txt\np2_coefficients\n2\n700.0\n1.0 1.0 1.0\n35000.0\n0.0\nX\n-800.0\n200.0\ny\n0.0\nn\n8\ny\ny\n1\n15\ny\n1\n15\ny\ny\n1\n14\n2\n15\n0.0\n",
+"returncode": 0
+},
+"p4_xf": {
+"stdin": "o.txt\np4_xf\n4\n1500.0\n1.0 1.0 1.0\n45000.0\n100.0\nX\n1000.0\n200.0\ny\n0.0\nn\n15\nn\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\n",
+"returncode": 0
+},
+"p4_aom_inplane_field": {
+"stdin": "o.txt\np4_aom_inplane_field\n4\n1200.0\n1.0 1.0 1.0\n38000.0\n0.0\nA\n4\nax\n0.0\n0.0\n0.0\ne1\n90.0\n0.0\n0.0\ne2\n90.0\n100.0\n20.0\ne3\n90.0\n230.0\n0.0\n3\n6000.0\n1000.0\n1000.0\n4000.0\n500.0\n700.0\n4500.0\n600.0\n300.0\n3000.0\n200.0\n200.0\ny\ny\n12000.0\nn\n15\nn\ny\nn\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\n",
+"returncode": 0
+},
+"p4_porb_field": {
+"stdin": "o.txt\np4_porb_field\n4\n2000.0\n0.85 0.9 0.95\n40000.0\n0.0\nP\n0.0\n500.0\n1800.0\ny\n25000.0\nn\n15\nn\ny\nn\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\ny\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\ny\nF\n1\n14\n2\n15\n",
+"returncode": 0
+},
+"p4_aom_tilted": {
+"stdin": "o.txt\np4_aom_tilted\n4\n1200.0\n1.0 1.0 1.0\n38000.0\n0.0\nA\n3\nA\n35.0\n20.0\n0.0\nB\n110.0\n140.0\n25.0\nC\n75.0\n260.0\n0.0\n3\n5000.0\n600.0\n900.0\n3500.0\n400.0\n300.0\n4200.0\n800.0\n800.0\ny\ny\n0.0\nn\n15\nn\ny\n1\n15\nn\ny\ny\ny\n1\n14\n2\n15\n0.0\n",
+"returncode": 0
+},
+"p3_free_heavy": {
+"stdin": "o.txt\np3_free_heavy\n3\n5000.0\n1.0 1.0 1.0\n30000.0\n0.0\nX\n0.0\n0.0\ny\n0.0\nn\n20\nn\ny\n1\n20\nn\ny\ny\ny\n1\n19\n2\n20\n0.0\n",
+"returncode": 0
+},
+"p3_xf_field": {
+"stdin": "o.txt\np3_xf_field\n3\n1500.0\n0.9 0.9 0.8\n36000.0\n50.0\nX\n-800.0\n200.0\ny\n10000.0\nn\n20\nn\ny\nn\ny\ny\n1\n20\nn\ny\ny\n1\n19\n2\n20\n0.0\ny\nF\n1\n19\n2\n20\ny\ny\n1\n20\nn\ny\ny\n1\n19\n2\n20\n0.0\ny\nF\n1\n19\n2\n20\ny\ny\n1\n20\nn\ny\ny\ny\n1\n19\n2\n20\n0.0\ny\nF\n1\n19\n2\n20\n",
+"returncode": 0
+},
+"p3_porb": {
+"stdin": "o.txt\np3_porb\n3\n900.0\n1.0 1.0 1.0\n33000.0\n0.0\nP\n0.0\n600.0\n1500.0\ny\n0.0\nn\n20\nn\ny\n1\n20\nn\ny\ny\ny\n1\n19\n2\n20\n0.0\n",
+"returncode": 0
+},
+"p3_aom_inplane_field": {
+"stdin": "o.txt\np3_aom_inplane_field\n3\n1000.0\n1.0 1.0 1.0\n34000.0\n0.0\nA\n4\nax\n0.0\n0.0\n0.0\ne1\n90.0\n0.0\n0.0\ne2\n90.0\n100.0\n20.0\ne3\n90.0\n230.0\n0.0\n3\n6000.0\n1000.0\n1000.0\n4000.0\n500.0\n700.0\n4500.0\n600.0\n300.0\n3000.0\n200.0\n200.0\ny\ny\n10000.0\nn\n20\nn\ny\nn\ny\ny\n1\n20\nn\ny\ny\n1\n19\n2\n20\n0.0\ny\nF\n1\n19\n2\n20\ny\ny\n1\n20\nn\ny\ny\n1\n19\n2\n20\n0.0\ny\nF\n1\n19\n2\n20\ny\ny\n1\n20\nn\ny\ny\ny\n1\n19\n2\n20\n0.0\ny\nF\n1\n19\n2\n20\n",
+"returncode": 0
+},
+"p3_aom_tilted": {
+"stdin": "o.txt\np3_aom_tilted\n3\n1000.0\n1.0 1.0 1.0\n34000.0\n0.0\nA\n3\nA\n35.0\n20.0\n0.0\nB\n110.0\n140.0\n25.0\nC\n75.0\n260.0\n0.0\n3\n5000.0\n600.0\n900.0\n3500.0\n400.0\n300.0\n4200.0\n800.0\n800.0\ny\ny\n0.0\nn\n20\nn\ny\n1\n20\nn\ny\ny\ny\n1\n19\n2\n20\n0.0\n",
+"returncode": 0
+}
+}
+}
