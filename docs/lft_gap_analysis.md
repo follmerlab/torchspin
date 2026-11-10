@@ -78,7 +78,7 @@ The tolerances are 1.5–2× the calibrated difference:
 | Stevens B40 O₄⁰ + B42 O₄² + B44 O₄⁴ | as is | `B = [None, [[B44,0,B42,0,B40,0,0,0,0]]]` | Telser's O_k^q equal `stev` (telser-tools test) |
 | Telser's a, F, b (cubic, axial, rhombic 4th order) | converter | `abf_to_stevens`: B40 = a/120 + F/180, B42 = b/3, B44 = a/24 | checked: S = 5/2 Γ₇ at −2a, Γ₈ at +a |
 | "Bnm" input form with the Fortran's 5·B44 (DDZHQ-06) | not needed | exact mode reads B44 as the Stevens coefficient | |
-| third-order Zeeman μ_B Σ u_k B_k C_k, C_k = S_k³ − (3X−1)/5 S_k | converter | `third_order_zeeman_ham` → `SpinSystem.Ham['132','134']` | Projected numerically through `ham()`'s (H0, μ) path, exact to 1e-15. Two differences: (1) the Ham coefficients are detached inside `ham_ezho` (no gradient w.r.t. u); (2) torchspin's transition moment includes u (−dH/dB), Telser's EPRTRANS does not (relation tested). See bug B11. |
+| third-order Zeeman μ_B Σ u_k B_k C_k, C_k = S_k³ − (3X−1)/5 S_k | converter | `third_order_zeeman_ham` → `SpinSystem.Ham['132','134']` | Projected numerically through `ham()`'s (H0, μ) path, exact to 1e-15. Two differences: (1) the Ham coefficients are detached inside `ham_ezho` (no gradient w.r.t. u); (2) torchspin's transition moment includes u (−dH/dB), Telser's EPRTRANS does not (relation tested). Bug B11 (fixed in 0.6.7). |
 | second-order Zeeman w(μ_B B·S)² | **gap** | — | `ham_ezho` has lB = 2 terms, but `levels`, `resfields` and `pepper` use only H0 − B·μ, so the term would be silently dropped. The converter raises (`strict=False`: drops with a warning). **Proposal:** a field-quadratic operator G2 carried with (H0, μ). `levels` would evaluate H0 − B·μ + B² n·G2·n directly. `resfields` cannot use its eigenfield/linear-H machinery, so it would need bracketing plus Newton, as in telser-tools `spin.resonance_fields`. Medium-size change to existing modules. |
 | A principal values + McGavin Euler angles | as is | `A`, `AFrame` (same angles, radians), or full R diag Rᵀ (`full_tensors=True`) | Frames leave the autograd graph (B3); full tensors keep it |
 | U Σ I_k C_k(S) (I·S³ hyperfine, S ≥ 3/2) | **gap** | — | No SpinSystem slot. **Proposal:** a generic "extra operator" term (H0 += Σ coeff·op) in `ham`, or a dedicated `Ham`-like entry for spin-rank-3 × nuclear-rank-1 couplings. Small in `ham.py`, but that is an existing module. |
@@ -171,7 +171,9 @@ The tolerances are 1.5–2× the calibrated difference:
 
 ## torchspin defects found (logged as new entries in the mol2g bug log)
 
-- **B11.** `ham(sys, B0)` adds the linear higher-order Zeeman terms (`Ham['1..']`) with the sign
-  opposite to the (H0, μ) path (`ham(sys)` adds G1 to μ, and H = H0 − B·μ). `levels`, `resfields`
-  and `pepper` use the (H0, μ) path. The converter calibrates its `Ham` rows on that path, so it is
-  right for them. A strict xfail test flags when this changes.
+- **B11 (fixed in torchspin 0.6.7).** `ham(sys)` added the linear higher-order Zeeman terms
+  (`Ham['1..']`) to μ with the sign opposite to `ham(sys, B0)` (it added G1 to μ, and H = H0 − B·μ).
+  `levels`, `resfields` and `pepper` use the (H0, μ) path. 0.6.7 changed that path to −G1, so both
+  paths now agree, and `test_ham_full_field_path_agrees_with_moment_path_for_ham1xx` checks it. The
+  converter calibrates its `Ham` rows on the (H0, μ) path at run time, so it followed the fix
+  without code changes.

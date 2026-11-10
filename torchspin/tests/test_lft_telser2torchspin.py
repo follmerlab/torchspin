@@ -247,9 +247,8 @@ def test_epr_experiment_and_ordering():
         math.exp(0.5 * math.cos(ph) ** 2 - 1.2 * math.cos(th) ** 2))
 
 
-@pytest.mark.xfail(strict=True, reason="mol2g bug B11: ham(sys, B0) adds the Ham1xx (linear higher-order Zeeman) "
-                                       "term with the sign opposite to the (H0, mu) path used by levels/resfields/pepper")
 def test_ham_full_field_path_agrees_with_moment_path_for_ham1xx():
+    """Bug B11, fixed in torchspin 0.6.7: ham(sys, B0) == H0 - B.mu for the converter's Ham1xx rows."""
     sy = t2t.spin2sys(s=1.5, u=(0.05, 0.02, 0.03))
     H0, mx, my, mz = ham(sy)
     B = [10.0, 20.0, 30.0]

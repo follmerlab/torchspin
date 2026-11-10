@@ -264,8 +264,8 @@ def _u_coefficients(s: float) -> tuple[tuple[tuple[float, ...], tuple[float, ...
     """For k = x, y, z: the ('132', '134') Ham rows whose linear-in-B part of torchspin's H is B_k C_k (MHz/mT).
 
     Found by projection through :func:`torchspin.ham.ham` (the (H0, mu) path that ``levels``,
-    ``resfields`` and ``pepper`` use), so the map follows whatever sign that path applies (see bug B11 in
-    the gap analysis: ``ham(sys, B0)`` adds the Ham1xx term with the opposite sign).
+    ``resfields`` and ``pepper`` use), so the map follows whatever sign that path applies. Since torchspin
+    0.6.7 that path and ``ham(sys, B0)`` agree (bug B11 in the gap analysis).
     """
     from torchspin.ham import ham
 
