@@ -1,0 +1,177 @@
+# Telser's spin-Hamiltonian programs vs torchspin: gap analysis (`torchspin.lft` M5)
+
+Telser's spin family is the shared spin core and four programs, ported to Python in telser-tools:
+
+- DDZHQ: levels and EPR/NMR transitions at one field.
+- DDPOWH: powder EPR, FDMR and ENDOR.
+- DJDZE: levels and EPR transitions of an exchange-coupled dimer.
+- DDPOWJ: powder EPR of a dimer.
+
+These programs mostly duplicate physics that torchspin already has (`ham`, `levels`, `resfields`,
+`pepper`, `salt`, `endorfrq`, multi-electron `SpinSystem`s with `ee`/`ee2`). M5 therefore does not port
+them again. It adds converters from Telser's conventions to torchspin objects
+(`torchspin/lft/telser2torchspin.py`), parity tests against telser-tools
+(`torchspin/tests/test_lft_telser2torchspin.py`), and this table.
+
+Status legend:
+
+- **as is**: torchspin has it with the same meaning; the converter only changes units and layout.
+- **converter**: mapped by `telser2torchspin`, with the stated difference or condition.
+- **gap**: no torchspin counterpart. Small, clear gaps are filled in `telser2torchspin` (marked
+  *filled*); larger ones are proposals, with what a new function would need.
+- **not needed**: a Fortran artifact, an I/O feature, or a numerical shortcut that has no physics to
+  carry over.
+
+The "exact mode" of telser-tools (the corrected physics, `mode="exact"`) is the reference throughout.
+The Fortran quirks it documents (findings DDZHQ-01 … DDPOWJ-12) are not ported and not mapped; see
+`telser-tools/docs/FINDINGS.md`.
+
+## How the parity was measured
+
+| quantity | inputs | agreement |
+|---|---|---|
+| DDZHQ levels at every field cycle | all 31 golden inputs (w and U set to 0 in both programs for the 5 inputs that use them) | rel 1e-12 with telser-tools' constants passed through `constants=` (observed ≤ 3e-15); 5e-9 with torchspin's CODATA 2022 μ_B |
+| DDZHQ B₁-averaged probabilities, all pairs | same | 1e-9 of the largest, summed over degenerate levels |
+| DJDZE levels (with the biquadratic constant) and probabilities | all 50 golden inputs | rel 1e-12 / 1e-9 |
+| Resonance fields, intensities (`resfields`) | S = ½ + ¹⁴N, ⁶³Cu (rotated A, Q); S = 3/2 (D ≫ hν, u, ¹H); S = 5/2 (B4q, u) | fields rel 1e-7 (resfields' convergence), intensities rel 1e-6 |
+| ENDOR frequencies and intensities (`endorfrq`) | 3 DDZHQ inputs | 1e-8 |
+| DJDZE spin magnitudes (`spin_projections`) | every DJDZE input that prints them | 1e-9, summed over degenerate levels |
+| DDPOWH/DDPOWJ powder spectra (`pepper`, `salt`) | 17 comparisons | max abs. difference after normalizing both spectra to their maximum; tolerances below |
+
+The powder tolerances do not test the converter, which is exact (the levels and probabilities above
+show that). They measure how differently the two programs integrate the same physics. Each tolerance
+was calibrated by refining both grids:
+
+- **Orientation grid.** Telser averages over the igloo grid with solid-angle weights. Pepper
+  interpolates and projects. For narrow lines Telser's average converges slowly: S = 1, D = 0.2 cm⁻¹,
+  W = 30 MHz is 44 %, 16 % and 8 % from pepper at igloo 20, 40 and 80. The tests therefore use igloo
+  ≥ 40 and line widths of at least ~5 field steps, at which telser-tools is self-converged (igloo N
+  vs 2N) to ≤ 0.3 %.
+- **Field step.** Telser evaluates the frequency-domain line at each field point. Pepper puts stick
+  intensities into bins and convolves. The difference scales as (field step/FWHM)². Cu(II) with 6 G
+  steps differs by 2.6 % at a 14 G FWHM and by 0.5 % at 28 G.
+- **Line shape in field.** Telser's field-swept line is the frequency line mapped through the exact
+  ν_ij(B). Pepper linearizes ν_ij(B) at the resonance field (HStrain/(dν/dB)). The two differ where
+  the levels curve within a line width: 1.6 % for S = 1, D = 0.3 cm⁻¹ at Q band with W = 200 MHz, and
+  2.5 % in the derivative of a rhombic S = ½ pattern.
+- **Looping transitions.** With D ≈ hν (S = 1, D = 0.2–0.3 cm⁻¹ at X band) some transitions turn
+  around in field (dν/dB = 0). Pepper's field width W/|dν/dB| diverges there; Telser's field-point line
+  does not. The difference is 4.5–5.6 % with both grids refined. The same mapping with D ≪ hν agrees
+  to 0.6 %. We attribute the difference to pepper's linearization; it was not traced further.
+- **Moment.** Telser's EPR moment is g·S. torchspin's is −dH/dB, which also contains the third-order
+  Zeeman u term and the nuclear moment. With u = 0.05 the powder pattern differs by a few %; see the
+  `u` row.
+
+The tolerances are 1.5–2× the calibrated difference:
+
+- 0.3 % for rhombic S = ½ and the Cu(II)₂ triplet;
+- 1 % for Cu(II), S = 1 with D ≪ hν, and the Cu(II)₂ triplet with populations;
+- 2.5–4 % for derivatives, S = 1 at 2 K, and a general d vector;
+- 7–8 % for S = 3/2 with u and for S = 1 with D ≈ hν.
+
+## Spin core: Hamiltonian (`telser_tools.spin`, DDZHQ and DDPOWH)
+
+| Telser feature | status | torchspin / converter | notes |
+|---|---|---|---|
+| g = (gx, gy, gz), g frame = molecular frame | as is | `SpinSystem.g` | |
+| (D/3)O₂⁰ + E O₂² (cm⁻¹) | as is | `D = [−D/3+E, −D/3−E, 2D/3]` (MHz) | |
+| Stevens B40 O₄⁰ + B42 O₄² + B44 O₄⁴ | as is | `B = [None, [[B44,0,B42,0,B40,0,0,0,0]]]` | Telser's O_k^q equal `stev` (telser-tools test) |
+| Telser's a, F, b (cubic, axial, rhombic 4th order) | converter | `abf_to_stevens`: B40 = a/120 + F/180, B42 = b/3, B44 = a/24 | checked: S = 5/2 Γ₇ at −2a, Γ₈ at +a |
+| "Bnm" input form with the Fortran's 5·B44 (DDZHQ-06) | not needed | exact mode reads B44 as the Stevens coefficient | |
+| third-order Zeeman μ_B Σ u_k B_k C_k, C_k = S_k³ − (3X−1)/5 S_k | converter | `third_order_zeeman_ham` → `SpinSystem.Ham['132','134']` | Projected numerically through `ham()`'s (H0, μ) path, exact to 1e-15. Two differences: (1) the Ham coefficients are detached inside `ham_ezho` (no gradient w.r.t. u); (2) torchspin's transition moment includes u (−dH/dB), Telser's EPRTRANS does not (relation tested). See bug B11. |
+| second-order Zeeman w(μ_B B·S)² | **gap** | — | `ham_ezho` has lB = 2 terms, but `levels`, `resfields` and `pepper` use only H0 − B·μ, so the term would be silently dropped. The converter raises (`strict=False`: drops with a warning). **Proposal:** a field-quadratic operator G2 carried with (H0, μ). `levels` would evaluate H0 − B·μ + B² n·G2·n directly. `resfields` cannot use its eigenfield/linear-H machinery, so it would need bracketing plus Newton, as in telser-tools `spin.resonance_fields`. Medium-size change to existing modules. |
+| A principal values + McGavin Euler angles | as is | `A`, `AFrame` (same angles, radians), or full R diag Rᵀ (`full_tensors=True`) | Frames leave the autograd graph (B3); full tensors keep it |
+| U Σ I_k C_k(S) (I·S³ hyperfine, S ≥ 3/2) | **gap** | — | No SpinSystem slot. **Proposal:** a generic "extra operator" term (H0 += Σ coeff·op) in `ham`, or a dedicated `Ham`-like entry for spin-rank-3 × nuclear-rank-1 couplings. Small in `ham.py`, but that is an existing module. |
+| Q principal values + Euler angles (traceless, MHz) | as is | `Q`, `QFrame` | |
+| quadrupole echo of DDZHQ (P∥ = 3/2 Q_zz, η, e²qQ/h) | gap, *filled* | `quadrupole_echo(Q, I)` | Standard ordering \|Q_zz\| ≥ \|Q_yy\| ≥ \|Q_xx\| (the Fortran's η ≤ 0 is finding DDZHQ-08); `[e2qQ, eta]` is SpinSystem's two-value Q form (round trip tested) |
+| g_N from Telser's (corrected) nuclide table | converter | `Nucs = [isotope]`, `gnscale = g_N/nucgval` | Unknown labels get a stand-in isotope with the same I (`isotope_for`). The tables differ for some metals (B10). |
+| −g_N μ_N B·I | as is | nuclear Zeeman (same sign) | |
+| field direction (θ, φ) in the g frame | as is | `levels(sys, phi, theta, B)`, `resfields(..., phi, theta)` | |
+| S up to 9/2, I up to 9/2 | as is | | |
+| constants (CODATA 2018 / Telser's BEMHZ = 1.3996) | converter | `constants=` rescales g, u, g_N and cm⁻¹ → MHz | For parity tests. Without it, torchspin's CODATA 2022 μ_B is used (1.4e-9 apart). |
+| S = 0 (nuclear spin only) | converter | `SpinSystem(S=[])` with Q and nuclear Zeeman | levels via `ham`; spectra: see DDPOWH NMR/NQR |
+
+## Spin core: transitions
+
+| Telser feature | status | torchspin | notes |
+|---|---|---|---|
+| B₁-averaged perpendicular P = (\|⟨i\|e₁·M\|j⟩\|² + \|⟨i\|e₂·M\|j⟩\|²)/2 | as is | rate (Σ\|μ_k\|² − \|n·μ\|²)/2 = μ_B² P | Telser leaves out the nuclear moment by default (≈1e-3 for ¹H) and the u term (see above) |
+| parallel mode (H1 mode < 0) | as is | `Experiment(Mode='parallel')` | pepper vs DDPOWH tested |
+| mixed mode P⊥ + r P∥ (H1 mode r > 0) | converter (relation) | two runs, perpendicular + r × parallel | Converter refuses the mixed mode itself (strict); the relation is tested |
+| zero-field isotropic average (1/3)Σ\|M_k\|² | gap (trivial) | from `ham` operators | Used in the tests; not worth a function |
+| EPRTRANS/NMRTRANS (moduli, ρ loop, H1MODE = gav; DDZHQ-01…03, DDPOWH-01) | not needed | — | Fortran defects |
+| NMR probability (operator I, no g_N) | as is | `endorfrq` intensity = (g_N μ_N)² P | tested |
+| hyperfine enhancement option (I − (μ_B/g_N μ_N) g·S) | gap | — | `endorfrq` has no enhancement option (Telser and EasySpin default to none) |
+| population weights, 100 MHz microwave Lorentzian, listing rules (P ≥ 0.1, mS manifolds, K numbering) | not needed | levels/vectors from `ham` | DDZHQ/DJDZE report formatting; recomputed in a few lines when needed |
+| resonance fields | as is | `resfields` | intensity = μ_B² P/(2I+1)/\|dE/dB\| (tested) |
+
+## DDPOWH: powder EPR, FDMR, ENDOR
+
+| Telser feature | status | torchspin | notes |
+|---|---|---|---|
+| field-swept EPR (TRTYP E), G or T | converter | `pepper`, `epr_experiment` (Range in mT, npts + 1 points) | field axes equal to 1e-12 (tested) |
+| Gaussian frequency-domain half width W(n) = √Σ W_k² n_k² (HWHM, MHz) | as is | `HStrain = 2W` | |
+| Lorentzian frequency-domain width | **gap** | — | `HStrain` is Gaussian; `lw` Lorentzian is in field units. For FDMR an isotropic W maps to `lw = [0, 2W]` (frequency sweep). **Proposal:** a Lorentzian component of `HStrain` (EasySpin has none either). Converter raises. |
+| line cutoff at ICUTOFF half widths (Fortran: √ICUTOFF, DDPOWH-05) | not needed | pepper convolves fully | A cut Lorentzian loses area: (2/π)·atan(ICUTOFF) is kept |
+| exact derivative d/dB (Fortran: d/dν, DDPOWH-02) | as is | `Harmonic = 1` | tested |
+| Flygare factor ν (Gaussian) or ν³/ν₀² (Lorentzian) | converter (relation) | none in EasySpin | Compare with telser-tools `frequency_factor=False`. Tested: y_ff = hν_mw·y to O(W/ν). |
+| strain: W (H/Hset)^b (1 + ½[√Σ\|c_bi\|²w_b + √Σ\|c_bj\|²w_b]), w_b = WMS(mS) + WMI(mI) | **gap** | — | No torchspin width depends on the eigenvector composition of the two levels. **Proposal:** a "level strain" width in pepper's width stage: per transition, the basis weights of both levels at the resonance field (already available in `resfields` vectors), W_ij = W(n)(B/Hset)^b(1 + …). Alternatively, port telser-tools' differentiable DDPOWH (`telser_tools_diff.ddpowh`, field-point evaluation, forward-mode Jacobians) as `lft.ddpowh`. The (H/Hset)^b part alone with b = 1 resembles `gStrain` only for isotropic g. Converter raises. |
+| Boltzmann populations (normalized, exact mode; Fortran unnormalized: DDPOWH-04) | as is | `Experiment.Temperature` | tested (S = 1, 2 K, Q band) |
+| FDMR (TRTYP F), cm⁻¹ or THz | converter | `pepper` frequency sweep (`Field`, `mwRange` in GHz) | Zero-field FDMR: **gap**, torchspin needs Field > 0. The converter raises (`strict=False` uses 1e-6 mT). |
+| ENDOR (TRTYP N), H or g observation, centered axis | converter | `salt(Field, ExciteWidth≈0, HStrain = 2W; lw_mhz = 2w)` | Telser's ENDOR intensity also has the ν_NMR (Flygare) factor, NMR-pair populations p_i − p_j and an anisotropic NMR width (salt takes one lw; the x value is used). salt labels bins by their lower edge (half-bin shift). Tested at 0.6 %. |
+| ENDOR selection Σ P_epr f(ν_ij − ν_mw) over all EPR pairs | as is | salt's orientation selection | same model |
+| NMR/NQR (S = 0), shielding σ in kHz | **gap** | `SpinSystem(S=[])` for levels | No powder NMR/NQR simulator. **Proposal:** a small function (grid × eigh × \|⟨i\|I\|j⟩\|² × line) on `SpinSystem(S=[])`. Shielding: Telser's σ_k (as a frequency shift at the field) would map to `SpinSystem.sigma`, whose torchspin semantics (a multiplicative factor on g_N B, default 1) need checking first. |
+| igloo grid, octant/hemisphere (NROT) (Fortran φ windows: DDPOWH-03) | not needed | pepper's grid and symmetry (`hamsymm`) | Set `GridSymmetry` explicitly when differentiating (B1) |
+| angle ranges θ/φ (non-powder) | **gap** | — | pepper has crystal orientations but no restricted powder grid. **Proposal:** user-supplied orientation list + weights in pepper. |
+| partial orientation ORFACT = exp(λx cos²φ + λz cos²θ) | converter | `Experiment.Ordering = ordering(lam_x, lam_z)` | Field at θ = β, φ = π − γ in EasySpin's Euler angles. Weight function tested; not tested against a DDPOWH spectrum, because Telser applies ORFACT only on a restricted (non-powder) grid. |
+| ⟨g₁²⟩ normalization | not needed | | constant divisor |
+| mS manifold ranges (pair selection) | **gap** | — | pepper has no transition selection (EasySpin's `Opt.Transitions` is not ported). Default ranges select all pairs. |
+| H1 mode, NRHO | converter | `Mode` | NRHO only matters for EPRTRANS |
+| WinEPR/Bruker output, plot files | not needed | | |
+
+## Dimer: DJDZE and DDPOWJ (`telser_tools.dimer`)
+
+| Telser feature | status | torchspin / converter | notes |
+|---|---|---|---|
+| isotropic exchange **+J S₁·S₂** (J > 0 antiferromagnetic) | as is | `ee = J·1` (MHz) | Same sign as EasySpin. `telser_J(J, '-2J')` converts H = −2J′S₁·S₂ (J = −2J′), and also '−J', '+2J'. Tested: triplet J above the singlet. |
+| biquadratic j[(S₁·S₂)² − X₁X₂/3] | converter | `ee2 = j`, levels − j X₁X₂/3 (`dimer_energy_offset`) | Exact up to the constant; Fortran's imaginary cross term (DJDZE-02) not mapped |
+| quadrupolar 24 JQ T₂(S₁)·T₂(S₂) (exact form) | converter | `ee2 += 24 JQ`, `ee += 12 JQ`, offset −8 JQ X₁X₂ | identity T₂·T₂ = (S₁·S₂)² + ½S₁·S₂ − X₁X₂/3; the Fortran's non-invariant form (DJDZE-03) not mapped |
+| dipolar Ddip, Edip + Euler angles | converter | full 3×3 `ee` (graph-safe rotation) | |
+| antisymmetric exchange d·(S₁ × S₂) ("JA") | converter | antisymmetric part of `ee` | closed form tested |
+| site g, D principal values; site-2 Euler angles (shared in DJDZE, separate in DDPOWJ) | as is | `gFrame`/`DFrame` or full tensors | |
+| site third-order Zeeman μ (S ≥ 3/2) | converter | `Ham` row per electron | as u above |
+| site 4th order (molecular frame only) | as is | `B` rows per electron | rotated site with B4q raises, as in Telser |
+| S = 0 site | converter | one-electron SpinSystem | |
+| spin magnitudes ⟨S_i⟩·n per level (Fortran Σ⟨S_k⟩n_k²: DJDZE-07) | gap, *filled* | `spin_projections(sys, B, n)` | tested against all DJDZE inputs that print them |
+| NSMAX, population cutoff, listing, g_obs, microwave weighting | not needed | | report |
+| DDPOWJ powder spectrum | converter | `pepper` with `Options(Threshold=0)` | default pruning drops weak singlet–triplet lines (6 %) |
+| DDPOWJ strain: basis weights WMS₁(m₁)·WMS₂(m₂) (product), (H/Hset)^b | **gap** | — | Same proposal as the DDPOWH strain. The product form is Telser's model. In exact mode an S = ½ partner (WMS = 0 there) makes every weight 0, so only (H/Hset)^b remains; with b = 0 the strain run equals the no-strain run (tested). The Fortran sets WMS = 1 for S = ½, which doubles every width (DDPOWJ-10). |
+| DDPOWJ level ranges (all pairs i < j by default) | gap | — | as DDPOWH |
+| DDPOWJ Lorentzian, cutoff, Flygare, populations, octant (DDPOWJ-06 … -11) | as DDPOWH | | Octant with general d (DDPOWJ-11): pepper picks the symmetry itself |
+
+## Proposals, by size
+
+1. **Small, done here:** `quadrupole_echo`, `spin_projections`, the J-convention helper, the
+   third-order Zeeman `Ham` map, the ORFACT ordering function.
+2. **Small, but they edit existing torchspin modules (not done):**
+   - an extra-operator hook in `ham` for U (I·S³);
+   - a hyperfine-enhancement option in `endorfrq`;
+   - Field = 0 in frequency sweeps;
+   - a transition (level-range) selection in `pepper`, like EasySpin's `Opt.Transitions`.
+3. **Medium:**
+   - the field-quadratic w term in `levels`/`resfields`/`pepper`;
+   - a Lorentzian `HStrain`;
+   - restricted orientation grids;
+   - a powder NMR/NQR function for S = 0.
+4. **Large:** Telser's level-strain width (DDPOWH, DDPOWJ). The cleanest route is porting
+   `telser_tools_diff.ddpowh`/`ddpowj` (field-point evaluation, already differentiable and validated
+   at 1e-10 against telser-tools) as `lft.ddpowh`/`lft.ddpowj`, not a change to pepper. Those ports
+   also give exact field-swept line shapes where pepper's linearization is visible (strongly curved
+   levels, broad lines).
+
+## torchspin defects found (logged as new entries in the mol2g bug log)
+
+- **B11.** `ham(sys, B0)` adds the linear higher-order Zeeman terms (`Ham['1..']`) with the sign
+  opposite to the (H0, μ) path (`ham(sys)` adds G1 to μ, and H = H0 − B·μ). `levels`, `resfields`
+  and `pepper` use the (H0, μ) path. The converter calibrates its `Ham` rows on that path, so it is
+  right for them. A strict xfail test flags when this changes.
