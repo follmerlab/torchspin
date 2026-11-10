@@ -165,14 +165,16 @@ The tolerances are 1.5–2× the calibrated difference:
    give exact field-swept line shapes where pepper's linearization shows (strongly curved levels, broad
    lines).
 3. **Medium, done (lft only):** the powder NMR/NQR function for S = 0 (`lft.ddpowh.nmr`).
-4. **Core changes, opt-in, one branch each off main (item C; API proposals first):**
-   - the field-quadratic w term in `levels`/`resfields`/`pepper` (C1);
-   - an extra-operator hook in `ham` for U (I·S³) (C2);
-   - a hyperfine-enhancement option in `endorfrq` (C3);
-   - Field = 0 in frequency sweeps (C4);
-   - a transition (level-range) selection in `pepper`, like EasySpin's `Opt.Transitions` (C5);
-   - a Lorentzian `HStrain` (C6);
-   - restricted orientation grids in `pepper` (C7).
+4. **Core changes, opt-in, one branch each off main (draft PRs, default bit-identical):**
+   - field-quadratic/cubic `Sys.Ham` terms in `levels`/`resfields`/`pepper`: `Options.QuadraticZeeman` (0.7.1, #21);
+   - extra field-independent operators: `SpinSystem.H0Extra` (0.7.2, #22), used for U;
+   - hyperfine enhancement in `endorfrq`/`salt`: `Options.Enhancement` (0.7.3, #23);
+   - Field = 0 in frequency sweeps and `salt`: `Options.ZeroField` (0.7.4, #24);
+   - transition selection in `pepper`: `Options.Transitions` (0.7.5, #25);
+   - user orientation lists in `pepper`: `Exp.Orientations`/`OrientationWeights` (0.7.6, #26);
+   - **deferred:** a Lorentzian `HStrain`. `lw[1]` already covers the isotropic case and `lft.ddpowh` the
+     Telser case; only an anisotropic, transition-dependent Lorentzian would be new, at the cost of a
+     per-facet Voigt in pepper and pepper_autograd.
 
 ## torchspin defects found (logged as new entries in the mol2g bug log)
 
