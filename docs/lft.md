@@ -26,7 +26,9 @@ Modules carry Telser's program names. Shared building blocks have descriptive na
 | `lft.fit` | — | `JointFit`: one model, several data types (`Bands`, `GValues`, `Susceptibility`, `Magnetization`, `Spectrum`) |
 | `lft.bridge` | — | `lft.dn2sys`: ligand-field parameters → `SpinSystem` with the full g matrix → `pepper` |
 | `lft.plot` | — | level, Tanabe–Sugano, Zeeman/angle/road-map, χT, M, powder and fit plots (cm⁻¹ by default) |
-| `lft.telser2torchspin` | DDZHQ, DDPOWH, DJDZE, DDPOWJ | Telser spin-Hamiltonian inputs → `SpinSystem` + `Experiment` (these programs are not re-ported; torchspin already has their physics) |
+| `lft.ddpowh` | DDPOWH | powder EPR, FDMR, ENDOR and S = 0 NMR/NQR of a `SpinSystem` at field points, with Telser's level strain, Lorentzian lines, m_S-manifold pairs, Flygare factor |
+| `lft.ddpowj` | DDPOWJ | the same for an exchange-coupled dimer, with DDPOWJ's product strain weights |
+| `lft.telser2torchspin` | DDZHQ, DDPOWH, DJDZE, DDPOWJ | Telser spin-Hamiltonian inputs → `SpinSystem` + `Experiment` for `pepper`/`salt`, or (`target='lft'`) → `lft.ddpowh`/`lft.ddpowj` |
 | `lft.grids` | — | field-direction grids for magnetometry (exact Gauss hemisphere, DDN's igloo, axes) |
 | `lft.units` | — | unit factors that keep the autograd graph |
 
@@ -185,10 +187,75 @@ dim = t2t.dimer2sys(site1=..., site2=..., J=12.0, Ddip=0.02)   # Telser's +J S1.
   constants), resonance fields to 1e-7, ENDOR frequencies to 1e-8. Powder spectra match `pepper`/`salt`
   within tolerances calibrated by refining both programs' grids: 0.3–8 %, with the largest for
   looping transitions.
+- `target='lft'` in `ddpowh2sys`/`ddpowj2sys` maps everything instead, for `lft.ddpowh`/`lft.ddpowj`
+  (next section): strain, Lorentzian lines, w, U, S = 0, zero field, mixed H1 modes.
 - [lft_gap_analysis.md](lft_gap_analysis.md) lists every Telser spin-family feature as supported,
-  converted (with the difference), or a gap, with proposals for the larger gaps: second-order Zeeman
-  w, the U (I·S³) term, DDPOWH/DDPOWJ level-dependent strain, zero-field FDMR/ENDOR, and S = 0 powder
-  NMR/NQR.
+  converted (with the difference), filled in `lft`, or a gap. Core proposals remain for: the second-order
+  Zeeman w and the U term in `levels`/`resfields`/`pepper`, zero-field frequency sweeps, pepper
+  transition selection, a Lorentzian `HStrain`, restricted pepper grids, and ENDOR hyperfine enhancement.
+
+## Powder spectra with Telser's level strain (`lft.ddpowh`, `lft.ddpowj`)
+
+`pepper` finds resonance fields and linearizes each line around them. `lft.ddpowh` is Telser's DDPOWH
+model instead. For every orientation of the grid and every field point it diagonalizes H(B n) of a
+torchspin `SpinSystem` and adds, for every selected level pair,
+w(n) P_ij pop_ij F(ν_ij) f(ν_ij(B) − ν_mw; W_ij). The field-swept line is the frequency-domain line
+mapped through the exact ν_ij(B). This gives three things pepper lacks:
+
+- **Level strain.** W_ij = W(n) (B/B_set)^b (1 + ½[√Σ_b|c_bi|²w_b + √Σ_b|c_bj|²w_b]), with one weight
+  w_b per basis state. The width of a transition then depends on what its two levels are made of: strain on
+  m_S = ±3/2 broadens only the lines whose levels contain ±3/2. DDPOWH's weights are WMS(m_S) + WMI(m_I)
+  (`ddpowh.strain_weights`); DDPOWJ's are the product WMS₁(m₁)·WMS₂(m₂) (`ddpowj.strain_weights`).
+- **Telser's other options:**
+  - Lorentzian frequency-domain lines and the line cutoff (`shape=`, `cutoff=`);
+  - the Flygare factor (`frequency_factor=`);
+  - m_S-manifold pair selection (`pairs=ddpowh.manifold_pairs(...)`);
+  - mixed H1 modes (`h1mode=r`);
+  - restricted angle ranges with ORFACT (`angle_range=`, `ordering=`);
+  - zero-field FDMR (`ddpowh.fdmr(..., field=0.0)`);
+  - ENDOR with Telser's orientation selection (`ddpowh.endor`);
+  - S = 0 NMR/NQR with chemical shielding (`ddpowh.nmr`);
+  - the w (second-order Zeeman) and U (I·S³) terms, through `zeeman2=` and `h0_extra=`, which
+    `telser2torchspin.second_order_zeeman_operator` and `u_term_operator` build.
+- **Exact line shapes** where pepper's linearization shows: strongly curved or looping levels, and
+  lines broad compared with their curvature.
+
+```python
+import numpy as np
+from torchspin.lft import ddpowh, plot, telser2torchspin as t2t
+
+sys = t2t.spin2sys(s=1.5, g=(2.0, 2.0, 2.0), D=0.15, E=0.01)              # Telser's cm^-1
+f = np.linspace(50.0, 550.0, 251)                                          # mT
+strain = ddpowh.Strain(ddpowh.strain_weights(sys, ms=[3.0, 0.0, 0.0, 3.0]))  # m_S = 3/2 ... -3/2
+a = ddpowh.epr(sys, f, 9.5, width=150.0, igloo=60, extent="octant", strain=strain)
+b = ddpowh.epr(sys, f, 9.5, width=150.0, igloo=60, extent="octant")
+plot.powder(a, mw_freq=9.5, label="strain on mS = ±3/2", overlay=[(b, "no strain")])
+
+conv = t2t.ddpowh2sys(inp, target="lft")    # a Telser DDPOWH input: every feature mapped, nothing dropped
+spectra = ddpowh.simulate(conv)             # one PowderResult per spectrum of the input
+```
+
+- **Units:** fields in mT, frequencies in GHz, rf in MHz. Widths and the FDMR axis are in `units=`
+  (default MHz). Intensities are DDPOWH's exact-mode values, except that field derivatives are per mT.
+- **Transition moment:** `moment='electron'` (default) is Telser's g·S. `moment='full'` is torchspin's
+  −dH/dB, which also contains the nuclear moment and the third-order Zeeman u.
+- **Parity:** all 70 DDPOWH and 33 DDPOWJ golden inputs of telser-tools match its exact mode to 1e-10
+  of the maximum (observed ≤ 4.5e-11), including strain, Lorentzian lines, ENDOR, NMR/NQR, w and U.
+  With strain off, the spectra agree with `pepper` within the grid-calibrated tolerances of the
+  converter tests.
+- **Gradients:** every SpinSystem tensor that `ham` keeps on the graph, the widths, the strain weights,
+  b, B_set, the frequency, the temperature, w, U and the shielding. Reverse mode matches central
+  differences to ~1e-6. Forward mode with `torch.autograd.forward_ad` dual numbers matches reverse mode
+  to 1e-12. `torch.func.jacfwd` does not work, because its vmap cannot run the data-dependent line
+  windows.
+- **Open question DDPOWJ-10 (waiting on J. Telser).** In the exact model an S = ½ site has no m_S strain
+  factors, so every DDPOWJ product weight with an S = ½ partner is 0. The Fortran sets WMS = 1 there,
+  which doubles every width. `ddpowj.strain_weights(..., s12_weight=)` and
+  `ddpowj2sys(..., s12_strain_weight=)` take 0.0 (default, exact) or 1.0 (Fortran).
+
+The igloo grid converges slowly for lines narrow compared with the anisotropy (see the gap analysis).
+Use `igloo` ≥ 40 for quantitative work, and `extent='hemisphere'` unless the system has D2h symmetry
+about the molecular axes.
 
 ## Degenerate levels
 
@@ -207,7 +274,7 @@ The stock `torch.linalg.eigh` backward divides by λⱼ − λᵢ and gives NaN 
 
 ## Validation
 
-`torchspin/tests/test_lft_*.py` (about 1300 tests, a few minutes with `OMP_NUM_THREADS=1`):
+`torchspin/tests/test_lft_*.py` (about 1450 tests, a few minutes with `OMP_NUM_THREADS=1`):
 
 - **Parity with telser-tools** on every reference input of every program: rel 1e-10 (DDNPOW 1e-8,
   the round-off limit of the NumPy reference itself). These tests skip when telser-tools is not

@@ -1102,28 +1102,49 @@ def _viridis(n):
 @_styled
 def powder(result, *, mw_freq=None, field_units: str = "mT", kind: str = "field", from_units: str = "MHz",
            units: str = _u.PLOT_ENERGY_UNITS, normalize: bool = True, data=None, label: str | None = None,
-           ylabel: str = "Intensity (arb. u.)", title: str | None = None, ax=None, figsize=(5.0, 3.6)):
-    """Powder spectrum from :func:`torchspin.lft.ddnpow.simulate` (``kind='field'``: field axis in
-    ``field_units``, default mT) or :func:`~torchspin.lft.ddnpow.fdmr` (``kind='energy'``: axis in
-    ``from_units`` -> ``units``, default cm^-1).
+           overlay=None, ylabel: str = "Intensity (arb. u.)", title: str | None = None, ax=None,
+           figsize=(5.0, 3.6)):
+    """Powder spectrum from :mod:`torchspin.lft.ddnpow`, :mod:`~torchspin.lft.ddpowh` or :mod:`~torchspin.lft.ddpowj`.
 
-    ``mw_freq`` (GHz) is quoted in the legend.  ``normalize`` (default): scale to max |y| = 1 (data too).
-    ``data``: (axis, y) in the plotted axis unit, overlaid as a dark line.
+    ``kind='field'``: field axis (``ddnpow.simulate``, ``ddpowh.epr``, ``ddpowj.epr``) in ``field_units``,
+    default mT.  ``kind='energy'``: FDMR axis (``ddnpow.fdmr``, ``ddpowh.fdmr``) in ``from_units`` (the
+    ``units`` of the run) -> ``units``, default cm^-1.  ``kind='rf'``: ENDOR/NMR axis in MHz
+    (``ddpowh.endor``, ``ddpowh.nmr``).
+
+    ``mw_freq`` (GHz) is quoted in the legend.  ``normalize`` (default): scale to max |y| = 1 (data too;
+    each overlay to the main spectrum's maximum, so relative heights are kept).  ``data``: (axis, y) in the
+    plotted axis unit, overlaid as a dark line.  ``overlay``: [(result, label), ...] more simulations on
+    the same axis kind (e.g. with and without strain), drawn dashed.
     """
-    x = _np(result.axis).reshape(-1)
-    y = _np(result.spectrum).reshape(-1)
+    def axis_of(res):
+        xx = _np(res.axis).reshape(-1)
+        if kind == "field":
+            return xx * _u.field_factor("mT", field_units)
+        if kind == "energy":
+            return xx * _u.energy_factor(from_units, units)
+        return xx
+
     if kind == "field":
-        x = x * _u.field_factor("mT", field_units)
         xl = f"Magnetic field ({_field_axis_label(field_units)})"
     elif kind == "energy":
-        x = x * _u.energy_factor(from_units, units)
         xl = f"Energy ({_energy_axis_label(units)})"
+    elif kind == "rf":
+        xl = "Frequency (MHz)"
     else:
-        raise ValueError("kind must be 'field' or 'energy'")
+        raise ValueError("kind must be 'field', 'energy' or 'rf'")
+    x = axis_of(result)
+    y = _np(result.spectrum).reshape(-1)
+    ymax = float(np.max(np.abs(y))) or 1.0
     if normalize:
-        y = y / (float(np.max(np.abs(y))) or 1.0)
+        y = y / ymax
     fig, ax, owned = _axes(ax, figsize, (0.85, 0.2, 0.6, 0.35 if not title else 0.55))
     handles, labels = [], []
+    for k, (res, lab_k) in enumerate(overlay or ()):
+        yo = _np(res.spectrum).reshape(-1)
+        if normalize:
+            yo = yo / ymax
+        (ol,) = ax.plot(axis_of(res), yo, color=_PALETTE[(k + 3) % len(_PALETTE)], lw=1.2, ls="--", zorder=2)
+        handles.append(ol), labels.append(lab_k)
     if data is not None:
         xd, yd = _np(data[0]).reshape(-1), _np(data[1]).reshape(-1)
         if normalize:
@@ -1140,7 +1161,7 @@ def powder(result, *, mw_freq=None, field_units: str = "mT", kind: str = "field"
     _xlabel(ax, xl)
     _ylabel(ax, ylabel)
     _title(ax, title)
-    if data is not None or mw_freq is not None or label is not None:
+    if data is not None or mw_freq is not None or label is not None or overlay:
         _place_legend(ax, handles, labels, owned=owned)
     return fig, ax
 
