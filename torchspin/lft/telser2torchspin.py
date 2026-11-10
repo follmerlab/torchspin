@@ -56,7 +56,9 @@ spectra (S = 0; the nuclear SpinSystem itself is built), the DDPOWH/DDPOWJ strai
 frequency-domain widths, zero-field FDMR/ENDOR and mixed H1 modes.  With ``strict=True`` (default) these
 raise ``NotImplementedError``; with ``strict=False`` they are dropped with a warning and listed in
 ``TelserConversion.extras['dropped']``.  Telser's Flygare frequency factor has no counterpart either; compare
-with telser-tools' ``frequency_factor=False``.
+with telser-tools' ``frequency_factor=False``.  ``ddpowh2sys``/``ddpowj2sys`` with ``target='lft'`` map all of
+these for :mod:`torchspin.lft.ddpowh` / :mod:`torchspin.lft.ddpowj` (Telser's field-point model on the
+SpinSystem; w and U through :func:`second_order_zeeman_operator` and :func:`u_term_operator`).
 
 Constants: torchspin uses CODATA 2022 mu_B, telser-tools CODATA 2018 (1.4e-9 apart).  ``constants=`` takes
 a telser-tools ``Constants``-like object (``mu_b_mhz`` and ``mu_n_mhz`` in MHz/G, ``mu_b_cm`` in cm^-1/G);
@@ -91,7 +93,7 @@ __all__ = ["TelserConversion", "MU_B_MHZ_PER_MT", "MU_N_MHZ_PER_MT", "abf_to_ste
            "zfs_principal", "euler_matrix", "rotate_tensor", "telser_J", "antisymmetric_tensor", "exchange_tensor",
            "third_order_zeeman_ham", "isotope_for", "dimer_energy_offset", "spin2sys", "dimer2sys",
            "epr_experiment", "ordering", "ddzhq2sys", "ddpowh2sys", "djdze2sys", "ddpowj2sys",
-           "QuadrupoleEcho", "quadrupole_echo", "spin_projections"]
+           "QuadrupoleEcho", "quadrupole_echo", "spin_projections", "second_order_zeeman_operator", "u_term_operator"]
 
 _F64 = torch.float64
 
@@ -637,14 +639,31 @@ class _Nucleus(NamedTuple):
     label: str
 
 
-def _single_spin_params(inp) -> dict:
+#: DNTABLE-01/-02 (telser-tools docs/FINDINGS.md): the Fortran table's 149Sm sign and 2H digit transposition.
+#: A DDPOWH input record carries the original table value; telser-tools' DDPOWH exact mode looks the nucleus up
+#: in the corrected table, so the DDPOWH converters apply the correction.  (Its DDZHQ reader resolves g_N while
+#: parsing, from the original table by default, so DDZHQ inputs are used as read.)
+_DNTABLE_FIXES = {(1.0, 0.8574388228): 0.8574382338, (3.5, 0.1919): -0.1919}
+
+
+def _corrected_g_n(xi: float, g_n: float) -> float:
+    for (spin, bad), good in _DNTABLE_FIXES.items():
+        if abs(xi - spin) < 1e-9 and abs(g_n - bad) < 1e-12:
+            return good
+    return g_n
+
+
+def _single_spin_params(inp, correct_table: bool = False) -> dict:
     s = float(inp.s)
     b40, b42, b44 = _fourth_order_from_input(inp)
     nuc = None
     xi = float(getattr(inp, "nucleus_spin", 0.0))
     if xi >= 0.5:
         rot = bool(getattr(inp, "rotate", False))
-        nuc = _Nucleus(xi, float(inp.g_n), tuple(inp.A), tuple(inp.A_euler) if rot else (0.0, 0.0, 0.0),
+        gn = float(inp.g_n)
+        if correct_table and getattr(inp, "nucleus_from_table", False):
+            gn = _corrected_g_n(xi, gn)
+        nuc = _Nucleus(xi, gn, tuple(inp.A), tuple(inp.A_euler) if rot else (0.0, 0.0, 0.0),
                        float(inp.U) if s >= 1.5 else 0.0, tuple(inp.Q) if xi >= 1 else (0.0, 0.0, 0.0),
                        tuple(inp.Q_euler) if rot else (0.0, 0.0, 0.0), str(getattr(inp, "nucleus_label", "")))
     return dict(s=s, g=tuple(inp.g), w=float(inp.w) if s >= 1 else 0.0,
@@ -710,7 +729,7 @@ def _ddpowh_strain_check(inp, strict: bool, dropped: list) -> None:
                   "torchspin's HStrain/gStrain/AStrain/DStrain are different models")
 
 
-def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool = True,
+def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool = True, target: str = "pepper",
                **sys_kwargs) -> TelserConversion:
     """A DDPOWH input (telser-tools ``ddpowh.DdpowhInput``) as SpinSystem + Experiment for pepper/salt.
 
@@ -727,7 +746,18 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
     The EPR half widths W (MHz, HWHM) become ``HStrain = 2 W``.  Telser's Lorentzian frequency-domain line,
     the Flygare nu factors (compare with telser-tools' ``frequency_factor=False``), the DDPOWH strain model,
     ORFACT (use :func:`ordering`), the <g^2> normalization (a constant) and NMR/NQR spectra (S = 0) are not mapped.
+
+    ``target='lft'`` maps every feature instead, for :mod:`torchspin.lft.ddpowh` (Telser's own field-point
+    model): the strain model, Lorentzian lines, w, U, the Flygare factor, the cutoff, m_S-manifold pair
+    selection, ORFACT, <g^2>, mixed H1 modes, zero-field FDMR/ENDOR and S = 0 NMR/NQR.  Nothing is dropped.
+    ``extras['spectra']`` then holds, per spectrum, ``func`` (``'epr'``, ``'fdmr'``, ``'endor'``, ``'nmr'``),
+    ``kwargs`` (everything but the SpinSystem), ``x`` (Telser's axis as entered) and ``x_unit``; run them with
+    :func:`torchspin.lft.ddpowh.simulate`.
     """
+    if target == "lft":
+        return _ddpowh_lft(inp, constants=constants, full_tensors=full_tensors, **sys_kwargs)
+    if target != "pepper":
+        raise ValueError("target must be 'pepper' or 'lft'")
     dropped: list = []
     kind = getattr(inp, "kind", "E")
     if float(inp.s) < 0.5:
@@ -744,8 +774,8 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
     extra = dict(sys_kwargs)
     if any(hs):
         extra.setdefault("HStrain", hs)
-    sy = spin2sys(_single_spin_params(inp), units="cm^-1", constants=constants, full_tensors=full_tensors,
-                  strict=strict, dropped=dropped, **extra)
+    sy = spin2sys(_single_spin_params(inp, correct_table=True), units="cm^-1", constants=constants,
+                  full_tensors=full_tensors, strict=strict, dropped=dropped, **extra)
     temp = float(inp.temperature) if getattr(inp, "populations", False) else None
     mub = MU_B_MHZ_PER_MT if constants is None else float(constants.mu_b_mhz) * 10.0
     mun = MU_N_MHZ_PER_MT if constants is None else float(constants.mu_n_mhz) * 10.0
@@ -854,14 +884,24 @@ def djdze2sys(inp, *, constants=None, full_tensors: bool = False, **sys_kwargs) 
                                           h1mode=float(getattr(inp, "h1mode", 0.0)), dropped=[]))
 
 
-def ddpowj2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool = True,
-               **sys_kwargs) -> TelserConversion:
+def ddpowj2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool = True, target: str = "pepper",
+               s12_strain_weight: float = 0.0, **sys_kwargs) -> TelserConversion:
     """A DDPOWJ input (telser-tools ``ddpowj.DdpowjInput``) as a two-electron SpinSystem + pepper Experiment.
 
     Site 2's g and D have separate Euler angles (DDPOWJ v5.0).  W (MHz, HWHM) -> ``HStrain = 2 W``.  Use
     ``Options(Threshold=0)`` in pepper: its default transition pruning drops weak singlet-triplet lines.
     The DDPOWJ strain model (WMS1 x WMS2 basis weights, (H/Hset)^b) and Lorentzian lines are not mapped.
+
+    ``target='lft'`` maps everything for :mod:`torchspin.lft.ddpowj` (strain, Lorentzian lines, level ranges,
+    Flygare factor, cutoff, mixed H1 modes); ``extras['spectra'][0]`` holds ``func='epr'`` and its ``kwargs``.
+    ``s12_strain_weight`` is the strain weight of S = 1/2 (and S = 0) sites: 0.0 (exact) or 1.0 (the
+    Fortran, DDPOWJ-10; open question to J. Telser, see :mod:`torchspin.lft.ddpowj`).
     """
+    if target == "lft":
+        return _ddpowj_lft(inp, constants=constants, full_tensors=full_tensors, s12_strain_weight=s12_strain_weight,
+                           **sys_kwargs)
+    if target != "pepper":
+        raise ValueError("target must be 'pepper' or 'lft'")
     dropped: list = []
     if getattr(inp, "epr_shape", "G") in ("L", "l"):
         _drop("Lorentzian EPR line (frequency domain)", strict, dropped, "HStrain is Gaussian")
@@ -928,3 +968,196 @@ def spin_projections(sys: SpinSystem, field_mT: float, direction) -> torch.Tenso
         sn = sum(n[c] * sop(spins, [i + 1, c + 1]) for c in range(3))
         out.append(torch.einsum("ak,ab,bk->k", v.conj(), sn.to(v.dtype), v).real)
     return torch.stack(out, dim=-1)
+
+
+# ----------------------------------------------------------------------------- Telser terms for torchspin.lft
+def _spin_vector(sys: SpinSystem, k: int) -> list[torch.Tensor]:
+    from torchspin.spinops import sop
+
+    return [sop([float(x) for x in sys.Spins], [k + 1, c + 1]) for c in range(3)]
+
+
+def second_order_zeeman_operator(sys: SpinSystem, w, *, electron: int = 0, units: str = "cm^-1",
+                                 constants=None) -> torch.Tensor:
+    """Z2 (3, 3, n, n) in MHz/mT^2 with H += B^2 n.Z2.n = w (mu_B B.S)^2 for electron ``electron`` of ``sys``.
+
+    ``w`` in 1/``units`` (Telser: w in 1/cm^-1, so that w (mu_B B.S)^2 is in cm^-1).  ``constants``: a
+    telser-tools ``Constants`` (mu_B and cm^-1 -> MHz from it), as in :func:`spin2sys`.  For
+    :mod:`torchspin.lft.ddpowh` (``zeeman2=``): torchspin's ``levels``, ``resfields`` and ``pepper`` carry
+    only the part of H linear in B.  Graph-safe in ``w``.
+    """
+    mub = MU_B_MHZ_PER_MT if constants is None else float(constants.mu_b_mhz) * 10.0
+    f = _energy_to_mhz(units, constants)                       # units -> MHz
+    S = torch.stack(_spin_vector(sys, int(electron)))          # (3, n, n)
+    SS = torch.einsum("kab,lbc->klac", S, S)
+    return (_t(w) * (mub * mub / f)).to(torch.complex128) * SS
+
+
+def u_term_operator(sys: SpinSystem, U, *, electron: int = 0, nucleus: int = 0) -> torch.Tensor:
+    """U sum_k C_k(S) I_k (n, n) in MHz (``U`` in MHz; C_k = S_k^3 - (3X - 1)/5 S_k): Telser's I.S^3 hyperfine.
+
+    For :mod:`torchspin.lft.ddpowh` (``h0_extra=``); torchspin's SpinSystem has no such term.  Needs
+    S >= 3/2.  Graph-safe in ``U``.
+    """
+    spins = [float(x) for x in sys.Spins]
+    ne = int(sys.nElectrons)
+    s = spins[int(electron)]
+    if s < 1.5:
+        raise ValueError("the U term needs S >= 3/2")
+    S = _spin_vector(sys, int(electron))
+    I = _spin_vector(sys, ne + int(nucleus))
+    x = s * (s + 1)
+    op = sum((Sk @ Sk @ Sk - (3 * x - 1) / 5 * Sk) @ Ik for Sk, Ik in zip(S, I))
+    return _t(U).to(torch.complex128) * op
+
+
+def _lft_constants(constants):
+    from .ddpowh import TORCHSPIN_CONSTANTS, SpinConstants
+
+    return TORCHSPIN_CONSTANTS if constants is None else SpinConstants.from_telser(constants)
+
+
+def _grid_kwargs(inp) -> dict:
+    kw = dict(igloo=int(inp.igloo), extent="octant" if int(inp.n_rot) == 1 else "hemisphere")
+    if not getattr(inp, "powder", True) and getattr(inp, "angle_range", None) is not None:
+        kw.update(angle_range=tuple(float(a) for a in inp.angle_range), degrees=True)
+    return kw
+
+
+def _sweep(lo: float, hi: float, npts: int):
+    import numpy as np
+
+    return lo + (hi - lo) / float(npts) * np.arange(int(npts) + 1, dtype=float)
+
+
+def _ddpowh_lft(inp, *, constants, full_tensors: bool, **sys_kwargs) -> TelserConversion:
+    from . import ddpowh as lh
+
+    p = _single_spin_params(inp, correct_table=True)
+    w0, U0 = p["w"], (p["nucleus"].U if p["nucleus"] is not None else 0.0)
+    p["w"] = 0.0
+    if p["nucleus"] is not None:
+        p["nucleus"] = p["nucleus"]._replace(U=0.0)
+    sy = spin2sys(p, units="cm^-1", constants=constants, full_tensors=full_tensors, strict=True, **sys_kwargs)
+    K = _lft_constants(constants)
+    s, xi = float(inp.s), float(getattr(inp, "nucleus_spin", 0.0))
+    ns, ni = int(2 * s + 1.01), int(2 * xi + 1.01)
+    common = dict(h1mode=float(inp.h1mode), cutoff=int(inp.epr_cutoff), constants=K, **_grid_kwargs(inp))
+    if getattr(inp, "populations", False):
+        common["temperature"] = float(inp.temperature)
+    if s >= 0.5:
+        if w0:
+            common["zeeman2"] = second_order_zeeman_operator(sy, w0, constants=constants)
+        if U0 and s >= 1.5:
+            common["h0_extra"] = u_term_operator(sy, U0)
+        if not getattr(inp, "powder", True) and ns > 1 and (float(inp.lam_x) or float(inp.lam_z)):
+            common["ordering"] = (float(inp.lam_x), float(inp.lam_z))
+    strain = None
+    if getattr(inp, "strain", False) and s >= 0.5:
+        ms = tuple(inp.ms_strain) or None
+        mi = tuple(inp.mi_strain) or None
+        wts = lh.strain_weights(sy, ms=ms if ms is None or len(ms) == ns else None,
+                                mi=mi if mi is None or len(mi) == ni else None)
+        strain = lh.Strain(wts, float(inp.strain_b), float(inp.h_set) / 10.0)
+    mub = MU_B_MHZ_PER_MT if constants is None else float(constants.mu_b_mhz) * 10.0
+    mun = MU_N_MHZ_PER_MT if constants is None else float(constants.mu_n_mhz) * 10.0
+    epr_pairs = lh.manifold_pairs(inp.ms_range, ni)
+    kind = getattr(inp, "kind", "E")
+    spectra = []
+    if kind == "E":
+        x = _sweep(*inp.field_range, inp.npts)
+        fields = x * _field_to_mt(inp.field_units)
+        kw = dict(common, fields=fields, mw_freq=float(inp.freq_ghz), width=tuple(inp.epr_width),
+                  shape=inp.epr_shape, derivative=int(inp.epr_deriv) > 0, pairs=epr_pairs, strain=strain)
+        if getattr(inp, "g_normalize", False):
+            g = [float(v) for v in inp.g]
+            kw["scale"] = 1.0 / ((2.0 / 3.0) * math.sqrt(sum(v * v for v in g) / 3.0) + sum(g) / 9.0)
+        spectra = [dict(func="epr", kwargs=kw, x=x, x_unit=inp.field_units) for _ in inp.spectra]
+        return TelserConversion(sy, None, dict(target="lft", spectra=spectra, dropped=[], h1mode=float(inp.h1mode)))
+    if kind == "F":
+        x = _sweep(*inp.energy_range, inp.npts)
+        thz = getattr(inp, "energy_units", "C") in ("T", "t")
+        wfac = 1e3 if thz else K.mhz_per_cm                          # Telser's W (MHz) in the axis units
+        for sp in inp.spectra:
+            kw = dict(common, axis=x * 1e3 if thz else x, units="GHz" if thz else "cm^-1",
+                      field=float(sp.value) / 10.0, width=tuple(float(v) / wfac for v in inp.epr_width),
+                      shape=inp.epr_shape, derivative=int(inp.epr_deriv) > 0, pairs=epr_pairs)
+            if thz and inp.epr_shape in ("L", "l"):
+                # Telser divides the Lorentzian Flygare factor nu^3 (cm^-1) by the axis squared in the units it
+                # was entered in (THz here); lft divides by the axis in cm^-1.
+                kw["scale"] = (1e6 / K.mhz_per_cm) ** 2
+            spectra.append(dict(func="fdmr", kwargs=kw, x=x, x_unit="THz" if thz else "cm-1"))
+        return TelserConversion(sy, None, dict(target="lft", spectra=spectra, dropped=[], h1mode=float(inp.h1mode)))
+    # ENDOR (S >= 1/2) or NMR/NQR (S = 0)
+    gn = float(inp.g_n) if xi >= 0.5 else 0.0
+    if ns <= 1:
+        nmr_pairs = lh.all_pairs(ni)
+    else:
+        lo, hi = inp.nmr_ms_range
+        nmr_pairs = lh._nmr_pairs(int(lo), int(hi), ni)
+    h0, geff = 0.0, None
+    freq_mhz = float(inp.freq_ghz) * 1e3 if inp.freq_ghz is not None else 0.0
+    for sp in inp.spectra:
+        if sp.entered == "G":
+            if sp.value > 0:
+                geff = float(sp.value)
+                h0 = freq_mhz / (mub / 10.0 * geff)                   # gauss
+        else:
+            h0 = float(sp.value)
+        nu_n = abs(gn * mun / 10.0 * h0) if xi >= 0.5 else 0.0
+        if getattr(inp, "center", False):
+            rf = nu_n - float(inp.delta_nu) + 2.0 * float(inp.delta_nu) / float(inp.npts) * _sweep(0, inp.npts, inp.npts)
+            x = rf - nu_n
+        else:
+            rf = _sweep(*inp.rf_range, inp.npts)
+            x = rf
+        if s < 0.5:
+            sig = tuple(float(v) for v in getattr(inp, "sigma_khz", (0.0, 0.0, 0.0)))
+            kw = dict(common, rf=rf, field=h0 / 10.0, nmr_width=tuple(inp.nmr_width), shape=inp.nmr_shape,
+                      cutoff=int(inp.nmr_cutoff),
+                      derivative=int(inp.nmr_deriv) > 0, pairs=nmr_pairs, shielding_khz=sig if any(sig) else None)
+            kw.pop("ordering", None)
+            kw.pop("zeeman2", None)
+            spectra.append(dict(func="nmr", kwargs=kw, x=x, x_unit="MHz", field_mT=h0 / 10.0, nu_n_mhz=nu_n))
+        else:
+            kw = dict(common, rf=rf, field=h0 / 10.0, mw_freq=float(inp.freq_ghz), width=tuple(inp.epr_width),
+                      nmr_width=tuple(inp.nmr_width), shape=inp.epr_shape, nmr_shape=inp.nmr_shape,
+                      derivative=int(inp.nmr_deriv) > 0, epr_derivative=int(inp.epr_deriv) > 0, pairs=nmr_pairs,
+                      epr_pairs=epr_pairs, strain=strain, nmr_cutoff=int(inp.nmr_cutoff))
+            spectra.append(dict(func="endor", kwargs=kw, x=x, x_unit="MHz", field_mT=h0 / 10.0, nu_n_mhz=nu_n,
+                                g_eff=geff))
+    return TelserConversion(sy, None, dict(target="lft", spectra=spectra, dropped=[], h1mode=float(inp.h1mode)))
+
+
+def _ddpowj_lft(inp, *, constants, full_tensors: bool, s12_strain_weight: float, **sys_kwargs) -> TelserConversion:
+    from . import ddpowj as lj
+
+    p = _dimer_params(inp, separate_d_euler=True)
+    sy = dimer2sys(p, constants=constants, full_tensors=full_tensors, **sys_kwargs)
+    n = _n_states(sy)
+    x = _sweep(*inp.field_range, inp.npts)
+    kw = dict(fields=x * _field_to_mt(inp.field_units), mw_freq=float(inp.freq_ghz), width=tuple(inp.epr_width),
+              shape=inp.epr_shape, derivative=int(inp.epr_deriv) > 0, cutoff=int(inp.epr_cutoff),
+              h1mode=float(inp.h1mode), pairs=lj.level_range_pairs(inp.ms_range, n), constants=_lft_constants(constants),
+              **_grid_kwargs(inp))
+    if inp.populations:
+        kw["temperature"] = float(inp.temperature)
+    if inp.strain:
+        sites = [float(si.s) for si in inp.sites]
+        ms = [tuple(inp.ms_strain[k]) if sites[k] >= 1 else None for k in range(2)]
+        live = [k for k in range(2) if sites[k] >= 0.5]
+        if len(live) == 2:
+            wts = lj.strain_weights(sy, ms[0], ms[1], s12_weight=s12_strain_weight)
+        else:                                       # an S = 0 site: its single weight multiplies the other's
+            wts = lj.strain_weights(sy, ms[live[0]], None, s12_weight=s12_strain_weight)
+        kw["strain"] = lj.Strain(wts, float(inp.strain_b), float(inp.h_set) / 10.0)
+    spectra = [dict(func="epr", kwargs=kw, x=x, x_unit=inp.field_units)]
+    return TelserConversion(sy, None, dict(target="lft", spectra=spectra, dropped=[],
+                                           energy_offset=_offset_for(p, constants), h1mode=float(inp.h1mode)))
+
+
+def _n_states(sys: SpinSystem) -> int:
+    n = 1
+    for x in sys.Spins:
+        n *= int(round(2 * float(x))) + 1
+    return n

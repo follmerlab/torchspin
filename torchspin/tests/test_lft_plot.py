@@ -241,6 +241,29 @@ def test_no_global_rcparams_change_and_font():
             assert not any(gl.get_visible() for gl in ax.get_xgridlines() + ax.get_ygridlines())
 
 
+def test_powder_overlay_and_rf_axis_for_ddpowh():
+    """lft.ddpowh results: a strain on/off overlay (relative heights kept) and an rf (ENDOR/NMR) axis, clean."""
+    from torchspin.lft import ddpowh, telser2torchspin as t2t
+
+    sy = t2t.spin2sys(s=1.5, g=(2.0, 2.0, 2.0), D=0.15, E=0.01)
+    f = np.linspace(50.0, 550.0, 126)
+    kw = dict(width=150.0, igloo=12, extent="octant")
+    plain = ddpowh.epr(sy, f, 9.5, **kw)
+    strained = ddpowh.epr(sy, f, 9.5, strain=ddpowh.Strain(ddpowh.strain_weights(sy, ms=[3.0, 0.0, 0.0, 3.0])), **kw)
+    fig, ax = plot.powder(strained, mw_freq=9.5, label="strain on mS = ±3/2", overlay=[(plain, "no strain")])
+    ymax = np.abs(strained.spectrum.numpy()).max()
+    np.testing.assert_allclose(ax.lines[0].get_ydata(), plain.spectrum.numpy() / ymax)
+    assert ax.get_legend() is not None and collisions(fig) == []
+    plt.close(fig)
+    from torchspin import SpinSystem
+
+    nq = ddpowh.nmr(SpinSystem(S=[], Nucs="14N", Q=[-0.6, -0.4, 1.0]), np.linspace(0.0, 2.0, 201), 0.0,
+                    nmr_width=0.02, igloo=6)
+    fig, ax = plot.powder(nq, kind="rf")
+    assert ax.get_xlabel() == "Frequency (MHz)" and collisions(fig) == []
+    plt.close(fig)
+
+
 # ------------------------------------------------------------------------------ overlap checks
 def test_spread_keeps_spacing():
     y = np.array([0.5, 0.5, 0.51, 0.2, 0.9, 0.0])
