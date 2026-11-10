@@ -18,6 +18,16 @@ Work toward v1.0 performance on branch `dev/v1-acceleration`; see
 
 ### Added
 
+- **`torchspin.lft`: ligand-field tools.** Joshua Telser's programs, ported from
+  telser-tools and differentiable. `lft.ddn`, `ddnloop`, `ddnpow`, `ddnfit`, `ddnsus`, `ddnmag`,
+  `dpn`, `dpnfit`, `dsoxf`, `tanabe_sugano`, `dlsd5`, `dipole`, `dtd`.
+  - `lft.fit.JointFit` fits one model to band energies, g values, χ, M and EPR spectra together,
+    with exact Jacobians.
+  - `lft.dn2sys` builds a `SpinSystem` with the full g matrix, for a differentiable route from a
+    ligand field to `pepper`.
+  - `lft.plot` draws its plots in cm⁻¹ by default.
+  - `lft.telser2torchspin` converts DDZHQ, DDPOWH, DJDZE and DDPOWJ inputs.
+  - The package is additive: only `torchspin/__init__.py` gains `lft`. See `docs/lft.md`.
 - **Parallel finite differences in esfit.** With `FitOptions(n_workers > 1)`
   (or `'auto'`), the independent finite-difference probes now run in the worker
   pool: levmar's initial Jacobian (n + 1 calls), every trf Jacobian and
