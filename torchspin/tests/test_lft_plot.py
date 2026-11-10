@@ -265,7 +265,9 @@ def test_tanabe_sugano_td_and_absolute_no_overlap():
 def test_tanabe_sugano_parent_terms():
     fig, ax = plot.tanabe_sugano(ts.tanabe_sugano(3))
     labs = [t.get_text() for t in ax.texts]
-    assert any("(F)" in s for s in labs) and any("(P)" in s for s in labs)
+    assert any("(F)" in s for s in labs) and any("(G)" in s for s in labs)
+    assert sum("T$_{\\mathregular{1g}}$(H)" in s for s in labs) == 2          # 2H -> 2 T1; 2P's T1 is above the plot
+    assert not any("(P)" in s and "^{2}" in s for s in labs)
 
 
 def test_label_heavy_plots_no_overlap():
@@ -318,3 +320,50 @@ def test_user_axes_get_style():
     plot.zeeman(_cu_zeeman(), ax=ax0)
     assert all(sp.get_linewidth() == pytest.approx(1.2) for sp in ax0.spines.values())
     assert ax0.xaxis.label.get_fontweight() in ("bold", 700)
+
+
+# ------------------------------------------------------------------------------ Tanabe-Sugano parent terms
+_KNOWN_TERMS = {   # free-ion terms (2S+1, L letter) of d2 and d3
+    2: sorted([(3, "F"), (3, "P"), (1, "G"), (1, "D"), (1, "S")]),
+    3: sorted([(4, "F"), (4, "P"), (2, "H"), (2, "G"), (2, "F"), (2, "D"), (2, "D"), (2, "P")]),
+}
+
+
+def test_branching_rules():
+    assert plot.branching(0) == {"A1": 1} and plot.branching(1) == {"T1": 1}
+    assert plot.branching(2) == {"E": 1, "T2": 1} and plot.branching(3) == {"A2": 1, "T1": 1, "T2": 1}
+    assert plot.branching(4) == {"A1": 1, "E": 1, "T1": 1, "T2": 1}
+    assert plot.branching(5) == {"E": 1, "T1": 2, "T2": 1}
+    assert plot.branching(6) == {"A1": 1, "A2": 1, "E": 1, "T1": 1, "T2": 2}
+    for L in range(9):
+        assert sum(k * {"A1": 1, "A2": 1, "E": 2, "T1": 3, "T2": 3}[g] for g, k in plot.branching(L).items()) == 2 * L + 1
+
+
+@pytest.mark.parametrize("c_over_b", [4.5, 3.8])
+def test_free_ion_terms_known(c_over_b):
+    for n, ref in _KNOWN_TERMS.items():
+        assert sorted((m, "SPDFGHIK"[L]) for _, m, L in plot._free_ion_terms(n, c_over_b)) == ref
+
+
+@pytest.mark.parametrize("geometry", ["Oh", "Td"])
+@pytest.mark.parametrize("c_over_b", [4.5, 3.8])
+@pytest.mark.parametrize("n", [2, 3, 4, 5, 6, 7, 8])
+def test_parent_labels_follow_branching_rules(n, c_over_b, geometry):
+    """Per (2S+1, Gamma): the multiset of parent letters equals sum over free-ion terms of that spin of
+    (number of Gamma in L) x L, and every curve gets a parent."""
+    from collections import Counter
+
+    par = plot.parent_terms(n, c_over_b, geometry)
+    blocks = ts.blocks_for(n)
+    assert set(par) == {(b.label, r) for b in blocks for r in range(b.size)}
+    terms = plot._free_ion_terms(n, c_over_b)
+    for b in blocks:
+        got = Counter(par[(b.label, r)] for r in range(b.size))
+        want = Counter()
+        for _, m, L in terms:
+            if m == b.multiplicity:
+                want["SPDFGHIK"[L]] += plot.branching(L).get(b.label[1:], 0)
+        assert got == +want, (b.label, got, want)
+    if n in (3, 7):                       # the 2P/2H degeneracy: exactly one 2T1 from P, two from H
+        c = Counter(par[("2T1", r)] for r in range(ts.get_block(n, "2T1").size))
+        assert c["P"] == 1 and c["H"] == 2

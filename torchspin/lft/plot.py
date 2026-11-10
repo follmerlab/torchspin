@@ -45,7 +45,7 @@ import torch
 from . import units as _u
 
 __all__ = ["levels", "tanabe_sugano", "zeeman", "angles", "roadmap", "susceptibility", "magnetization", "powder",
-           "fit", "STYLE", "term_label"]
+           "fit", "STYLE", "term_label", "parent_terms", "branching"]
 
 #: Line color of levelsplot (MATLAB blue).
 _LEVEL_COLOR = (0.0, 0.447, 0.741)
@@ -476,40 +476,117 @@ def levels(energies, *, labels=None, from_units: str | None = None, units: str =
 
 
 # ------------------------------------------------------------------------------ Tanabe-Sugano
-def _parent_terms(n: int, c_over_b: float, labels) -> dict:
-    """{(block label, root): free-ion parent letter} from the Dq = 0 limit (empty where ambiguous)."""
-    from . import tanabe_sugano as ts
+# Characters of O (classes E, 8C3, 3C2, 6C4, 6C2'); Td uses the same labels (T_d ~ O).
+_O_CLASSES = ((1, 0.0), (8, 2 * math.pi / 3), (3, math.pi), (6, math.pi / 2), (6, math.pi))
+_O_CHARS = {"A1": (1, 1, 1, 1, 1), "A2": (1, 1, 1, -1, -1), "E": (2, -1, 2, 0, 0), "T1": (3, 0, -1, 1, -1),
+            "T2": (3, 0, -1, -1, 1)}
+_L_LETTERS = "SPDFGHIKLMNOQ"
+
+
+def branching(L: int) -> dict[str, int]:
+    """Multiplicity of each O irrep in the free-ion L (S -> A1, P -> T1, ..., H -> E + 2 T1 + T2)."""
+    def chi_L(theta):
+        if theta == 0.0:
+            return 2 * L + 1
+        return math.sin((2 * L + 1) * theta / 2) / math.sin(theta / 2)
+    out = {}
+    for irrep, ch in _O_CHARS.items():
+        k = sum(g * c * chi_L(t) for (g, t), c in zip(_O_CLASSES, ch)) / 24.0
+        if round(k):
+            out[irrep] = int(round(k))
+    return out
+
+
+def _free_ion_terms(n: int, c_over_b: float) -> list[tuple[float, int, int]]:
+    """Free-ion terms (energy above the ground term in units of B, 2S+1, L) of d^n at C/B; L from an
+    alpha L^2 shift of every state, S from the term's (2S+1)(2L+1) count."""
     from .ddn import levels as dn_levels
 
     e0 = _np(dn_levels(n, B=1.0, C=c_over_b, units="cm^-1"))
     e1 = _np(dn_levels(n, B=1.0, C=c_over_b, alpha=1e-5, units="cm^-1"))
-    shift = np.rint((e1 - e0) / 1e-5).astype(int)                      # L(L+1)
-    terms = []                                                          # (energy, mult, L)
+    shift = np.rint((e1 - e0) / 1e-5).astype(int)                      # L(L+1); e1 stays in e0's order
+    terms = []
     for g in _group(e0, 1e-7):
         for ll in sorted(set(shift[g])):
             L = int(round((-1 + math.sqrt(1 + 4 * ll)) / 2))
-            if L * (L + 1) != ll:
-                return {}
             cnt = int(np.sum(shift[g] == ll))
-            if cnt % (2 * L + 1):
-                return {}
+            if L * (L + 1) != ll or cnt % (2 * L + 1):
+                raise RuntimeError(f"d{n}: cannot resolve the free-ion terms at C/B = {c_over_b}")
             terms.append((float(e0[g].mean()), cnt // (2 * L + 1), L))
     emin = min(t[0] for t in terms)
-    terms = [(e - emin, m, L) for e, m, L in terms]
-    roots = {}
+    return [(e - emin, m, L) for e, m, L in terms]
+
+
+def _root_l2(n: int, c_over_b: float, geometry: str, eps: float) -> dict | None:
+    """{root: (<L^2>, exact)} at Dq/B = eps (full determinant basis, matched to the roots by energy and
+    degeneracy).  ``exact`` is False where roots of several blocks share a level for every Dq (their
+    <L^2> is the level average).  None if the match fails at this eps."""
+    from . import tanabe_sugano as ts
+    from .ddn import hamiltonian
+    from .ligand_field import crystal_field
+
+    V = crystal_field(torch.tensor(eps, dtype=torch.float64), geometry=geometry)
+    H0 = hamiltonian(n, B=1.0, C=c_over_b, V=V, units="cm^-1")
+    L2 = hamiltonian(n, alpha=1.0, units="cm^-1") - hamiltonian(n, units="cm^-1")
+    w, U = torch.linalg.eigh(H0)
+    w = _np(w)
+    l2 = _np(torch.einsum("ai,ab,bi->i", U.conj(), L2, U).real)
+    full = [(float(w[g].mean()), len(g), float(l2[g].mean())) for g in _group(w, 1e-10)]
+    fmin = full[0][0]
+    roots, bmin = {}, math.inf
     for blk in ts.blocks_for(n):
-        er = _np(ts.block_energies(n, blk, 1.0, c_over_b, 0.0))
+        er = _np(ts.block_energies(n, blk, 1.0, c_over_b, eps, geometry))
+        bmin = min(bmin, float(er.min()))
         for r, x in enumerate(er):
-            roots[(blk.label, r)] = (float(x), blk.multiplicity)
-    gmin = min(v[0] for v in roots.values())
+            roots[(blk.label, r)] = (float(x), blk.degeneracy)
     out = {}
-    for key in labels:
-        x, mult = roots[key]
-        cand = [(abs(x - gmin - e), L) for e, m, L in terms if m == mult]
-        if cand:
-            d, L = min(cand)
-            if d < 1e-6 * max(1.0, abs(x - gmin)):
-                out[key] = "SPDFGHIKLMN"[L]
+    for key, (x, deg) in roots.items():
+        tol = 1e-9 * max(1.0, abs(x - bmin))
+        hit = [f for f in full if abs((f[0] - fmin) - (x - bmin)) < tol]
+        same = [k for k, (y, _) in roots.items() if abs(y - x) < tol]       # blocks degenerate for every Dq
+        if len(hit) != 1 or hit[0][1] != sum(roots[k][1] for k in same):    # (e.g. 4A1, 4E of d5) share one level
+            return None
+        out[key] = (hit[0][2], len(same) == 1)
+    return out
+
+
+def parent_terms(n: int, c_over_b: float, geometry: str = "Oh") -> dict:
+    """{(block label, root): free-ion parent letter} for every Tanabe-Sugano curve of d^n.
+
+    The roots of a (2S+1)Gamma block that meet at one energy at Dq = 0 come from the free-ion terms
+    of that spin at that energy (several when terms are degenerate, e.g. 2P and 2H of d3/d7), each
+    contributing Gamma as often as the branching rule says.  Within such a cluster the roots are
+    ranked by <L^2> at small Dq/B (full determinant basis) and given the terms in order of L, so the
+    labels always follow the branching rules.  Where degenerate terms mix (2P/2H in a cubic field),
+    the parent is the dominant one in this ranking, not a pure state.
+    """
+    from . import tanabe_sugano as ts
+
+    terms = _free_ion_terms(n, c_over_b)
+    gmin = min(float(_np(ts.block_energies(n, b, 1.0, c_over_b, 0.0, geometry)).min()) for b in ts.blocks_for(n))
+    clusters = []                                   # (block, root cluster at Dq = 0, available L's)
+    for blk in ts.blocks_for(n):
+        er = _np(ts.block_energies(n, blk, 1.0, c_over_b, 0.0, geometry)) - gmin
+        for cl in _group(er, 1e-6 * max(1.0, float(np.abs(er).max()))):
+            avail = sorted(L for e, m, L in terms if m == blk.multiplicity and abs(e - er[cl[0]]) < 1e-6 * max(1.0, e)
+                           for _ in range(branching(L).get(blk.label[1:], 0)))
+            if len(avail) != len(cl):
+                raise RuntimeError(f"d{n} {blk.label}: {len(cl)} roots at E/B = {er[cl[0]]:.4f} but the free-ion "
+                                   f"terms there give {len(avail)}")
+            clusters.append((blk, cl, avail))
+    need = [(b.label, r) for b, cl, av in clusters if len(set(av)) > 1 for r in cl]
+    l2 = None
+    for eps in (1e-3, 2.9e-3, 0.02, 0.05, 0.1):         # d5: the cubic field splits terms only in 2nd order
+        l2 = _root_l2(n, c_over_b, geometry, eps)
+        if l2 is not None and all(l2[k][1] for k in need):
+            break
+        l2 = None
+    if l2 is None:
+        raise RuntimeError(f"d{n}: cannot match block roots to determinant-basis levels")
+    out = {}
+    for blk, cl, avail in clusters:
+        for r, L in zip(sorted(cl, key=lambda r: l2[(blk.label, r)][0]), avail):
+            out[(blk.label, r)] = _L_LETTERS[L]
     return out
 
 
@@ -560,8 +637,8 @@ def tanabe_sugano(diagram, *, units: str = _u.PLOT_ENERGY_UNITS, ymax=None, labe
         inside = [i for i in range(len(ends)) if ends[i] <= 0.995 * top]
         keys = [d.labels[i] for i in inside]
         dup = {k for k in {lab for lab, _ in keys} if sum(lab == k for lab, _ in d.labels) > 1}
-        par = _parent_terms(d.n, float(_np(d.c_over_b)), [k for k in keys if k[0] in dup]) if parents and dup else {}
-        texts = [term_label(lab, parity, par.get((lab, r))) for lab, r in keys]
+        par = parent_terms(d.n, float(_np(d.c_over_b)), d.geometry) if parents and dup else {}
+        texts = [term_label(lab, parity, par.get((lab, r)) if lab in dup else None) for lab, r in keys]
         ys = ends[inside] / top
         _place_labels(ax, ys, texts, x_anchor=1.0, x_text=1.045, fontsize=fontsize,
                       colors=[color[int(d.labels[i][0][0])] for i in inside], priority=ends[inside])
