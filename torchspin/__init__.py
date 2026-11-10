@@ -25,7 +25,7 @@ try:
     __version__ = _pkg_version("torchspin")
 except _PkgNotFound:
     # Editable install during development, or version metadata unavailable.
-    __version__ = "0.7.0+dev"
+    __version__ = "0.7.6+dev"
 
 # Idle OpenMP threads must sleep, not spin-wait (see torchspin/_omp.py and
 # docs/pitfalls.md, "Threads and performance"). This has to run before anything
@@ -370,8 +370,3 @@ __all__ = [
     'exciteprofile',
     'resonator',
 ]
-
-# Ligand-field tools (Telser's programs, differentiable); a subpackage, see torchspin/lft/__init__.py
-from torchspin import lft  # noqa: E402
-
-__all__.append('lft')

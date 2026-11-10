@@ -25,6 +25,146 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     DDPOWH/DDPOWJ golden inputs match telser-tools to 1e-10.
   - The package is additive: only `torchspin/__init__.py` gains `lft`. See `docs/lft.md`.
 
+## [0.7.6] — 2026-11-10
+
+### Added
+
+- **`Experiment.Orientations` / `Experiment.OrientationWeights`: pepper on a
+  user-supplied list of field directions.** `Orientations` is an `(N, 2)`
+  array (or tensor) of `[phi, theta]` in radians in the molecular frame, B0
+  along `(sinθ cosφ, sinθ sinφ, cosθ)` as in `levels`/`resfields`;
+  `OrientationWeights` (default `1/N`) are fractions of the sphere, used as
+  given, so weights summing to 1 give the powder amplitude. pepper sums the
+  stick spectra of these orientations with χ-averaged (powder) transition
+  rates, without grid interpolation or SOPHE projection: every line is
+  accumulated with an exact template (strain width or `Sys.lw(1)` Gaussian,
+  else `Sys.lw(2)` Lorentzian) and the rest of `Sys.lw` is convolved, as on the
+  crystal and isotropic paths. Supported: field and frequency sweeps,
+  `Method='matrix'`/`'perturb*'`/`'hybrid'`, strains, temperature,
+  `Sys.initState`, photoselection, `ModAmp`, `Opt.separate='orientations'`.
+  `pepper_autograd` supports it for field sweeps (gradients w.r.t. the spin
+  system, `lw`, strains and the weights). Raises with `Ordering`,
+  `SampleFrame`, `SampleRotation`, `MolFrame`, `CrystalSymmetry`, `Opt.Sites`
+  and `Opt.separate='transitions'/'sites'`; `GridSize`/`GridSymmetry` are
+  ignored. EasySpin has no counterpart; validated against EasySpin crystal
+  spectra summed over two rotations about B0 (an exact χ average). The
+  default (`None`) is unchanged.
+## [0.7.5] — 2026-11-10
+
+### Added
+
+- **`Options.Transitions` selects the transitions `pepper` simulates, like
+  EasySpin's `Opt.Transitions`.** `None` (the default) keeps the automatic
+  transition pre-selection with `Opt.Threshold`, so default spectra are
+  unchanged (bit-identical). `'all'` takes every level pair u < v with neither
+  the pre-selection nor the `Threshold` intensity post-selection (EasySpin sets
+  its post-selection threshold to zero for `'all'`), which recovers weak lines
+  that the default drops, such as the half-field ΔmS = 2 line of a triplet with
+  small D. A list of 1-based level pairs `(u, v)`, levels numbered by ascending
+  energy at the resonance field, takes exactly those transitions: pairs are
+  normalized to u < v, duplicates are removed, and out-of-range indices, u = v,
+  non-integers and empty lists raise `ValueError` (EasySpin silently drops
+  out-of-range rows and keeps duplicates). Within a list the `Threshold`
+  post-selection still applies, as in EasySpin. Supported on every matrix path
+  of `pepper` (powder projection, strain summation, interpolation, crystals,
+  the isotropic O3 path, frequency sweeps including the automatic range, and
+  `Method='hybrid'`, where levels are those of the exact core) and in
+  `pepper_autograd` (gradients flow as before; the pair list is a constant).
+  `Method='perturb*'` raises when `Transitions` is set (EasySpin ignores the
+  option there). Validated against EasySpin on 9 cases
+  (`tests/data/ref_pepper_transitions.mat`).
+## [0.7.4] — 2026-11-10
+
+### Added
+
+- **Zero-field frequency sweeps and fixed-field ENDOR: `Options.ZeroField`**
+  (default `False`, which leaves results unchanged). With `ZeroField=True`,
+  `pepper` frequency sweeps and `salt` fixed-field ENDOR accept
+  `Experiment.Field = 0`. Levels are grouped into degenerate clusters (Kramers
+  doublets, accidental degeneracies), and each transition carries the rate
+  summed over all level pairs between two clusters. Intensities are therefore
+  independent of the arbitrary eigenbasis inside a degenerate subspace. The
+  summing is done before slot tracking, threshold pruning and pair
+  preselection. The isotropic O3 shortcut is replaced by a D2h grid. Validated
+  against EasySpin's pepper at `Exp.Field = 0` (5 cases,
+  `ref_pepper_zerofield.mat`), closed forms (S = 1: D−E, D+E, 2E; S = 3/2:
+  2·sqrt(D²+3E²)) and the B → 0 limit. See KNOWN_LIMITATIONS.md,
+  "Pepper and salt — zero field".
+- `Experiment(Field=0)` now constructs in frequency-swept and fixed-field mode.
+  Without `ZeroField`, the same `ValueError("Experiment.Field must be positive
+  (mT).")` is raised when `pepper`, `salt`, `garlic`, `chili` or
+  `resfreqs_perturb` is called. A negative field still raises in the
+  constructor.
+## [0.7.3] — 2026-11-10
+
+### Added
+
+- **Hyperfine enhancement in ENDOR intensities: `Options.Enhancement`**
+  (EasySpin `Opt.Enhancement`). Default `False`: results are unchanged
+  (bit-identical). With `True`, `endorfrq` (new keyword `opt=Options(...)`)
+  and the matrix paths of `salt` use the total magnetic moment (electron +
+  nuclear, the `mux/muy/muz` of `ham()`) perpendicular to the field,
+  chi-averaged over lab x and y, as the rf transition operator. As in EasySpin
+  `endorfrq.m`, the transition selection (`threshold`/`Opt.Threshold`) still uses
+  the nuclear-only rates and electronic level pairs are excluded. `salt` with
+  `Enhancement=True` always uses the matrix ENDOR path; its automatic
+  first-order perturbation shortcut (one electron, no Q) has no enhancement.
+  `endorfrq_perturb` gained an `opt` keyword and raises `NotImplementedError`
+  for `Enhancement=True` (EasySpin silently ignores it there). Validated
+  against EasySpin `endorfrq`/`salt` with `Opt.Enhancement='on'`
+  (`tests/data/endor_enhancement_refs.mat`), a NumPy brute force, the
+  first-order factor (ν_ENDOR/ν_I)² and gradients (reverse and forward mode).
+## [0.7.2] — 2026-11-10
+
+### Added
+
+- **`SpinSystem.H0Extra`: generic extra terms in the field-independent
+  Hamiltonian.** A list of `(coeff, op)` pairs; `ham` adds Σ coeff·op (MHz) to
+  H0 on both the `(H0, μ)` and the `ham(Sys, B0)` path, so every simulator that
+  diagonalizes the full Hamiltonian (pepper's matrix method and
+  `pepper_autograd`, `levels`, `resfields`, `resfreqs`, `endorfrq`, `curry`,
+  `nucfrq2d`, saffron's real-pulse engine, spidyan) includes it. `coeff` is a
+  real scalar (float or 0-d tensor) and stays on the autograd graph, as does
+  `op` when it is a tensor that requires grad; `op` is an (n, n) Hermitian
+  matrix in the full spin-system basis (sop order). This allows terms that
+  torchspin has no field for, such as the S=3/2 U term U Σ C_k(S) I_k. Shape,
+  Hermiticity and real coefficients are checked when the spin system is built.
+  `hamsymm` analyzes systems with `H0Extra` through the eigenvalue probe, and
+  `pepper` routes to `pepper_autograd` when a coefficient or operator requires
+  grad. Solvers that build the Hamiltonian from the tensors without `ham`
+  (perturbation theory, `Method='hybrid'`, garlic, chili, fastmotion, cardamom,
+  saffron's fast algorithm, salt for one electron, orisel,
+  `nucspinrmv`/`nucspinkeep`/`nucspinadd`) raise when it is set; so do isotope
+  mixtures in `Nucs` and `SpinSystem.n > 1`. Not an EasySpin feature. The
+  default (`None`) is unchanged.
+
+## [0.7.1] — 2026-11-10
+
+### Added
+
+- **Opt-in field-quadratic and field-cubic higher-order Zeeman terms in the
+  resonance search: `Options.QuadraticZeeman` (default `False`, unchanged
+  behavior).** With `True`, the `Sys.Ham` terms of order lB = 2 and 3 enter
+  pepper's matrix solver, so that H(B) = H0 − B n·μ + B² n·G2·n + B³ G3[n,n,n]
+  equals `ham(Sys, B·n)` at every field. The Hermite level model, Hellmann–Feynman
+  slopes, companion-matrix roots, Newton polish, the dB/dE intensity factor and
+  the strain widths all use dH/dB = −n·μ + 2B n·G2·n + 3B² G3[n,n,n]; the
+  transition pre-selection diagonalizes the full H at the center field, and
+  frequency sweeps add the terms at the fixed field. Covers `pepper` and
+  `pepper_autograd` (`Method='matrix'`: powders, crystals, O3, field and
+  frequency sweeps; the implicit-function gradient uses the full slope) and
+  `resfreqs_matrix`; `levels` gets the same switch as the keyword
+  `quadratic_zeeman=False`. `resfields_batch`/`resfreqs_batch` take the
+  operators as `zeeman_ho=` (from the new
+  `torchspin.ham_ezho.field_nonlinear_zeeman_ops`). The perturbation and hybrid
+  methods, `resfields`, `garlic` and `salt` raise `NotImplementedError` when the
+  option is on and such terms are present; lB ≥ 4 terms raise. Validated
+  against `ham(Sys, B)` (levels to 1e-12, resonance condition to 1e-9), a closed
+  form for S = 1 with w(μB B·S)², a brute-force field-point powder simulation
+  (cosine 0.999998), finite differences (dB/dE, gradients) and EasySpin pepper
+  (`tests/data/ref_pepper_quadzeeman.mat`, cosine ≥ 0.99999, amplitude within
+  0.4 %). With the default `False`, every result is bit-identical to 0.7.0.
+
 ## [0.7.0] — 2026-11-09
 
 CPU-parallel fitting and data generation. Default behavior (`n_workers=1`,

@@ -443,9 +443,9 @@ def test_ddpowj_fortran_s12_strain_weight(name, C):
 
 
 def test_converter_lft_target_maps_what_pepper_cannot(C):
-    """Every input the pepper path refuses (strain, Lorentzian, mixed H1, w, U, S = 0, zero field) converts."""
+    """Every input the pepper path refuses (strain, Lorentzian, mixed H1, S = 0) converts with target='lft'."""
     nd = _tt("ddpowh")
-    for name in ("rhombic_s12_lorentz", "s32_strain", "mode_1_nrho8", "s52_pop_w_u", "s72_I12_U", "nqr_n14"):
+    for name in ("rhombic_s12_lorentz", "s32_strain", "mode_1_nrho8", "nqr_n14"):
         inp = nd.read_input(GOLD["ddpowh"][name])
         with pytest.raises(NotImplementedError):
             t2t.ddpowh2sys(inp)

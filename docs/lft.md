@@ -187,6 +187,10 @@ dim = t2t.dimer2sys(site1=..., site2=..., J=12.0, Ddip=0.02)   # Telser's +J S1.
   constants), resonance fields to 1e-7, ENDOR frequencies to 1e-8. Powder spectra match `pepper`/`salt`
   within tolerances calibrated by refining both programs' grids: 0.3–8 %, with the largest for
   looping transitions.
+- **w, U and zero field** (with torchspin ≥ 0.7.1/0.7.2/0.7.4, PRs #21, #22, #24): w becomes `Sys.Ham` lB = 2 rows
+  and needs `Options(QuadraticZeeman=True)`; U becomes a differentiable `Sys.H0Extra` term; a zero-field
+  FDMR/ENDOR spectrum keeps `Field = 0` and needs `Options(ZeroField=True)`. The converters return the
+  needed keywords in `extras['options']` (and per spectrum in `extras['spectra'][k]['options']`).
 - `target='lft'` in `ddpowh2sys`/`ddpowj2sys` maps everything instead, for `lft.ddpowh`/`lft.ddpowj`
   (next section): strain, Lorentzian lines, w, U, S = 0, zero field, mixed H1 modes.
 - [lft_gap_analysis.md](lft_gap_analysis.md) lists every Telser spin-family feature as supported,

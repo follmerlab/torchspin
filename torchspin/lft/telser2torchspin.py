@@ -50,10 +50,11 @@ Transition probabilities: Telser's (telser-tools exact mode) B1-averaged P is no
 g = 2 gives 1.  torchspin's rate (|mu|^2 - |n.mu|^2)/2 is mu_B^2 P (with the nuclear moment, which Telser
 leaves out by default); ``resfields`` intensities are mu_B^2 P/(2I + 1)/|dE/dB|.
 
-Not mapped (see ``docs/lft_gap_analysis.md``): the second-order Zeeman w (torchspin's ``levels``,
-``resfields`` and ``pepper`` use only the part of H linear in B), the I.S^3 hyperfine U, NMR/NQR powder
-spectra (S = 0; the nuclear SpinSystem itself is built), the DDPOWH/DDPOWJ strain models, Lorentzian
-frequency-domain widths, zero-field FDMR/ENDOR and mixed H1 modes.  With ``strict=True`` (default) these
+w becomes ``Sys.Ham`` lB = 2 rows (run with ``Options(QuadraticZeeman=True)``; ``extras['options']``), U a
+``Sys.H0Extra`` term, and a zero field a true ``Field = 0`` (``Options(ZeroField=True)``, per spectrum in
+``extras['spectra']``).  Not mapped for pepper (see ``docs/lft_gap_analysis.md``): NMR/NQR powder spectra
+(S = 0; the nuclear SpinSystem itself is built), the DDPOWH/DDPOWJ strain models, Lorentzian
+frequency-domain widths and mixed H1 modes.  With ``strict=True`` (default) these
 raise ``NotImplementedError``; with ``strict=False`` they are dropped with a warning and listed in
 ``TelserConversion.extras['dropped']``.  Telser's Flygare frequency factor has no counterpart either; compare
 with telser-tools' ``frequency_factor=False``.  ``ddpowh2sys``/``ddpowj2sys`` with ``target='lft'`` map all of
@@ -93,7 +94,8 @@ __all__ = ["TelserConversion", "MU_B_MHZ_PER_MT", "MU_N_MHZ_PER_MT", "abf_to_ste
            "zfs_principal", "euler_matrix", "rotate_tensor", "telser_J", "antisymmetric_tensor", "exchange_tensor",
            "third_order_zeeman_ham", "isotope_for", "dimer_energy_offset", "spin2sys", "dimer2sys",
            "epr_experiment", "ordering", "ddzhq2sys", "ddpowh2sys", "djdze2sys", "ddpowj2sys",
-           "QuadrupoleEcho", "quadrupole_echo", "spin_projections", "second_order_zeeman_operator", "u_term_operator"]
+           "QuadrupoleEcho", "quadrupole_echo", "spin_projections", "second_order_zeeman_operator", "u_term_operator", "second_order_zeeman_ham",
+           "second_order_zeeman_offset", "quadratic_zeeman_options"]
 
 _F64 = torch.float64
 
@@ -112,6 +114,8 @@ class TelserConversion(NamedTuple):
     """Result of a program converter: the SpinSystem, an Experiment (or None) and extra information.
 
     ``extras`` keys (as present): ``'dropped'`` (features not mapped, strict=False), ``'notes'``,
+    ``'options'`` (``Options`` keywords the run needs, e.g. ``QuadraticZeeman=True`` for w, ``ZeroField=True``
+    per zero-field spectrum in ``'spectra'``),
     ``'energy_offset'`` (MHz; Telser's levels = torchspin's + offset), ``'cycles'`` (DDZHQ/DJDZE field
     points), ``'spectra'`` (DDPOWH per-spectrum experiments and ENDOR settings), ``'h1mode'``.
     """
@@ -321,6 +325,83 @@ def third_order_zeeman_ham(s, u, *, mu_b: float = MU_B_MHZ_PER_MT, electron: int
     return {"132": rows2, "134": rows4}
 
 
+@lru_cache(maxsize=32)
+def _w_coefficients(s: float) -> tuple[tuple[float, ...], tuple[float, ...], tuple[float, ...]]:
+    """('220', '222', '224') Ham rows whose field-quadratic part equals mu_B^2 (B.S)^2 minus its spin-scalar part.
+
+    (B.S)^2 = B_k B_l (S_k S_l + S_l S_k)/2; the part B^2 X/3 (X = S(S+1), proportional to the identity) is
+    not representable in ``Sys.Ham`` (a rank-lB field tensor needs l >= |lB - lS|) and shifts every level
+    equally, so it is left out (see :func:`second_order_zeeman_ham`).  Found by projection through
+    :func:`torchspin.ham_ezho.field_nonlinear_zeeman_ops` (unit mu_B here; the caller scales).
+    """
+    from torchspin.ham_ezho import field_nonlinear_zeeman_ops
+
+    keys = [("220", 1), ("222", 5), ("224", 9)]
+    cols = []
+    for key, width in keys:
+        for c in range(width):
+            row = [0.0] * width
+            row[c] = 1.0
+            G2 = field_nonlinear_zeeman_ops(SpinSystem(S=[s], g=[0.0, 0.0, 0.0], Ham={key: [row]}))[0]
+            cols.append(G2.reshape(-1))
+    a = torch.stack(cols, dim=1)
+    S = torch.stack(_spin_ops(s))
+    x = s * (s + 1)
+    n = S.shape[-1]
+    T = 0.5 * (torch.einsum("kab,lbc->klac", S, S) + torch.einsum("lab,kbc->klac", S, S))
+    T = T - torch.eye(3, dtype=T.dtype)[:, :, None, None] * (x / 3.0) * torch.eye(n, dtype=T.dtype)
+    t = T.reshape(-1)
+    a_ri, t_ri = torch.cat([a.real, a.imag]), torch.cat([t.real, t.imag])
+    sol = torch.linalg.lstsq(a_ri, t_ri.unsqueeze(1), driver="gelsd").solution.squeeze(1)
+    res = float((a_ri @ sol - t_ri).abs().max())
+    if res > 1e-9 * max(1.0, float(t_ri.abs().max())):
+        raise RuntimeError(f"second-order Zeeman term of S = {s} is not representable in Ham 22l (residual {res:.3g})")
+    v = [float(c) for c in sol]
+    return tuple(v[:1]), tuple(v[1:6]), tuple(v[6:])
+
+
+def _spin_ops(s: float) -> list[torch.Tensor]:
+    m = s - torch.arange(int(round(2 * s)) + 1, dtype=_F64)
+    n = len(m)
+    sp = torch.zeros((n, n), dtype=torch.complex128)
+    for k in range(1, n):
+        sp[k - 1, k] = math.sqrt(s * (s + 1) - float(m[k]) * (float(m[k]) + 1))
+    sm = sp.T.conj()
+    return [(sp + sm) / 2, (sp - sm) / 2j, torch.diag(m).to(torch.complex128)]
+
+
+def second_order_zeeman_ham(s, w, *, mu_b: float = MU_B_MHZ_PER_MT, units: str = "cm^-1", constants=None,
+                            electron: int = 0, n_electrons: int = 1) -> dict:
+    """``SpinSystem.Ham`` entries (lB = 2) for Telser's second-order Zeeman term w (mu_B B.S)^2.
+
+    ``w`` in 1/``units`` (Telser: 1/cm^-1); ``mu_b`` is mu_B/h in MHz/mT.  The returned rows reproduce
+    w mu_B^2 [(B.S)^2 - B^2 X/3] (X = S(S+1)): the dropped part is proportional to the identity, shifts
+    all levels by w mu_B^2 B^2 X/3 and leaves transitions unchanged (Telser's levels = torchspin's +
+    :func:`second_order_zeeman_offset`).  ``levels``/``resfields``/``pepper`` include the term only with
+    ``Options(QuadraticZeeman=True)`` (``levels(..., quadratic_zeeman=True)``); ``ham(sys, B0)`` always does.
+    The coefficients are detached (``ham_ezho`` reads ``Sys.Ham`` with ``.detach()``).
+    """
+    s = float(s)
+    if s < 1:
+        raise ValueError("the second-order Zeeman term needs S >= 1")
+    f = _energy_to_mhz(units, constants)
+    scale = float(_t(w).detach()) * mu_b * mu_b / f
+    c0, c2, c4 = _w_coefficients(s)
+    out = {}
+    for key, coef in (("220", c0), ("222", c2), ("224", c4)):
+        rows = [[0.0] * len(coef) for _ in range(n_electrons)]
+        rows[electron] = [scale * c for c in coef]
+        out[key] = rows
+    return out
+
+
+def second_order_zeeman_offset(s, w, field_mT, *, mu_b: float = MU_B_MHZ_PER_MT, units: str = "cm^-1",
+                               constants=None):
+    """w mu_B^2 B^2 X/3 (MHz): Telser's levels minus torchspin's for the w term of :func:`second_order_zeeman_ham`."""
+    s = float(s)
+    return _t(w) * mu_b * mu_b / _energy_to_mhz(units, constants) * float(field_mT) ** 2 * s * (s + 1) / 3.0
+
+
 def _merge_ham(a: dict | None, b: dict) -> dict:
     if a is None:
         return b
@@ -382,8 +463,9 @@ def spin2sys(params: Any = None, *, s=None, g=None, w=None, u=None, D=None, E=No
 
     S = 0 gives a nuclear spin system (``S=[]``: quadrupole and nuclear Zeeman), DDPOWH's NMR/NQR case.
 
-    Telser's terms with no torchspin counterpart, w (second-order Zeeman) and U (I.S^3 hyperfine), raise
-    ``NotImplementedError`` (``strict=False``: dropped with a warning, names appended to ``dropped``).
+    w (second-order Zeeman) becomes ``Sys.Ham`` lB = 2 rows (:func:`second_order_zeeman_ham`; pepper,
+    resfields and levels need ``Options(QuadraticZeeman=True)``, see :func:`quadratic_zeeman_options`) and U
+    (I.S^3 hyperfine) a ``Sys.H0Extra`` term (:func:`u_term_operator`, differentiable in U).
     """
     dropped = [] if dropped is None else dropped
     s = float(_pick(s, params, "s", 0.5))
@@ -400,12 +482,12 @@ def spin2sys(params: Any = None, *, s=None, g=None, w=None, u=None, D=None, E=No
             kw["D"] = (zfs_principal(D_, E_) * f).unsqueeze(0)
         w_ = _pick(w, params, "w", 0.0)
         if _nonzero(w_):
-            _drop("w (second-order Zeeman)", strict, dropped,
-                  "torchspin's levels/resfields/pepper use only the part of H linear in B")
+            kw["Ham"] = _merge_ham(kw.get("Ham"), second_order_zeeman_ham(
+                s, w_, mu_b=MU_B_MHZ_PER_MT * gs, units=units, constants=constants))
     if s >= 1.5:
         u_ = _pick(u, params, "u", (0.0, 0.0, 0.0))
         if _nonzero(u_):
-            kw["Ham"] = third_order_zeeman_ham(s, u_, mu_b=MU_B_MHZ_PER_MT * gs)
+            kw["Ham"] = _merge_ham(kw.get("Ham"), third_order_zeeman_ham(s, u_, mu_b=MU_B_MHZ_PER_MT * gs))
     if s >= 2:
         b4 = [_t(_pick(x, params, n, 0.0)) for x, n in ((B40, "B40"), (B42, "B42"), (B44, "B44"))]
         if any(v is not None for v in (a, F, b)):
@@ -417,6 +499,7 @@ def spin2sys(params: Any = None, *, s=None, g=None, w=None, u=None, D=None, E=No
             row = torch.stack([b4[2], z, b4[1], z, b4[0], z, z, z, z]) * f
             kw["B"] = [None, row.unsqueeze(0)]
     nuc = _pick(nucleus, params, "nucleus", None)
+    u_term, U_ = False, 0.0
     xi = float(_pick(I, nuc, "spin", 0.0)) if (nuc is not None or I is not None) else 0.0
     if s < 0.5 and xi < 0.5:
         raise ValueError("S = 0 needs a nucleus with I >= 1/2")
@@ -445,14 +528,27 @@ def spin2sys(params: Any = None, *, s=None, g=None, w=None, u=None, D=None, E=No
                     kw["Q"] = Q_.unsqueeze(0)
                     kw["QFrame"] = (Qe * deg).unsqueeze(0)
         U_ = _pick(U, nuc, "U", 0.0)
-        if s >= 1.5 and _nonzero(U_):
-            _drop("U (I.S^3 hyperfine)", strict, dropped, "torchspin has no hyperfine term cubic in S")
+        u_term = s >= 1.5 and _nonzero(U_)
     for key in sys_kwargs:
         if key in kw and key != "Ham":
             raise TypeError(f"spin2sys sets {key!r} itself")
     if "Ham" in sys_kwargs:
         kw["Ham"] = _merge_ham(kw.get("Ham"), sys_kwargs.pop("Ham"))
-    return SpinSystem(**kw, **sys_kwargs)
+    sy = SpinSystem(**kw, **sys_kwargs)
+    if xi >= 0.5 and u_term:
+        import dataclasses
+
+        extra = list(sy.H0Extra or [])
+        extra.append((_t(U_), u_term_operator(sy, 1.0)))
+        sy = dataclasses.replace(sy, H0Extra=extra)
+    return sy
+
+
+def quadratic_zeeman_options(sys: SpinSystem) -> dict:
+    """``Options`` keywords a converted system needs: ``QuadraticZeeman=True`` if it carries a w term."""
+    from torchspin.ham_ezho import has_field_nonlinear_zeeman
+
+    return {"QuadraticZeeman": True} if sys.Ham is not None and has_field_nonlinear_zeeman(sys) else {}
 
 
 # ----------------------------------------------------------------------------- dimers
@@ -570,9 +666,6 @@ def dimer2sys(params: Any = None, *, site1: Any = None, site2: Any = None, J=Non
 
 
 # ----------------------------------------------------------------------------- experiments
-#: stand-in for a zero field in fixed-field Experiments (strict=False), mT
-_ZERO_FIELD_MT = 1e-6
-
 _MIXED_NOTE = ("mixed H1 mode r: Telser's P = P_perp + r P_par; exp is perpendicular, the parallel part is "
                "the same Experiment with Mode='parallel'")
 
@@ -716,7 +809,8 @@ def ddzhq2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool =
         exp_kw["Temperature"] = float(inp.temperature)
     notes = [_MIXED_NOTE] if float(inp.h1mode) > 0 else []
     return TelserConversion(sy, Experiment(**exp_kw), dict(cycles=cycles, dropped=dropped, notes=notes,
-                                                           h1mode=float(inp.h1mode)))
+                                                           h1mode=float(inp.h1mode),
+                                                           options=quadratic_zeeman_options(sy)))
 
 
 def _ddpowh_strain_check(inp, strict: bool, dropped: list) -> None:
@@ -784,7 +878,9 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
         exp = epr_experiment(inp.freq_ghz, inp.field_range, inp.npts, field_units=inp.field_units,
                              deriv=inp.epr_deriv, temperature=temp, h1mode=float(inp.h1mode), strict=strict,
                              dropped=dropped)
-        return TelserConversion(sy, exp, dict(dropped=dropped, spectra=[dict(exp=exp)], h1mode=float(inp.h1mode)))
+        qz = quadratic_zeeman_options(sy)
+        return TelserConversion(sy, exp, dict(dropped=dropped, spectra=[dict(exp=exp, options=qz)],
+                                              h1mode=float(inp.h1mode), options=qz))
     if float(inp.s) < 0.5:
         return TelserConversion(sy, None, dict(dropped=dropped, spectra=[], h1mode=float(inp.h1mode)))
     mode = _mode(float(inp.h1mode), strict, dropped)
@@ -793,10 +889,9 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
             b_mt = float(inp.freq_ghz) * 1e3 / (mub * float(sp.value))
         else:
             b_mt = float(sp.value) / 10.0
-        if b_mt <= 0:
-            _drop(f"zero-field {'FDMR' if kind == 'F' else 'ENDOR'} spectrum", strict, dropped,
-                  f"torchspin's fixed-field experiments need Field > 0; {_ZERO_FIELD_MT} mT is used instead")
-            b_mt = _ZERO_FIELD_MT
+        zero = b_mt <= 0
+        if zero:
+            b_mt = 0.0                     # a true zero field: pepper/salt need Options(ZeroField=True)
         if kind == "F":
             lo, hi = inp.energy_range
             fac = 29.9792458 if getattr(inp, "energy_units", "C") in ("C", "c") else 1e3   # cm^-1 or THz -> GHz
@@ -806,7 +901,8 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
                       Harmonic=int(inp.epr_deriv), Mode=mode)
             if temp is not None:
                 ex["Temperature"] = temp
-            spectra.append(dict(exp=Experiment(**ex), field_mT=b_mt))
+            spectra.append(dict(exp=Experiment(**ex), field_mT=b_mt,
+                                options=dict(ZeroField=True) if zero else {}))
         else:
             nu_n = abs(float(inp.g_n)) * mun * b_mt
             lo, hi = inp.rf_range
@@ -816,12 +912,16 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
             if temp is not None:
                 ex["Temperature"] = temp
             spectra.append(dict(exp=Experiment(**ex), field_mT=b_mt, nu_n_mhz=nu_n,
+                                options=dict(ZeroField=True) if zero else {},
                                 salt=dict(freq_range=(lo, hi), n_points=int(inp.npts) + 1,
                                           lw_mhz=2.0 * float(inp.nmr_width[0]))))
             if len({float(x) for x in inp.nmr_width}) > 1:
                 dropped.append("anisotropic NMR width (salt takes one lw_mhz; the x value is used)")
+    qz = quadratic_zeeman_options(sy)
+    for sp in spectra:
+        sp["options"] = {**qz, **sp.get("options", {})}
     return TelserConversion(sy, spectra[0]["exp"] if spectra else None,
-                            dict(dropped=dropped, spectra=spectra, h1mode=float(inp.h1mode)))
+                            dict(dropped=dropped, spectra=spectra, h1mode=float(inp.h1mode), options=qz))
 
 
 def _dimer_params(inp, separate_d_euler: bool):
