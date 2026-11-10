@@ -16,6 +16,7 @@ Ported from telser-tools (``telser_tools_diff``).  Modules carry Telser's progra
 ``lft.dsoxf``         single term + spin-orbit + low-symmetry field, d and f shells (DSOXF)
 ``lft.tanabe_sugano`` Tanabe-Sugano blocks and diagrams (DTANSUG)
 ``lft.fit``           joint fits of one model to bands, g, chi, M and EPR spectra (exact Jacobians)
+``lft.plot``          level, Tanabe-Sugano, Zeeman/angle/road-map, chi T, M, powder and fit plots (cm^-1 default)
 ``lft.grids``         field-direction grids for magnetometry (Gauss hemisphere, DDN igloo, ...)
 ``lft.ligand_field``  AOM, Ballhausen crystal field, orbital energies (also exported here:
                       ``lft.aom``, ``lft.aom_isotropic``, ``lft.crystal_field``, ...)
@@ -31,7 +32,7 @@ derivatives), not ``torchspin._linalg.eigh``, whose gauge-zeroing backward is ri
 spectra but drops f'(lambda) tr(dH A) inside degenerate levels.
 """
 
-from . import bridge, ddn, ddnfit, ddnloop, ddnpow, ddnmag, ddnsus, dipole, dlsd5, dpn, dpnfit, dsoxf, dtd, fit, grids, ligand_field, tanabe_sugano, units
+from . import bridge, ddn, ddnfit, ddnloop, ddnpow, ddnmag, ddnsus, dipole, dlsd5, dpn, dpnfit, dsoxf, dtd, fit, grids, ligand_field, plot, tanabe_sugano, units
 from .bridge import dn2sys
 from .ligand_field import (AOM_MODES, Ligand, aom, aom_from_angles, aom_from_frames, aom_isotropic, crystal_field,
                            octahedron, orbital_matrix, rotation, tetrahedron)
@@ -39,6 +40,6 @@ from .ligand_field import (AOM_MODES, Ligand, aom, aom_from_angles, aom_from_fra
 __all__ = [
     "aom", "aom_from_angles", "aom_from_frames", "aom_isotropic", "AOM_MODES", "bridge", "crystal_field", "ddn",
     "ddnfit", "ddnloop", "ddnmag", "ddnpow", "ddnsus", "dipole", "dlsd5", "dn2sys", "dpn", "dpnfit", "dsoxf",
-    "dtd", "fit", "grids", "Ligand", "ligand_field", "octahedron", "orbital_matrix", "rotation", "tanabe_sugano",
-    "tetrahedron", "units",
+    "dtd", "fit", "grids", "Ligand", "ligand_field", "octahedron", "orbital_matrix", "plot", "rotation",
+    "tanabe_sugano", "tetrahedron", "units",
 ]
