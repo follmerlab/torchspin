@@ -163,17 +163,32 @@ def test_isotope_for():
     assert sy.Nucs == ["7Li"] and float(sy.gnscale[0]) * nucgval("7Li") == pytest.approx(0.5)
 
 
+def test_w_and_u_are_mapped():
+    """w -> Sys.Ham lB = 2 rows (needs Options.QuadraticZeeman), U -> Sys.H0Extra (keeps its graph)."""
+    from torchspin.spinops import sop
+
+    sy = t2t.spin2sys(s=1.0, D=0.1, w=0.5)
+    assert set(sy.Ham) >= {"222"} and t2t.quadratic_zeeman_options(sy) == {"QuadraticZeeman": True}
+    assert t2t.quadratic_zeeman_options(t2t.spin2sys(s=1.0, D=0.1)) == {}
+    U = torch.tensor(2.0, dtype=F64, requires_grad=True)
+    su = t2t.spin2sys(s=1.5, I=0.5, g_n=5.58, A=(1.0, 1.0, 1.0), U=U)
+    assert len(su.H0Extra) == 1 and su.H0Extra[0][0].requires_grad
+    # w (mu_B B.S)^2 on the full-field path, up to the scalar w mu_B^2 B^2 X/3
+    for s in (1.0, 2.5):
+        sy = t2t.spin2sys(s=s, g=(2.0, 2.0, 2.0), w=0.3)
+        n = torch.tensor([0.3, 0.5, 0.81], dtype=F64)
+        n = n / n.norm()
+        b = 400.0
+        nS = sum(float(n[c]) * sop([s], [1, c + 1]) for c in range(3))
+        H = 2.0 * t2t.MU_B_MHZ_PER_MT * b * nS + 0.3 * CM * (t2t.MU_B_MHZ_PER_MT / CM * b) ** 2 * (nS @ nS)
+        ref = torch.linalg.eigvalsh(H) - float(t2t.second_order_zeeman_offset(s, 0.3, b))
+        np.testing.assert_allclose(torch.linalg.eigvalsh(ham(sy, (b * n).tolist())).numpy(), ref.numpy(),
+                                   atol=1e-10 * float(ref.abs().max()))
+
+
 def test_unmapped_features_raise_or_drop():
-    with pytest.raises(NotImplementedError, match="second-order Zeeman"):
-        t2t.spin2sys(s=1.0, D=0.1, w=0.5)
-    with pytest.raises(NotImplementedError, match="I.S\\^3"):
-        t2t.spin2sys(s=1.5, I=0.5, g_n=5.58, A=(1.0, 1.0, 1.0), U=2.0)
     with pytest.raises(ValueError, match="S = 0 needs a nucleus"):
         t2t.spin2sys(s=0.0)
-    dropped = []
-    with pytest.warns(UserWarning, match="dropped w"):
-        sy = t2t.spin2sys(s=1.0, D=0.1, w=0.5, strict=False, dropped=dropped)
-    assert dropped == ["w (second-order Zeeman)"] and sy.S == [1.0]
     with pytest.raises(NotImplementedError, match="mixed H1 mode"):
         t2t.epr_experiment(9.5, (3000, 3600), 100, h1mode=1.0)
     with pytest.raises(NotImplementedError, match="molecular frame"):
@@ -321,10 +336,18 @@ def test_ddzhq_levels_and_probabilities(name, C):
     ddzhq, inp = _ddzhq_input(name)
     spin = _tt("spin")
     has_w_u = (inp.s >= 1 and inp.w != 0) or (inp.s >= 1.5 and inp.nucleus_spin >= 0.5 and inp.U != 0)
-    if has_w_u:
-        with pytest.raises(NotImplementedError):
-            t2t.ddzhq2sys(inp, constants=C)
-        inp = dataclasses.replace(inp, w=0.0, U=0.0)            # the documented gap: compare without w and U
+    if has_w_u:                                                 # w -> Sys.Ham lB = 2, U -> H0Extra: full-field levels
+        cw = t2t.ddzhq2sys(inp, constants=C)
+        rw = ddzhq.run(inp)
+        for cy, c in zip(rw.cycles, cw.extras["cycles"]):
+            n = c["direction"].numpy()
+            e = torch.linalg.eigvalsh(ham(cw.sys, (c["field_mT"] * n).tolist())).numpy()
+            if inp.s >= 1 and inp.w != 0:
+                e = e + float(t2t.second_order_zeeman_offset(inp.s, inp.w, c["field_mT"], constants=C,
+                                                             mu_b=C.mu_b_mhz * 10))
+            np.testing.assert_allclose(e * C.mhz_to_cm, cy.energies, rtol=0,
+                                       atol=1e-12 * max(1.0, np.abs(cy.energies).max()))
+        inp = dataclasses.replace(inp, w=0.0, U=0.0)            # probabilities below: the linear-moment model
     cv = t2t.ddzhq2sys(inp, constants=C)
     res = ddzhq.run(inp)
     ops = spin.build(res.params, C)
@@ -573,12 +596,14 @@ def test_ddpowh_frequency_factor_relation():
 
 def test_ddpowh_fdmr_matches_pepper_frequency_sweep():
     ddpowh, inp = _ddpowh("fdmr_s1_cm", igloo=40)
-    with pytest.raises(NotImplementedError, match="zero-field FDMR"):        # spectrum 1 is at zero field
-        t2t.ddpowh2sys(inp)
-    sp = ddpowh.simulate(inp, frequency_factor=False).spectra[1]               # spectrum 2: 20000 G
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        cv = t2t.ddpowh2sys(inp, strict=False)
+    res = ddpowh.simulate(inp, frequency_factor=False).spectra
+    cv = t2t.ddpowh2sys(inp)                                                    # spectrum 1 is at zero field
+    z = cv.extras["spectra"][0]
+    assert z["exp"].Field == 0.0 and z["options"] == {"ZeroField": True}
+    _, yz = pepper(cv.sys, z["exp"], Options(GridSize=91, Threshold=0.0, **z["options"]))
+    dz, cz = _norm_dev(res[0].y, yz.numpy())
+    assert dz < 3e-2 and cz > 0.999, (dz, cz)
+    sp = res[1]                                                                 # spectrum 2: 20000 G
     ex = cv.extras["spectra"][1]["exp"]
     assert ex.Field == pytest.approx(2000.0)
     assert ex.mwRange == pytest.approx([x * CM / 1e3 for x in inp.energy_range], rel=1e-14)
@@ -606,8 +631,7 @@ def test_ddpowh_endor_matches_salt():
 
 
 @pytest.mark.parametrize("name,match", [("rhombic_s12_lorentz", "Lorentzian"), ("s32_strain", "strain"),
-                                        ("mode_1_nrho8", "mixed H1"), ("s52_pop_w_u", "second-order Zeeman"),
-                                        ("s72_I12_U", "I.S\\^3"), ("nqr_n14", "NMR/NQR")])
+                                        ("mode_1_nrho8", "mixed H1"), ("nqr_n14", "NMR/NQR")])
 def test_ddpowh_unmapped_features(name, match):
     ddpowh, inp = _ddpowh(name)
     with pytest.raises(NotImplementedError, match=match):
@@ -726,3 +750,33 @@ def test_spin_projections_match_djdze(C):
                 np.testing.assert_allclose(mine[np.array(levels) - 1].sum(axis=0), ref, atol=1e-9)
                 n_checked += 1
     assert n_checked > 10
+
+
+def test_w_and_u_powder_through_pepper_match_the_exact_field_point_model():
+    """pepper with the converted w (Sys.Ham lB = 2, Options.QuadraticZeeman) and U (Sys.H0Extra) vs lft.ddpowh
+    (Telser's exact field-point model, = telser-tools to 1e-10), frequency factor off.
+
+    * S = 1, D = 0.08 cm^-1, w = 1 /cm^-1, W = 150 MHz: mapped 0.4 % of the peak, w dropped 57 %.
+    * S = 3/2 + 1H, D = 5 cm^-1, U = 60 MHz, W = 60 MHz: mapped 2.5 % (pepper vs the field-point model without U:
+      1.8 %, the grid/linearization baseline), U dropped 18 %.
+    """
+    from torchspin import Experiment
+    from torchspin.lft import ddpowh
+
+    cases = [(dict(s=1.0, g=(2.0, 2.0, 2.0), D=0.08, E=0.01), dict(w=1.0), np.linspace(150.0, 550.0, 401), 150.0,
+              1e-2),
+             (dict(s=1.5, g=(2.0, 2.0, 2.0), D=5.0, I=0.5, g_n=5.58569, A=(40.0, 40.0, 40.0)), dict(U=60.0),
+              np.linspace(150.0, 400.0, 501), 60.0, 4e-2)]
+    for base, term, f, W, tol in cases:
+        s_l = t2t.spin2sys(**base)
+        extra = (dict(zeeman2=t2t.second_order_zeeman_operator(s_l, term["w"])) if "w" in term
+                 else dict(h0_extra=t2t.u_term_operator(s_l, term["U"])))
+        ref = ddpowh.epr(s_l, f, 9.5, width=W, igloo=60, extent="octant", frequency_factor=False, **extra).spectrum
+        ex = Experiment(mwFreq=9.5, Range=[f[0], f[-1]], nPoints=len(f), Harmonic=0)
+        sm = t2t.spin2sys(**base, **term, HStrain=[2 * W] * 3)
+        y = pepper(sm, ex, Options(GridSize=91, Threshold=0.0, **t2t.quadratic_zeeman_options(sm)))[1]
+        y0 = pepper(t2t.spin2sys(**base, HStrain=[2 * W] * 3), ex, Options(GridSize=91, Threshold=0.0))[1]
+        dev, corr = _norm_dev(ref.numpy(), y.numpy())
+        dev0, _ = _norm_dev(ref.numpy(), y0.numpy())
+        assert dev < tol and corr > 0.998, (term, dev, corr)
+        assert dev0 > 4 * dev, (term, dev0, dev)
