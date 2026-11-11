@@ -19,6 +19,10 @@ Sys3 = struct('S',3/2,'g',[2.0 2.0 2.0],'D',[1500 100],'lwpp',2);
 Sys3.Ham220 = 1.5e-4; Sys3.Ham222 = [1e-4 0 -2e-4 0 0];
 Exp3 = struct('mwFreq',9.5,'Range',[50 650],'nPoints',4096);
 cases{end+1} = mk('S32_ham2_lwpp',Sys3,Exp3,struct());
-% No frequency-sweep case: EasySpin's resfreqs_matrix fails for Sys.Ham2xx
-% ("Wrong number of output arguments" from ham, resfreqs_matrix.m:371).
+% Frequency sweep. Needs EasySpin with the resfreqs_matrix.m Ham check (StollLab/EasySpin
+% d46e5ef9, 2026-09-26): older copies test for 'ZB*' fields, miss Sys.Ham2xx and fail
+% ("Wrong number of output arguments" from ham).
+Sys4 = Sys; Sys4.lwpp = 30;
+Exp4 = struct('Field',340,'mwRange',[8.5 10.5],'nPoints',4096,'Harmonic',0);
+cases{end+1} = mk('S1_ham2_freqsweep',Sys4,Exp4,struct());
 script_dir = fileparts(mfilename('fullpath')); save(fullfile(script_dir,'ref_pepper_quadzeeman.mat'),'cases','-v7'); fprintf('Done: %d cases\n',numel(cases));

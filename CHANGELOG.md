@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Tests
+
+- **EasySpin reference for frequency sweeps with field-quadratic `Sys.Ham2xx` terms.** EasySpin's
+  `resfreqs_matrix.m` could not run them before StollLab/EasySpin d46e5ef9 (it tested for obsolete
+  `ZB*` fields), so `Options.QuadraticZeeman` frequency sweeps were checked only against the full
+  Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
+  EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
+
 ## [0.8.7] — 2026-11-11
 
 ### Fixed

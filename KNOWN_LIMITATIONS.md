@@ -437,10 +437,12 @@ terms are included as H(B) = H0 − B n·μ + B² n·G2·n + B³ G3[n,n,n], whic
   `resfields` builds its level model from the full `ham(Sys, B)` but takes dB/dE
   from the linear moment only. Line intensities therefore differ by the ratio of the
   two slopes (0.03–0.3 % for the reference cases).
-- **EasySpin frequency sweeps** with `Sys.Ham2xx` fail: `resfreqs_matrix.m` looks
-  for fields named `ZB*` to detect higher-order terms and then calls `ham` with
-  four outputs, which errors. torchspin's frequency-sweep path is therefore
-  checked against the full Hamiltonian instead of EasySpin.
+- **EasySpin frequency sweeps** with `Sys.Ham2xx` fail in EasySpin releases before
+  StollLab/EasySpin d46e5ef9 (2026-09-26): their `resfreqs_matrix.m` looks for fields
+  named `ZB*` to detect higher-order terms, misses `Sys.Ham*` and then calls `ham` with
+  four outputs, which errors. With that fix, torchspin's frequency sweep matches
+  EasySpin (`S1_ham2_freqsweep` in `ref_pepper_quadzeeman.mat`: cosine 1.0000000,
+  amplitude 0.99988; without the Ham terms the cosine to that reference is 0.976).
 - `Sys.Ham` coefficients are constants (`ham_ezho` detaches them): gradients
   flow to g, D, A, … but not to the Ham terms themselves.
 - In the McGavin–Tennant–Weil formalism the field enters as a rank-lB spherical
