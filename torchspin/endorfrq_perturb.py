@@ -61,9 +61,15 @@ def endorfrq_perturb(
     Returns
     -------
     freqs : Tensor, shape ``(nTrans,)``
-        ENDOR frequencies in MHz (positive).
+        ENDOR frequencies in MHz (positive), in EasySpin's element order:
+        nucleus by nucleus; within a nucleus by the mI of the lower level
+        (-I first), and within that by mS ascending (-S first).
     intensities : Tensor, shape ``(nTrans,)``
-        Relative intensities (proportional to nuclear transition probability).
+        EasySpin ``endorfrq_perturb`` intensities, (MHz/mT)^2: for the
+        transition with lower level mI = -I + k - 1 (k = 1..2I),
+        (gn·μN/h)² · k(2I+1-k)/4 / (2I+1) · ∏(2I+1) over all nuclei of the
+        system, the same for every mS.  Since 0.8.8; before, the matrix
+        element was off by one level and the ∏(2I+1) factor was missing.
 
     Raises
     ------
@@ -83,6 +89,10 @@ def endorfrq_perturb(
     is the nuclear Larmor frequency in MHz.
 
     ENDOR transitions connect states mI and mI+1 within the same mS manifold.
+
+    A full 3×3 ``Q`` (``sys.fullQ``) is used as given (rows 3i..3i+2 for
+    nucleus i), as in EasySpin; before 0.8.8 its rows were misread as
+    principal values.
     """
     if opt is not None and bool(getattr(opt, 'Enhancement', False)):
         raise NotImplementedError(
@@ -192,16 +202,20 @@ def endorfrq_perturb(
         # A @ u (hyperfine field direction per unit mS)
         Ah = A_mat @ u  # (3,)
 
-        # Quadrupole
-        has_quad = I_nuc > 0.5 and sys.Q is not None and iNuc < sys.Q.shape[0]
+        # Quadrupole (full 3x3 Q: rows 3*iNuc..3*iNuc+2, as EasySpin
+        # endorfrq_perturb.m:84-85; else principal values + QFrame)
+        has_quad = I_nuc > 0.5 and sys.Q is not None
         if has_quad:
-            Q_diag = torch.diag(sys.Q[iNuc, :].to(dt))
-            if hasattr(sys, 'QFrame') and sys.QFrame is not None:
-                R_Q2M = erot(sys.QFrame[iNuc, :].tolist()).T
-                RQ = torch.as_tensor(R_Q2M, dtype=dt, device=device)
-                Q_mat = RQ @ Q_diag @ RQ.T
+            if sys.fullQ:
+                Q_mat = sys.Q[3 * iNuc : 3 * iNuc + 3, :].to(dt)
             else:
-                Q_mat = Q_diag
+                Q_diag = torch.diag(sys.Q[iNuc, :].to(dt))
+                if hasattr(sys, 'QFrame') and sys.QFrame is not None:
+                    R_Q2M = erot(sys.QFrame[iNuc, :].tolist()).T
+                    RQ = torch.as_tensor(R_Q2M, dtype=dt, device=device)
+                    Q_mat = RQ @ Q_diag @ RQ.T
+                else:
+                    Q_mat = Q_diag
             Q_mat = Q_mat - torch.eye(3, dtype=dt, device=device) * Q_mat.trace() / 3
         else:
             Q_mat = None
@@ -290,23 +304,23 @@ def endorfrq_perturb(
             else:
                 NucEnergy[imS] = E1A + E1Q
 
-        # ENDOR frequencies: |E(mI+1) - E(mI)| for each mS manifold
+        # ENDOR frequencies |E(mI+1) - E(mI)| for each mS manifold, in
+        # EasySpin's element order (endorfrq_perturb.m:303-304, 377-381):
+        # mI of the lower level major, mS ascending within it.  NucEnergy
+        # rows run mS = S..-S, so flip them before flattening column-wise.
         dE = (NucEnergy[:, 1:] - NucEnergy[:, :-1]).abs()  # (n_mS, n_mI-1)
-        freqs = dE.reshape(-1)
+        freqs = dE.flip(0).T.reshape(-1)
 
-        # Intensities ∝ |<mI|I±|mI∓1>|² / (2I+1)
-        # = (I+mI)(I-mI+1)/4 / (2I+1)  for mI = lower level
+        # Intensities (endorfrq_perturb.m:367-371): |<mI+1|I+|mI>|^2 / 4
+        # = k(2I+1-k)/4 for transition k = 1..2I (lower level mI = -I+k-1),
+        # times (gn*nmagn/h in MHz/mT)^2, divided by 2I+1; the same for
+        # every mS manifold.  The factor prod(2I+1) over all nuclei is
+        # applied after the loop (.m:385).
         gn = float(sys.gn[iNuc])
         pre = (gn * NMAGN / PLANCK * 1e-9) ** 2
-        mat_sq = torch.tensor(
-            [
-                (I_nuc + float(mI_arr[im])) * (I_nuc - float(mI_arr[im]) + 1) / 4
-                for im in range(n_mI - 1)
-            ],
-            dtype=dt, device=device,
-        )
-        # Same intensity for each mS manifold
-        ints = mat_sq.repeat(n_mS) * (pre / n_mI)
+        k_tr = torch.arange(1, n_mI, dtype=dt, device=device)
+        mat_sq = k_tr * (n_mI - k_tr) / 4
+        ints = mat_sq.repeat_interleave(n_mS) * (pre / n_mI)
 
         all_freqs.append(freqs)
         all_ints.append(ints)
@@ -314,4 +328,7 @@ def endorfrq_perturb(
     if not all_freqs:
         return torch.empty(0, device=device), torch.empty(0, device=device)
 
-    return torch.cat(all_freqs), torch.cat(all_ints)
+    # EasySpin multiplies by the number of nuclear states of the whole
+    # system, over all nuclei, not only the selected ones (.m:385).
+    nNucStates = math.prod(int(round(2 * float(sys.I[n]) + 1)) for n in range(sys.nNuclei))
+    return torch.cat(all_freqs), torch.cat(all_ints) * nNucStates
