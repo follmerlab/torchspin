@@ -472,7 +472,9 @@ class TestNSpinFDAccuracy:
         """Broadband-path linewidth gradient agrees with central FD."""
         g = _default_g()
         A = torch.tensor([[2.0, 2.0, 8.0]], dtype=torch.float64)
-        kw = {**_nspin_kwargs(), 'nPoints': 128, 'GridSize': 8,
+        # nPoints 512: lw0 must exceed 2 field increments, or pepper (like EasySpin)
+        # skips the Harmonic-0 convolution and the gradient is identically zero
+        kw = {**_nspin_kwargs(), 'nPoints': 512, 'GridSize': 8,
               'Nucs': ['1H'], 'A': A}
         lw0 = 1.0
         delta = 1e-4
@@ -484,6 +486,7 @@ class TestNSpinFDAccuracy:
         _, sp = differentiable_spectrum(g, **{**kw, 'lw_mT': lw0 + delta})
         _, sm = differentiable_spectrum(g, **{**kw, 'lw_mT': lw0 - delta})
         fd = ((sp ** 2).mean() - (sm ** 2).mean()) / (2.0 * delta)
+        assert torch.abs(fd).item() > 0.0, "linewidth has no effect: the test checks nothing"
 
         rel_err = torch.abs(ag - fd) / (torch.abs(fd) + 1e-30)
         assert rel_err.item() < 1e-3, (
