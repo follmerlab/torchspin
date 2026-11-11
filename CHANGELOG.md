@@ -14,6 +14,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.8.10] — 2026-11-11
+
+### Fixed
+
+- **`salt` now raises for sets of equivalent nuclei (`Sys.n > 1`), as EasySpin does** (salt.m:135-136,
+  'salt does not support sets of equivalent nuclei (Sys.n>1).'). torchspin had no check on `n`, and
+  every ENDOR path treats each entry of `Nucs` as one nucleus, so `n = [2]` returned the spectrum of
+  `n = [1]` exactly (maximum difference 0 for 1H at 326.5 mT). The check runs before anything else
+  in `salt`, on every path (first-order, matrix, several electrons, field-swept, zero field), and
+  also catches `n` assigned after construction. Results with `n = 1` are bit-identical. Give
+  equivalent nuclei as separate entries of `Nucs` instead.
 ## [0.8.9] — 2026-11-11
 
 ### Fixed
