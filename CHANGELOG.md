@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-10
+
+The first PyPI release since 0.7.0: it also contains 0.7.1–0.7.7 below, which were merged but not
+published separately.
+
 ### Added
 
 - **`torchspin.lft`: ligand-field tools.** Joshua Telser's programs, ported from
