@@ -6,6 +6,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-11-11
+
+### Fixed
+
+- **`pepper_autograd` used second-order perturbation theory for `Options.Method='perturb1'`.** Its
+  powder route called the perturbation solver without the order, so `'perturb1'` gave the
+  second-order spectrum (and its gradient) while `pepper` gave the first-order one: up to 1.47
+  relative max deviation for axial Cu(II). Because `pepper` hands inputs that require grad to
+  `pepper_autograd`, `pepper(..., Method='perturb1')` with a differentiable parameter was affected
+  too. The order now follows `PEPPER_PERTURB_ORDER`, as in `pepper` and the orientation route.
+  Changes: differentiable `'perturb1'` powder spectra and gradients. Unchanged: `'perturb'`,
+  `'perturb2'`, `'matrix'`, `'hybrid'`, all non-differentiable `pepper` results, and the
+  `Exp.CrystalOrientation` route (which already passed the order).
+
 ## [0.8.2] — 2026-11-11
 
 ### Fixed
