@@ -90,7 +90,12 @@ def endorfrq(
     intensities:
         Transition intensities (a.u.), shape ``(nTrans,)``.
     transitions:
-        Level-pair indices ``[i, j]`` (0-based), shape ``(nTrans, 2)``.
+        Level pairs ``[u, v]``, shape ``(nTrans, 2)``: 1-based level numbers
+        in ascending energy at ``B_field``, ``u < v``, as EasySpin's
+        ``Transitions`` output and ``Options.Transitions`` (0.8.15; before,
+        0-based: subtract 1 to index the eigenvalues/eigenvectors).  Rows
+        follow ``freqs`` (ascending frequency); EasySpin orders them by
+        descending transition rate.
 
     Raises
     ------
@@ -234,6 +239,7 @@ def endorfrq(
     order = torch.argsort(freqs_t)
     freqs_t   = freqs_t[order]
     intens_t  = intens_t[order]
-    transitions = torch.stack([pairs_i_t[order], pairs_j_t[order]], dim=1)
+    # 1-based level numbers, as EasySpin and Options.Transitions
+    transitions = torch.stack([pairs_i_t[order], pairs_j_t[order]], dim=1) + 1
 
     return freqs_t, intens_t, transitions

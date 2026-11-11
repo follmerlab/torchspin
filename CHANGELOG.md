@@ -14,6 +14,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.8.15] — 2026-11-11
+
+### Changed
+
+- **API: `endorfrq` returns 1-based level pairs, as EasySpin and `Options.Transitions`.** The third
+  output `transitions` was 0-based (`[i, j]` indexing the eigenvalues), unlike every other level
+  pair in torchspin (`Options.Transitions`, experiment.py; pepper's `_user_transitions`) and
+  EasySpin's `endorfrq` (`[u,v] = find(keepidx)`, endorfrq.m:331-332). It is now `[u, v]`, 1-based
+  levels in ascending energy, `u < v`; for S = 1/2 + 1H at high field the pairs are `[1, 2]` and
+  `[3, 4]` as in EasySpin. Rows still follow the returned frequencies (ascending); EasySpin orders
+  them by descending selection rate (endorfrq.m:339-341). Frequencies and intensities are unchanged,
+  and `salt` does not use the indices. **Migration:** subtract 1 (`transitions - 1`) where the pairs
+  index eigenvalues or eigenvectors. Tests: the EasySpin comparison in
+  `test_endor_enhancement.py` now uses `endor_enhancement_refs.mat`'s `Tr` without the `- 1`
+  offset; one new test checks the pairs against EasySpin's (fails on main).
+
 ## [0.8.9] — 2026-11-11
 
 ### Fixed
