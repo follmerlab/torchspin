@@ -97,15 +97,24 @@ def _plt():
 @functools.lru_cache(maxsize=1)
 def _font() -> str:
     """Helvetica, else Arial, else the generic 'sans-serif'.  A concrete name is stored in each text's
-    FontProperties, so the font survives a later savefig outside the rc context."""
+    FontProperties, so the font survives a later savefig outside the rc context.
+
+    A family is used only if its bold face can be rendered: macOS ships Helvetica as one .ttc collection,
+    and matplotlib < 3.11 draws only its first (regular) face, so bold labels would come out regular.
+    """
+    import matplotlib
     from matplotlib import font_manager
 
+    ttc_faces = tuple(int(v) for v in matplotlib.__version__.split(".")[:2] if v.isdigit()) >= (3, 11)
     for name in ("Helvetica", "Arial", "Liberation Sans", "Nimbus Sans"):
         try:
-            font_manager.findfont(name, fallback_to_default=False)
-            return name
+            regular = font_manager.findfont(font_manager.FontProperties(family=name), fallback_to_default=False)
+            bold = font_manager.findfont(font_manager.FontProperties(family=name, weight="bold"),
+                                         fallback_to_default=False)
         except ValueError:
             continue
+        if bold != regular or (ttc_faces and bold.lower().endswith((".ttc", ".otc"))):
+            return name
     return "sans-serif"
 
 
@@ -163,6 +172,20 @@ def _xlabel(ax, s):
 
 def _ylabel(ax, s):
     ax.set_ylabel(s, fontweight="bold")
+
+
+def _fit_left(ax, pad_px: float = 4.0) -> None:
+    """Move the left edge of an axes this module created inward until its y label and tick labels are
+    inside the figure (wide tick labels, e.g. 5-digit cm^-1 values in a wider font, would cut them off)."""
+    fig = ax.figure
+    r = _renderer(fig)
+    x0 = min([ax.yaxis.label.get_window_extent(r).x0]
+             + [t.get_window_extent(r).x0 for t in ax.get_yticklabels() if t.get_visible() and t.get_text()])
+    if x0 >= pad_px:
+        return
+    p = ax.get_position()
+    dx = (pad_px - x0) / fig.bbox.width
+    ax.set_position((p.x0 + dx, p.y0, max(0.2, p.width - dx), p.height))
 
 
 def _title(ax, s, **kw):
@@ -260,6 +283,17 @@ def _place_labels(ax, y_targets, texts, *, x_anchor, x_text, colors=None, fontsi
         return []
     s = 1.30 * fontsize / 72.0 * ax.figure.dpi / h_px          # line pitch in axes fraction
     half = 0.55 * fontsize / 72.0 * ax.figure.dpi / h_px
+    # Mathtext labels with a superscript and a subscript can be taller than 1.3 x fontsize (matplotlib
+    # < 3.11 sets them taller), so the pitch is the measured height of the tallest label (+8 %) if larger.
+    r = _renderer(ax.figure)
+    probe = ax.text(0.0, 0.0, "", fontsize=fontsize, transform=ax.transAxes)
+    h_max = 0.0
+    for t in texts:
+        probe.set_text(t)
+        h_max = max(h_max, probe.get_window_extent(r).height)
+    probe.remove()
+    s = max(s, 1.08 * h_max / h_px)
+    half = max(half, 0.55 * h_max / h_px)
     lo, hi = lo + half, hi - half
     nfit = int(math.floor((hi - lo) / s)) + 1 if hi > lo else 0
     keep = np.arange(n)
@@ -632,6 +666,8 @@ def tanabe_sugano(diagram, *, units: str = _u.PLOT_ENERGY_UNITS, ymax=None, labe
         ax.plot(x, y[i], color=color[m], lw=1.2, zorder=2)
     _xlabel(ax, xlab)
     _ylabel(ax, ylab)
+    if owned:
+        _fit_left(ax)
     if labels:
         ends = y[:, -1]
         inside = [i for i in range(len(ends)) if ends[i] <= 0.995 * top]

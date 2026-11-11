@@ -79,7 +79,9 @@ def test_units_consistency():
     torch.testing.assert_close(emu / mu, torch.full_like(mu, 5585.0), rtol=1e-3, atol=0)
     f = lft.units.energy_factor("cm^-1", "MHz")
     kw_mhz = dict(B=820.0 * f, C=3690.0 * f, zeta=480.0 * f, k=(0.85,) * 3, V=lft.crystal_field(950.0, 250.0, 60.0) * f)
-    torch.testing.assert_close(ddnsus.susceptibility(7, T, grid=grids.axes(), **kw_mhz).powder, si, rtol=1e-11, atol=0)
+    # MHz vs cm^-1 inputs: same physics, different round-off through the thermal average (CI BLAS: up to
+    # 8e-11 relative; 1e-12 on macOS Accelerate)
+    torch.testing.assert_close(ddnsus.susceptibility(7, T, grid=grids.axes(), **kw_mhz).powder, si, rtol=1e-9, atol=0)
 
 
 def test_chi0_adds_tip_in_both_quantities():
