@@ -199,10 +199,17 @@ Differences from EasySpin:
   remain (no pair left to couple; saffron's fast path removes all nuclei).
 - **`nucspinadd`** accepts systems with several electron spins (EasySpin raises); a
   3-element `A` is used for every electron.
-- **Left over: saffron's S = 1/2 fast path ignores `Sys.Ham`.** It builds the Zeeman
-  term from `Sys.g` alone (no `nucspinrmv` core), so linear `Ham110`/`Ham112` terms are
-  silently dropped there; EasySpin's saffron rejects `Sys.Ham*` altogether. The S > 1/2
-  fast path includes them since 0.8.2.
+- **saffron and `Sys.Ham`.** EasySpin's saffron rejects every `Sys.Ham*` (saffron.m:130-131).
+  torchspin's S = 1/2 fast path builds the Zeeman term from `Sys.g` alone, so up to 0.8.12
+  it silently dropped nonzero `Ham` terms (a g given as `Ham110`/`Ham112` gave a signal of
+  exactly zero); since 0.8.13 it raises. The S > 1/2 fast path (since 0.8.2, electronic
+  Hamiltonian from `ham()`) and the real-pulse engine (`Opt.SimulationMode='thyme'`) include
+  `Ham` and are kept as torchspin extensions: with the Zeeman term written as
+  `Ham110`/`Ham112` they reproduce the result for the same `g` to 1e-11 (S = 3/2 3pESEEM,
+  S = 1/2 two-pulse ESEEM with real pulses); there is no EasySpin reference. **Open:**
+  `Ham` on the S = 1/2 fast path. Sending S = 1/2 through the general (S > 1/2) path
+  reproduces the fast path's shape exactly (residual 3e-16 for 14N, 2e-7 for 1H) but at
+  0.5× its amplitude, so that route needs the normalization worked out first.
 
 ## Simulator — Lorentzian strain, `SpinSystem.HStrainL` (0.7.7)
 

@@ -14,6 +14,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.8.13] — 2026-11-11
+
+### Fixed
+
+- **`saffron`'s S = 1/2 fast path now raises for nonzero `Sys.Ham` terms instead of dropping them.**
+  That path builds the electron Zeeman term from `Sys.g` only, so a g given as `Ham110`/`Ham112`
+  (where `g` is zero) gave a signal of exactly zero (3pESEEM, S = 1/2 + 1H: norm 0 against 0.226
+  for the same `g`), and other `Ham` terms were ignored. EasySpin's saffron rejects every
+  `Sys.Ham*` (saffron.m:130-131). The S > 1/2 fast path and the real-pulse engine
+  (`Opt.SimulationMode='thyme'`) build the full Hamiltonian with `ham()` and keep supporting `Ham`
+  (torchspin extension; Ham-given g reproduces g to 1e-11 on both); the error message points to
+  them. No other result changes. Supporting `Ham` on the S = 1/2 fast path is left open (see
+  KNOWN_LIMITATIONS.md).
+
 ## [0.8.7] — 2026-11-11
 
 ### Fixed
