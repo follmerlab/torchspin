@@ -6,6 +6,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-11-11
+
+### Fixed
+
+- **`salt`'s first-order perturbation path gave every ENDOR line unit intensity** (all releases with
+  this path). For one electron without quadrupole couplings `salt` picks first-order perturbation
+  theory by itself; its lines had intensity 1, while the matrix path (and EasySpin, with both
+  `Opt.Method='matrix'` and `'perturb1'`) uses |⟨i|μ⊥|j⟩|² in (MHz/mT)². The absolute scale therefore
+  jumped about 2200× for 1H with the path (e.g. when `Options.Enhancement` was switched on), and
+  nuclei with different gn or spin I had wrong relative weights (1H+14N: cosine 0.649 against
+  EasySpin). Each first-order line now carries EasySpin `endorfrq_perturb.m`'s intensity, summed
+  over its 2I coinciding mI transitions: (gn·μN/h)²/4 · 2I(I+1)/3 · ∏(2I+1). This matches EasySpin
+  `perturb1` to round-off (shape and scale) and EasySpin's default `matrix` to 0.3 % (1H) in area.
+  Both the fixed-field (`Experiment.Field`) and the field-swept (`Experiment.Range`) modes are
+  fixed. **What changes:** the absolute scale of every one-electron, no-Q `salt` spectrum (by
+  1/2206 for a lone 1H), and the shape of spectra with several kinds of nuclei. Fitted amplitude
+  scales change accordingly. **What does not change:** systems with Q, more than one electron,
+  `Options.Enhancement=True` or `Options.ZeroField=True` (all on the matrix path), line positions,
+  and the automatic choice of the first-order path.
+
 ## [0.8.0] — 2026-11-11
 
 The first PyPI release since 0.7.0: it also contains 0.7.1–0.7.7 below, which were merged but not
