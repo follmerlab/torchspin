@@ -135,6 +135,12 @@ def convspec_t(spec: torch.Tensor, dx: float, fwhm_g=0.0, fwhm_l=0.0, deriv: int
     return spec
 
 
+def _conv_t(spec, dx, fwhm_g, fwhm_l, deriv, phase):
+    """:func:`convspec_t` in the ``conv`` signature of ``pepper._lw_convolve``
+    (``Exp.mwPhase`` is rejected up front, so ``phase`` is always 0 here)."""
+    return convspec_t(spec, dx, fwhm_g, fwhm_l, deriv)
+
+
 # =============================================================================
 # SOPHE projection in torch (EasySpin projecttriangles.c / projectzones.c)
 # =============================================================================
@@ -172,12 +178,17 @@ def _ramp_bins_t(n: int, base: torch.Tensor, a: torch.Tensor, b: torch.Tensor, d
     base, a, b, width, first, last = base[multi], a[multi], b[multi], width[multi], first[multi], last[multi]
     f0 = base / (width * delta)                      # width > 0 here (different bins)
     firstf = first.to(_F64); lastf = last.to(_F64)
+    # Edge bins from the small overlaps c, d and the width only: differences of
+    # O(bin index) terms such as b − (a+first+1)/2 cancel catastrophically for
+    # near-zero widths straddling a bin edge (f0 ∝ 1/width²).
+    c = firstf + 1.0 - a                             # overlap with the first bin, 0 < c ≤ width
+    d = b - lastf                                    # overlap with the last bin, 0 ≤ d < width
     if rising:
-        v_first = f0 * (firstf + 1.0 - a) ** 2 / 2.0
-        v_last = f0 * ((lastf + b) / 2.0 - a) * (b - lastf)
+        v_first = f0 * c * c / 2.0
+        v_last = f0 * d * (width - d / 2.0)
     else:
-        v_first = f0 * (firstf + 1.0 - a) * (b - (a + firstf + 1.0) / 2.0)
-        v_last = f0 * (b - lastf) ** 2 / 2.0
+        v_first = f0 * c * (width - c / 2.0)
+        v_last = f0 * d * d / 2.0
     m = first >= 0
     spec = spec.index_add(0, first[m], v_first[m])
     m = last < n
@@ -584,7 +595,9 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
         from torchspin.resfields_perturb import resfields_perturb_batch
         _w = B_hi - B_lo
         exp_search = _dc_replace(exp, Range=[max(0.0, B_lo - 0.2 * _w), B_hi + 0.2 * _w], CenterSweep=None)
-        B_list, I_list = resfields_perturb_batch(sys, phi_arr, theta_arr, exp_search, opt, return_full=True)
+        B_list, I_list = resfields_perturb_batch(sys, phi_arr, theta_arr, exp_search, opt,
+                                                 order=_pep.PEPPER_PERTURB_ORDER.get(str(opt.Method), 2),
+                                                 return_full=True)
         for j in range(n_orient):
             all_B[j], all_I[j] = B_list[j], I_list[j]          # index-matched slots, no level pairs
     else:
@@ -679,6 +692,8 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
     if has_strain and not _pos(fwhm_g) and not _pos(fwhm_l):
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)
+    elif _pos(fwhm_g) or _pos(fwhm_l):
+        spec = _pep._lw_convolve(spec, dx, fwhm_g, fwhm_l, H, conv=_conv_t)
     else:
         spec = convspec_t(spec, dx, fwhm_g, fwhm_l, deriv=H)
     if use_mod:
@@ -785,7 +800,7 @@ def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, stra
         if use_mod:
             raise ValueError("With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.")
     if _pos(g_rem) or _pos(l_rem):
-        spec = convspec_t(spec, dx, g_rem, l_rem, deriv=H)
+        spec = _pep._lw_convolve(spec, dx, g_rem, l_rem, H, conv=_conv_t)
     else:
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)

@@ -555,6 +555,49 @@ def _lorentzian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np
     return out
 
 
+def _lw_convolve(row: torch.Tensor, dx: float, fwhm_g, fwhm_l, harmonic: int,
+                 phase: float = 0.0, conv=None) -> torch.Tensor:
+    """EasySpin pepper.m's final ``Sys.lw`` convolution (pepper.m:1150-1223).
+
+    * The harmonic and ``Exp.mwPhase`` go to the Lorentzian when
+      ``Sys.lw(2) > 0``, otherwise to the Gaussian (pepper.m:1152-1163); a
+      Voigt width is applied Lorentzian first, then Gaussian.
+    * A component whose FWHM is at most two increments and whose harmonic is
+      0 is not convolved: it is a delta-like line (pepper.m:1195-1223).
+      EasySpin raises for such a component with a harmonic > 0; torchspin
+      convolves it anyway (KNOWN_LIMITATIONS.md).
+
+    ``conv(spec, dx, fwhm_g, fwhm_l, deriv, phase)`` is the convolution
+    (default :func:`convspec`; :mod:`torchspin.pepper_autograd` passes its
+    torch one).  Widths may be tensors; only the skip decision reads their
+    values (a discrete selection), the convolution keeps them in the graph.
+    """
+    if conv is None:
+        def conv(s, d, g, l, deriv, ph):
+            return convspec(s, d, fwhm_g=g, fwhm_l=l, deriv=deriv, phase=ph)
+    g_val = float(fwhm_g.detach()) if torch.is_tensor(fwhm_g) else float(fwhm_g)
+    l_val = float(fwhm_l.detach()) if torch.is_tensor(fwhm_l) else float(fwhm_l)
+    if l_val > 0:
+        harm_l, phase_l, harm_g, phase_g = harmonic, phase, 0, 0.0
+    else:
+        harm_l, phase_l, harm_g, phase_g = 0, 0.0, harmonic, phase
+    use_l = l_val > 0 and not (l_val <= 2 * dx and harm_l == 0)
+    use_g = g_val > 0 and not (g_val <= 2 * dx and harm_g == 0)
+    # A skipped width that requires grad stays in the graph with zero gradient
+    # (the spectrum does not depend on it), so autograd.grad does not fail.
+    for w_, used in ((fwhm_g, use_g), (fwhm_l, use_l)):
+        if not used and torch.is_tensor(w_) and w_.requires_grad:
+            row = row + 0.0 * w_.to(row.dtype)
+    if use_l and use_g:
+        row = conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
+        return conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+    if use_l:
+        return conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
+    if use_g:
+        return conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+    return row
+
+
 def _finish_field_sweep(spec: torch.Tensor, x: torch.Tensor, dx: float, exp,
                         fwhm_g: float, fwhm_l: float, fd_deriv: bool,
                         phase: float = 0.0) -> torch.Tensor:
@@ -576,7 +619,7 @@ def _finish_field_sweep(spec: torch.Tensor, x: torch.Tensor, dx: float, exp,
     out = []
     for row in rows:
         if fwhm_g > 0 or fwhm_l > 0:
-            row = convspec(row, dx, fwhm_g=fwhm_g, fwhm_l=fwhm_l, deriv=conv_harm, phase=phase)
+            row = _lw_convolve(row, dx, fwhm_g, fwhm_l, conv_harm, phase)
         elif conv_harm > 0:
             if fd_deriv:
                 for _h in range(conv_harm):
@@ -968,16 +1011,20 @@ def _ramp_bins(spec: np.ndarray, f0: np.ndarray, a: np.ndarray, b: np.ndarray, r
         inr = (idx >= 0) & (idx < nPoints)
         np.add.at(spec, idx[inr], (f0[one] * width[one] * width[one] / 2.0)[inr])
     multi = ~one
-    f0, a, b, first, last = f0[multi], a[multi], b[multi], first[multi], last[multi]
+    f0, a, b, width, first, last = f0[multi], a[multi], b[multi], width[multi], first[multi], last[multi]
     if f0.size == 0:
         return
-    # edge bins
+    # edge bins, from the small overlaps c, d and the width only: differences of
+    # O(bin index) terms such as b − (a+first+1)/2 cancel catastrophically for
+    # near-zero widths straddling a bin edge (f0 ∝ 1/width²)
+    c = first + 1 - a                             # overlap with the first bin, 0 < c ≤ width
+    d = b - last                                  # overlap with the last bin, 0 ≤ d < width
     if rising:
-        v_first = f0 * (first + 1 - a) ** 2 / 2.0
-        v_last = f0 * ((last + b) / 2.0 - a) * (b - last)
+        v_first = f0 * c * c / 2.0
+        v_last = f0 * d * (width - d / 2.0)
     else:
-        v_first = f0 * (first + 1 - a) * (b - (a + first + 1) / 2.0)
-        v_last = f0 * (b - last) ** 2 / 2.0
+        v_first = f0 * c * (width - c / 2.0)
+        v_last = f0 * d * d / 2.0
     m = first >= 0
     np.add.at(spec, first[m], v_first[m])
     m = last < nPoints
@@ -1482,7 +1529,7 @@ def _pepper_single(
     _zho = None
     if bool(getattr(opt, 'QuadraticZeeman', False)):
         from torchspin.ham_ezho import field_nonlinear_zeeman_ops, has_field_nonlinear_zeeman
-        if has_field_nonlinear_zeeman(sys):   # sys, not ham_sys: nucspinrmv (hybrid core) drops Sys.Ham
+        if has_field_nonlinear_zeeman(sys):
             if str(opt.Method).startswith('perturb') or hybrid_info is not None:
                 raise NotImplementedError(
                     f"pepper: Options.Method='{opt.Method}' does not support Options.QuadraticZeeman=True "

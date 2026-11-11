@@ -28,8 +28,10 @@ Units
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -1139,6 +1141,10 @@ def _nucleus_indices(sys: 'SpinSystem', idx) -> list[int]:
 def nucspinkeep(sys: 'SpinSystem', idx) -> 'SpinSystem':
     """Return a new SpinSystem with only the specified nuclei kept.
 
+    Port of EasySpin's ``nucspinkeep``: every field of *sys* is carried over,
+    and the per-nucleus fields are reduced to the kept nuclei (see
+    :func:`nucspinrmv`).
+
     Parameters
     ----------
     sys : SpinSystem
@@ -1157,11 +1163,26 @@ def nucspinkeep(sys: 'SpinSystem', idx) -> 'SpinSystem':
     """
     _reject_h0extra(sys, 'nucspinkeep')
     keep = _nucleus_indices(sys, idx)
-    return _filter_nuclei(sys, keep)
+    return _filter_nuclei(sys, keep, 'nucspinkeep')
 
 
 def nucspinrmv(sys: 'SpinSystem', idx) -> 'SpinSystem':
     """Return a new SpinSystem with the specified nuclei removed.
+
+    Port of EasySpin's ``nucspinrmv`` (``NewSys = Sys``, then the per-nucleus
+    fields are filtered): every field of *sys* (electron interactions such as
+    ``ee``, ``ee2``, ``Ham``, ``L``/``soc``/``CF*``, linewidths, strains,
+    dynamics, ...) is carried over unchanged, tensors without copying, so the
+    result stays on the autograd graph of *sys*.  The per-nucleus fields
+    ``Nucs``, ``n``, ``A``/``A_``, ``AFrame``, ``gnscale``, ``sigma``,
+    ``sigmaFrame``, ``Q``, ``QFrame`` and ``Abund`` are reduced to the
+    remaining nuclei (full 3x3 tensor forms included).
+
+    Raises ``ValueError`` if nonzero nucleus-nucleus couplings ``nn`` would
+    remain (as EasySpin), or if ``initState`` is given in the full spin space
+    and the nuclear dimension changes.  ``AStrain`` belongs to the first
+    nucleus: it is dropped, with a ``UserWarning``, when that nucleus is
+    removed.
 
     Parameters
     ----------
@@ -1182,12 +1203,19 @@ def nucspinrmv(sys: 'SpinSystem', idx) -> 'SpinSystem':
     _reject_h0extra(sys, 'nucspinrmv')
     rmv = _nucleus_indices(sys, idx)
     keep = [i for i in range(sys.nNuclei) if i not in rmv]
-    return _filter_nuclei(sys, keep)
+    return _filter_nuclei(sys, keep, 'nucspinrmv')
 
 
 def nucspinadd(sys: 'SpinSystem', nuc: str, A=None, Q=None,
                AFrame=None, QFrame=None, gnscale=1.0) -> 'SpinSystem':
     """Return a new SpinSystem with one nucleus appended.
+
+    Port of EasySpin's ``nucspinadd``: every field of *sys* is carried over
+    and the per-nucleus fields get one more entry.  If either the existing
+    or the new hyperfine (quadrupole) tensor is a full 3x3 matrix, both are
+    written as full matrices in the molecular frame, as EasySpin does.
+    Unlike EasySpin, systems with several electron spins are accepted (a
+    3-element ``A`` is used for every electron).
 
     Parameters
     ----------
@@ -1196,10 +1224,13 @@ def nucspinadd(sys: 'SpinSystem', nuc: str, A=None, Q=None,
     nuc : str
         Isotope string, e.g. ``'1H'`` or ``'14N'``.
     A : array_like or None
-        Hyperfine coupling tensor (MHz).  Shape ``(3,)`` for diagonal
-        [Ax, Ay, Az] or ``(3, 3)`` for a full matrix.  ``None`` → zero.
+        Hyperfine coupling (MHz): a scalar (isotropic), ``[Aperp, Apar]``,
+        ``[Ax, Ay, Az]`` (used for all electrons), ``(3*nElectrons,)``
+        principal values per electron, or a full ``(3, 3*nElectrons)`` matrix.
+        ``None`` → zero.  A tensor that requires grad stays on the graph.
     Q : array_like or None
-        Nuclear quadrupole coupling tensor (MHz).  Only for I ≥ 1.
+        Nuclear quadrupole coupling (MHz): ``e2qQ/h``, ``[e2qQ/h, eta]``,
+        principal values ``[Qx, Qy, Qz]`` or a full 3x3 matrix.  Only for I ≥ 1.
     AFrame : array_like or None
         Euler angles for A-tensor frame.  Shape ``(3,)`` or ``(3*nElectrons,)``.
     QFrame : array_like or None
@@ -1217,89 +1248,275 @@ def nucspinadd(sys: 'SpinSystem', nuc: str, A=None, Q=None,
     >>> sys2 = nucspinadd(sys, '1H', A=[5.0, 5.0, 10.0])
     """
     _reject_h0extra(sys, 'nucspinadd')
-    import copy, numpy as np
-
+    if _nonzero(sys.nn):
+        raise ValueError("nucspinadd does not work if Sys.nn is given (nonzero "
+                         "nucleus-nucleus couplings), as in EasySpin.")
+    f64 = torch.float64
     n_e = sys.nElectrons
     n_n = sys.nNuclei
+    kw = _init_kwargs(sys)
+    kw['Nucs'] = list(sys.Nucs) + [nuc]
+    kw['n'] = list(sys.n) + [1]
 
-    new_Nucs = list(sys.Nucs) + [nuc]
-
-    # Build new A tensor: existing rows + new row
-    if A is None:
-        A_new_row = torch.zeros(1, 3 * n_e, dtype=torch.float64)
-    else:
-        A_arr = torch.tensor(np.asarray(A, dtype=float), dtype=torch.float64)
-        if A_arr.ndim == 0:
-            A_new_row = A_arr.expand(3).unsqueeze(0).expand(1, 3 * n_e).clone()
-        elif A_arr.ndim == 1 and A_arr.shape[0] == 3:
-            # [Ax, Ay, Az] — replicate for all electrons
-            A_new_row = A_arr.repeat(n_e).unsqueeze(0)  # (1, 3*n_e)
-        else:
-            A_new_row = A_arr.reshape(1, -1)
-
+    # --- hyperfine ---
+    A_new, A_new_full = _new_hyperfine(A, n_e)
+    AF_new = _new_frame(AFrame, 3 * n_e, 'AFrame')
     if n_n == 0 or sys.A is None:
-        new_A = A_new_row
+        new_A, new_AF = A_new, AF_new
     else:
-        # sys.A may have shape (n_n, 3*n_e)
-        existing_A = sys.A.reshape(n_n, 3 * n_e) if sys.A.ndim == 1 else sys.A
-        new_A = torch.cat([existing_A, A_new_row], dim=0)
+        A0, AF0 = sys.A, sys.AFrame             # sys.A is derived from A_ if that was given
+        if sys.fullA or A_new_full:
+            if not sys.fullA:
+                A0, AF0 = _full_from_principal(A0, AF0, n_e), torch.zeros_like(AF0)
+            if not A_new_full:
+                A_new, AF_new = _full_from_principal(A_new, AF_new, n_e), torch.zeros_like(AF_new)
+        new_A = torch.cat([A0, A_new.to(A0.dtype)], dim=0)
+        new_AF = torch.cat([AF0, AF_new], dim=0)
+    kw.update(A=new_A, A_=None, AFrame=new_AF)
 
-    # AFrame: new row
-    if AFrame is None:
-        AF_new_row = torch.zeros(1, 3 * n_e, dtype=torch.float64)
-    else:
-        AF_new_row = torch.tensor(np.asarray(AFrame, dtype=float), dtype=torch.float64).reshape(1, -1)
-    existing_AF = sys.AFrame.reshape(n_n, 3 * n_e) if n_n > 0 else torch.zeros(0, 3 * n_e, dtype=torch.float64)
-    new_AFrame = torch.cat([existing_AF, AF_new_row], dim=0) if n_n > 0 else AF_new_row
-
-    # gnscale: append
-    existing_gs = sys.gnscale[:n_n] if n_n > 0 else torch.zeros(0, dtype=torch.float64)
-    new_gnscale = torch.cat([existing_gs, torch.tensor([gnscale], dtype=torch.float64)])
-
-    # Q: append if provided
-    new_Q = None
-    if Q is not None:
-        Q_new = torch.tensor(np.asarray(Q, dtype=float), dtype=torch.float64)
-        if Q_new.ndim == 1:
-            Q_new = Q_new.unsqueeze(0)
-        if sys.Q is not None:
-            new_Q = torch.cat([sys.Q.reshape(n_n, 3) if sys.Q.ndim > 1 else sys.Q.reshape(-1, 3),
-                                Q_new], dim=0)
+    # --- quadrupole ---
+    QF0 = sys.QFrame
+    QF_new = _new_frame(QFrame, 3, 'QFrame')
+    if Q is not None or sys.Q is not None:
+        Q_new, Q_new_full = _new_quadrupole(Q, nuc)
+        if n_n == 0:
+            new_Q = Q_new
         else:
-            # Pad existing nuclei with zeros
-            new_Q = torch.cat([torch.zeros(n_n, 3, dtype=torch.float64), Q_new], dim=0)
+            Q0 = sys.Q if sys.Q is not None else torch.zeros(n_n, 3, dtype=f64)
+            full0 = sys.Q is not None and sys.fullQ
+            if full0 or Q_new_full:
+                if not full0:
+                    Q0, QF0 = _full_from_principal(Q0, QF0, 1), torch.zeros_like(QF0)
+                if not Q_new_full:
+                    Q_new, QF_new = _full_from_principal(Q_new, QF_new, 1), torch.zeros_like(QF_new)
+            new_Q = torch.cat([Q0, Q_new.to(Q0.dtype)], dim=0)
+        kw['Q'] = new_Q
+    kw['QFrame'] = QF_new if n_n == 0 else torch.cat([QF0, QF_new], dim=0)
 
-    # QFrame: append
-    QF_new = torch.tensor(np.asarray(QFrame, dtype=float), dtype=torch.float64).reshape(3) if QFrame else torch.zeros(3, dtype=torch.float64)
-    existing_QF = sys.QFrame[:n_n] if n_n > 0 and sys.QFrame is not None else torch.zeros(0, 3, dtype=torch.float64)
+    # --- nuclear Zeeman scaling, chemical shielding ---
+    gs_new = _to_tensor(gnscale, f64).reshape(1)
+    kw['gnscale'] = gs_new if n_n == 0 else torch.cat([sys.gnscale, gs_new])
     if n_n > 0:
-        new_QFrame = torch.cat([existing_QF.reshape(n_n, 3), QF_new.unsqueeze(0)], dim=0)
-    else:
-        new_QFrame = QF_new.unsqueeze(0)
+        sig_new = (torch.eye(3, dtype=f64) if sys.fullsigma
+                   else torch.ones(1, 3, dtype=f64))
+        kw['sigma'] = torch.cat([sys.sigma, sig_new], dim=0)
+        kw['sigmaFrame'] = torch.cat([sys.sigmaFrame, torch.zeros(1, 3, dtype=f64)], dim=0)
 
-    return SpinSystem(
-        S=list(sys.S),
-        g=sys.g.clone(),
-        gFrame=sys.gFrame.clone(),
-        D=sys.D.clone() if sys.D is not None else None,
-        DFrame=sys.DFrame.clone() if sys.DFrame is not None else None,
-        B=sys.B,
-        BFrame=sys.BFrame,
-        Nucs=new_Nucs,
-        A=new_A,
-        AFrame=new_AFrame,
-        Q=new_Q,
-        QFrame=new_QFrame,
-        gnscale=new_gnscale,
-        lw=list(sys.lw) if sys.lw else None,
-        lwpp=list(sys.lwpp) if sys.lwpp else None,
-        HStrain=sys.HStrain.clone() if sys.HStrain is not None else None,
-        gStrain=sys.gStrain.clone() if sys.gStrain is not None else None,
-        AStrain=sys.AStrain.clone() if sys.AStrain is not None else None,
-        DStrain=sys.DStrain.clone() if sys.DStrain is not None else None,
-        HStrainL=sys.HStrainL.clone() if sys.HStrainL is not None else None,
-        weight=sys.weight,
-    )
+    kw['nn'] = kw['nnFrame'] = None
+    if sys.Abund is not None:
+        kw['Abund'] = _abund_per_nucleus(sys.Abund, n_n) + [None]
+    _check_init_state(sys, list(sys.Nucs) + [nuc], 'nucspinadd')
+    return SpinSystem(**kw)
+
+
+# ---------------------------------------------------------------------------
+# Rebuilding a SpinSystem, per-nucleus field helpers
+# ---------------------------------------------------------------------------
+
+def _init_kwargs(sys: 'SpinSystem') -> dict:
+    """Constructor keyword arguments that rebuild *sys*.
+
+    ``SpinSystem(**_init_kwargs(sys))`` reproduces every field of *sys*: all
+    dataclass init fields are passed as stored.  Tensors are passed as they
+    are (no copy, no detach), so the rebuilt system stays on the autograd
+    graph of *sys*; lists and dicts are copied one level so that the new
+    ``__post_init__`` (which normalizes some of them in place, e.g. ``B``)
+    cannot modify *sys*.
+
+    Fields that ``__post_init__`` derives from an alternative input and keeps
+    next to it are passed through their source only, since giving both raises:
+    ``D`` is rebuilt from ``D_`` and ``A`` from ``A_`` when those are set.
+    (``lw``/``lwpp`` never both hold a value; ``tcorr``/``logtcorr`` and
+    ``Diff``/``logDiff`` are not converted and are passed as they are.)
+    """
+    kw = {}
+    for f in dataclasses.fields(sys):
+        if not f.init:
+            continue
+        v = getattr(sys, f.name)
+        if isinstance(v, list):
+            v = list(v)
+        elif isinstance(v, dict):
+            v = dict(v)
+        kw[f.name] = v
+    if kw.get('D_') is not None:
+        kw['D'] = None
+    if kw.get('A_') is not None and sys.nNuclei > 0:
+        kw['A'] = None
+    return kw
+
+
+def _nonzero(T) -> bool:
+    return T is not None and bool(torch.any(torch.as_tensor(T) != 0))
+
+
+def _nuc_rows(T: torch.Tensor, keep: list[int], n_n: int, name: str) -> torch.Tensor:
+    """Rows of a per-nucleus field for the nuclei *keep*: one row per nucleus,
+    or a 3-row block per nucleus (full 3x3 tensor form).  Indexing keeps the
+    autograd graph."""
+    if T.shape[0] == n_n:
+        idx = list(keep)
+    elif T.shape[0] == 3 * n_n:
+        idx = [3 * i + k for i in keep for k in range(3)]
+    else:
+        raise ValueError(f"SpinSystem.{name} has {T.shape[0]} rows; expected {n_n} "
+                         f"(one per nucleus) or {3 * n_n} (full 3x3 tensors).")
+    return T[idx]
+
+
+def _abund_per_nucleus(abund, n_n: int) -> list:
+    """``Sys.Abund`` as one entry per nucleus (isotopologues.py conventions)."""
+    if n_n == 1 and not (isinstance(abund, (list, tuple)) and len(abund) > 0
+                         and isinstance(abund[0], (list, tuple, np.ndarray, torch.Tensor))):
+        return [abund]
+    if len(abund) != n_n:
+        raise ValueError('Abund must have one entry (array or None) per nucleus.')
+    return list(abund)
+
+
+def _check_init_state(sys: 'SpinSystem', new_nucs: list, where: str) -> None:
+    """Raise if ``sys.initState`` is given in the full spin space and the
+    nuclear dimension changes; electron-space forms (strings, ``'xyz'``,
+    states of the electron spins only) are valid for any nuclei."""
+    st = getattr(sys, 'initState', None)
+    if st is None or isinstance(st, str):
+        return
+    n_nuc_old = math.prod(int(round(2 * I + 1)) for I in sys.I)
+    n_nuc_new = math.prod(int(round(2 * _nuclear_spin(nc) + 1)) for nc in new_nucs)
+    if n_nuc_old == n_nuc_new:
+        return
+    if isinstance(st, (tuple, list)) and len(st) == 2 and isinstance(st[1], str):
+        state, basis = st
+        if basis == 'xyz':
+            return
+    else:
+        state = st
+    shape = tuple(state.shape) if hasattr(state, 'shape') else np.shape(state)
+    is_vec = len(shape) <= 1 or 1 in shape
+    dim = int(np.prod(shape)) if is_vec else int(shape[0])
+    n_es = math.prod(int(round(2 * s + 1)) for s in sys.S)
+    if dim == n_es:
+        return
+    raise ValueError(
+        f"{where}: SpinSystem.initState is given in the full spin space ({dim} states), "
+        f"which does not fit the new nuclei ({n_es * n_nuc_new} states). Give it for the "
+        f"electron spins only ({n_es} states) or set it for the new spin system.")
+
+
+def _new_hyperfine(A, n_e: int) -> tuple[torch.Tensor, bool]:
+    """Hyperfine input of nucspinadd → ((1, 3n_e) principal values, False) or
+    ((3, 3n_e) full matrix, True)."""
+    f64 = torch.float64
+    if A is None:
+        return torch.zeros(1, 3 * n_e, dtype=f64), False
+    T = _to_tensor(A, f64)
+    if T.ndim == 2 and tuple(T.shape) == (3, 3 * n_e):
+        return T, True
+    T = T.reshape(-1)
+    if T.numel() == 1:
+        T = T.expand(3)
+    elif T.numel() == 2:
+        T = T[[0, 0, 1]]
+    if T.numel() == 3:
+        return T.repeat(n_e).reshape(1, 3 * n_e), False
+    if T.numel() == 3 * n_e:
+        return T.reshape(1, 3 * n_e), False
+    if T.numel() == 9 * n_e:
+        return T.reshape(3, 3 * n_e), True
+    raise ValueError(f"nucspinadd: A must have 1, 2, 3, {3 * n_e} or {9 * n_e} elements.")
+
+
+def _new_quadrupole(Q, nuc: str) -> tuple[torch.Tensor, bool]:
+    """Quadrupole input of nucspinadd → ((1, 3) principal values, False) or
+    ((3, 3) full matrix, True); ``e2qQ/h`` and ``[e2qQ/h, eta]`` converted as
+    in ``SpinSystem.__post_init__``."""
+    f64 = torch.float64
+    if Q is None:
+        return torch.zeros(1, 3, dtype=f64), False
+    T = _to_tensor(Q, f64)
+    if T.numel() == 9:
+        return T.reshape(3, 3), True
+    T = T.reshape(-1)
+    if T.numel() in (1, 2):
+        I_q = _quadrupole_spin(nuc)
+        if I_q < 1:
+            return torch.zeros(1, 3, dtype=f64), False
+        e2qQh = T[0]
+        eta = T[1] if T.numel() == 2 else torch.zeros_like(e2qQh)
+        return (e2qQh / (4 * I_q * (2 * I_q - 1))
+                * torch.stack([-1 + eta, -1 - eta, 2 * torch.ones_like(eta)])).reshape(1, 3), False
+    if T.numel() == 3:
+        return T.reshape(1, 3), False
+    raise ValueError("nucspinadd: Q must have 1, 2, 3 or 9 elements.")
+
+
+def _new_frame(F, width: int, name: str) -> torch.Tensor:
+    """Euler angles of the new nucleus as a (1, width) row (zeros if None)."""
+    f64 = torch.float64
+    if F is None:
+        return torch.zeros(1, width, dtype=f64)
+    T = _to_tensor(F, f64).reshape(-1)
+    if T.numel() == 3 and width > 3:
+        T = T.repeat(width // 3)
+    if T.numel() != width:
+        raise ValueError(f"nucspinadd: {name} must have 3 or {width} elements.")
+    return T.reshape(1, width)
+
+
+def _full_from_principal(T: torch.Tensor, frames: torch.Tensor, n_blocks: int) -> torch.Tensor:
+    """Principal values (m, 3*n_blocks) with Euler angles (m, 3*n_blocks) →
+    full molecular-frame matrices (3m, 3*n_blocks), rotated as ham_hf/ham_nq do."""
+    from torchspin.rotations import erot
+    rows = []
+    for i in range(T.shape[0]):
+        blocks = []
+        for b in range(n_blocks):
+            M = torch.diag(T[i, 3 * b:3 * b + 3])
+            ang = frames[i, 3 * b:3 * b + 3].tolist()
+            if any(a != 0.0 for a in ang):
+                R_A2M = erot(ang).T.to(M.dtype)
+                M = R_A2M @ M @ R_A2M.T
+            blocks.append(M)
+        rows.append(torch.cat(blocks, dim=1))
+    return torch.cat(rows, dim=0)
+
+
+def _filter_nuclei(sys: 'SpinSystem', keep: list[int], where: str = 'nucspinrmv') -> 'SpinSystem':
+    """New SpinSystem with every field of *sys*, the per-nucleus fields reduced
+    to the nuclei at indices *keep* (EasySpin nucspinrmv.m)."""
+    n_n = sys.nNuclei
+    if len(keep) >= 2 and _nonzero(sys.nn):
+        # With fewer than two nuclei left there is no pair for nn to couple.
+        raise ValueError(f"{where} does not work if Sys.nn is given (nonzero "
+                         f"nucleus-nucleus couplings), as in EasySpin.")
+    kw = _init_kwargs(sys)
+    kw['Nucs'] = [sys.Nucs[i] for i in keep]
+    per_nucleus = ('AFrame', 'gnscale', 'sigma', 'sigmaFrame', 'Q', 'QFrame')
+    if keep:
+        kw['n'] = [sys.n[i] for i in keep]
+        if sys.A_ is not None:
+            kw['A_'] = _nuc_rows(sys.A_, keep, n_n, 'A_')
+        elif sys.A is not None:
+            kw['A'] = _nuc_rows(sys.A, keep, n_n, 'A')
+        for name in per_nucleus:
+            v = getattr(sys, name)
+            if v is not None:
+                kw[name] = _nuc_rows(v, keep, n_n, name)
+    else:
+        for name in ('n', 'A', 'A_') + per_nucleus:
+            kw[name] = None
+    kw['nn'] = kw['nnFrame'] = None
+    if sys.Abund is not None:
+        ab = [_abund_per_nucleus(sys.Abund, n_n)[i] for i in keep]
+        kw['Abund'] = ab if any(a is not None for a in ab) else None
+    if sys.AStrain is not None and (not keep or keep[0] != 0):
+        warnings.warn(
+            f"{where}: SpinSystem.AStrain applies to the first nucleus only, and that "
+            f"nucleus ({sys.Nucs[0]}) is removed; AStrain is dropped.",
+            UserWarning, stacklevel=3)
+        kw['AStrain'] = None
+    _check_init_state(sys, [sys.Nucs[i] for i in keep], where)
+    return SpinSystem(**kw)
 
 
 def isotopologues(sys: 'SpinSystem') -> list[tuple[float, 'SpinSystem']]:
@@ -1353,73 +1570,6 @@ def isotopologues(sys: 'SpinSystem') -> list[tuple[float, 'SpinSystem']]:
     new_sys = _copy.copy(sys)
     object.__setattr__(new_sys, 'weight', weight) if hasattr(new_sys, '__dataclass_fields__') else setattr(new_sys, 'weight', weight)
     return [(weight, new_sys)]
-
-
-def _filter_nuclei(sys: 'SpinSystem', keep: list[int]) -> 'SpinSystem':
-    """Build a new SpinSystem keeping only nuclei at indices *keep*."""
-    import copy as _copy
-    n_e = sys.nElectrons
-    n_n = sys.nNuclei
-
-    new_Nucs = [sys.Nucs[i] for i in keep]
-
-    # A tensor: rows correspond to nuclei
-    if sys.A is not None:
-        A_full = sys.A.reshape(n_n, 3 * n_e)
-        new_A = A_full[keep, :] if keep else torch.zeros(0, 3 * n_e, dtype=torch.float64)
-    else:
-        new_A = None
-
-    # AFrame
-    if sys.AFrame is not None and n_n > 0:
-        AF_full = sys.AFrame.reshape(n_n, 3 * n_e)
-        new_AF = AF_full[keep, :] if keep else torch.zeros(0, 3 * n_e, dtype=torch.float64)
-    else:
-        new_AF = None
-
-    # Q tensor
-    if sys.Q is not None:
-        Q_full = sys.Q.reshape(n_n, 3)
-        new_Q = Q_full[keep, :] if keep else None
-    else:
-        new_Q = None
-
-    # QFrame
-    if sys.QFrame is not None and n_n > 0:
-        QF_full = sys.QFrame.reshape(n_n, 3)
-        new_QF = QF_full[keep, :] if keep else None
-    else:
-        new_QF = None
-
-    # gnscale
-    if sys.gnscale is not None and n_n > 0:
-        new_gs = sys.gnscale[keep] if keep else torch.zeros(0, dtype=torch.float64)
-    else:
-        new_gs = None
-
-    return SpinSystem(
-        S=list(sys.S),
-        g=sys.g.clone(),
-        gFrame=sys.gFrame.clone(),
-        D=sys.D.clone() if sys.D is not None else None,
-        DFrame=sys.DFrame.clone() if sys.DFrame is not None else None,
-        B=sys.B,
-        BFrame=sys.BFrame,
-        Nucs=new_Nucs,
-        A=new_A,
-        AFrame=new_AF,
-        Q=new_Q,
-        QFrame=new_QF,
-        gnscale=new_gs,
-        lw=list(sys.lw) if sys.lw else None,
-        lwpp=list(sys.lwpp) if sys.lwpp else None,
-        HStrain=sys.HStrain.clone() if sys.HStrain is not None else None,
-        gStrain=sys.gStrain.clone() if sys.gStrain is not None else None,
-        AStrain=sys.AStrain.clone() if sys.AStrain is not None else None,
-        DStrain=sys.DStrain.clone() if sys.DStrain is not None else None,
-        HStrainL=sys.HStrainL.clone() if sys.HStrainL is not None else None,
-        weight=sys.weight,
-    )
 
 
 # ---------------------------------------------------------------------------
