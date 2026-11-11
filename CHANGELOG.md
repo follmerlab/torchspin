@@ -61,6 +61,107 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - **Results that change:** every `orisel` result. No other torchspin function called `orisel`;
     `salt` spectra are bit-identical (checked with and without HStrain, S = 1, two electron
     spins, 14N with Q, and zero field), and saffron keeps its own selection.
+## [0.8.13] — 2026-11-11
+
+### Fixed
+
+- **`saffron`'s S = 1/2 fast path now raises for nonzero `Sys.Ham` terms instead of dropping them.**
+  That path builds the electron Zeeman term from `Sys.g` only, so a g given as `Ham110`/`Ham112`
+  (where `g` is zero) gave a signal of exactly zero (3pESEEM, S = 1/2 + 1H: norm 0 against 0.226
+  for the same `g`), and other `Ham` terms were ignored. EasySpin's saffron rejects every
+  `Sys.Ham*` (saffron.m:130-131). The S > 1/2 fast path and the real-pulse engine
+  (`Opt.SimulationMode='thyme'`) build the full Hamiltonian with `ham()` and keep supporting `Ham`
+  (torchspin extension; Ham-given g reproduces g to 1e-11 on both); the error message points to
+  them. No other result changes. Supporting `Ham` on the S = 1/2 fast path is left open (see
+  KNOWN_LIMITATIONS.md).
+## [0.8.12] — 2026-11-11
+
+### Fixed
+
+- **Spin systems built with `D_` (or `A_`) failed in torchspin's internal rebuilds: the
+  isotopologue expansion, the Lorentzian strain path (`HStrainL`) and `spin2sys`'s U term.** All
+  three used `dataclasses.replace`, which passes every stored field, so the `D` (`A`) that
+  `__post_init__` derives from `D_` (`A_`) was passed together with it and the constructor raised
+  "Zero-field splitting given in both D and D_" (spinsystem.py, `__post_init__`). For example
+  `pepper(SpinSystem(S=1, D_=[300, 0.1], Nucs='Cu', A=...), ...)` and `pepper` with `D_` and
+  `HStrainL` raised; `isotopologues.py` cleared `A_` but not `D_`, and `HStrainL` also failed with
+  `A_`. The new internal helper `spinsystem._replace(sys, **changes)` rebuilds from `_init_kwargs`
+  (pairs passed through their source only) and clears the alternative of a changed field, as
+  attribute assignment does; it is used at all three sites. Tensors are not copied, so a `D_` that
+  requires grad keeps its gradient (autograd vs central differences 1e-6 through `HStrainL`).
+  Spectra with `D_` now equal those with the same `D` (1e-10); no other result changes. The
+  constructor is unchanged: calling `dataclasses.replace` directly on such a system still raises
+  (see KNOWN_LIMITATIONS.md for the workaround).
+## [0.8.11] — 2026-11-11
+
+### Fixed
+
+- **`salt` no longer convolves an ENDOR line width of at most two rf increments, as in EasySpin**
+  (salt.m:899-911; EasySpin skips a Gaussian or Lorentzian `Sys.lwEndor` component of FWHM ≤ 2
+  increments when its harmonic is 0). torchspin always convolved `lw_mhz`, which lowered the peaks
+  of under-resolved spectra: 1H (g = [2 2.05 2.1], A = [5 8 12] MHz, 2–28 MHz at 0.02 MHz
+  increments, `perturb1`) was 0.933 of EasySpin's peak at 1.5 increments and 0.900 at 2.0. Both are
+  now 1.0000 (max deviation 3e-13 of the peak); 2.5 and 10 increments were already exact and are
+  bit-identical. Applied in the fixed-field mode (via `pepper._lw_convolve`, the B13 rule of 0.8.5)
+  and the field-swept mode (no EasySpin counterpart). Results change only for `lw_mhz` ≤ 2
+  increments, which now give the unbroadened spectrum; this includes the default `lw_mhz = 0.1`
+  on the default 512-point axis. A skipped width that requires grad has zero gradient. EasySpin
+  references: tests/data/salt_narrowlw_refs.mat. A Lorentzian ENDOR width and `Exp.Harmonic` are
+  still not supported in salt (KNOWN_LIMITATIONS.md § ENDOR).
+## [0.8.10] — 2026-11-11
+
+### Fixed
+
+- **`salt` now raises for sets of equivalent nuclei (`Sys.n > 1`), as EasySpin does** (salt.m:135-136,
+  'salt does not support sets of equivalent nuclei (Sys.n>1).'). torchspin had no check on `n`, and
+  every ENDOR path treats each entry of `Nucs` as one nucleus, so `n = [2]` returned the spectrum of
+  `n = [1]` exactly (maximum difference 0 for 1H at 326.5 mT). The check runs before anything else
+  in `salt`, on every path (first-order, matrix, several electrons, field-swept, zero field), and
+  also catches `n` assigned after construction. Results with `n = 1` are bit-identical. Give
+  equivalent nuclei as separate entries of `Nucs` instead.
+## [0.8.9] — 2026-11-11
+
+### Fixed
+
+- **The closed-φ powder grid interpolation now resamples each θ row with zero end slopes, as
+  EasySpin does** (gridinterp.m:184, `esspline1d(y,1,nc)`). To turn the triangular grid (D2h and
+  the other closed-φ symmetries) into the rectangle for the bicubic spline, torchspin fitted each
+  row with scipy's default not-a-knot spline. The rows next to the pole have only 2–5 knots, so
+  the two rules give different resonance fields near g_z, which shows at Harmonic 1: for
+  S = 1/2, g = [2 2.05 2.1] at 9.5 GHz and the default GridSize [19 4], the peak amplitude was
+  1.0058 of EasySpin's with lw = [1 0] and 1.0048 with lw = [0 0.8] (relative residual 3.9e-3 and
+  6.5e-3), independent of nPoints. Both are now 1.0000000 at residual 5e-7, the field-sweep floor
+  without interpolation. Also before → after: GridSize [31 4] amplitude 0.99991 → 1.0000001; a 14N
+  hyperfine spectrum residual 1.5e-2 → 2.4e-8; a frequency sweep 4.4e-3 → 7e-13; HStrain
+  1.5e-4 → 8.0e-5; fixed-field `salt` (rhombic g and A, `Method 'perturb1'`) 7.6e-4 → 1e-12; the
+  0.8.5 Voigt cases at Harmonic 1 1.0020 / 1.0048 → 1.0000000; d spc/d g_z as a central difference
+  (h = 1e-4) 1.9e-2 → 4.2e-5. Every powder spectrum interpolated on a closed-φ grid (interpolation
+  factor > 1) changes, in `pepper`, `pepper_autograd` and `salt` (all through
+  `pepper._d2h_interp_matrix`), the large-grid fallback in `_interp_sph`, and the closed-φ rows of
+  `_interp_grid`. The 2-D step stays not-a-knot, as in EasySpin's `esspline2d`. Gradients stay
+  exact (`pepper_autograd` vs central differences to 1e-6 for d/d g_z). Spectra without
+  interpolation, on axial (Dinfh) grids and on open-φ grids are bit-identical. EasySpin references:
+  tests/data/ref_closedphi_interp.mat.
+## [0.8.8] — 2026-11-11
+
+### Fixed
+
+- **`endorfrq_perturb` intensities, element order and full 3×3 `Q` now match EasySpin's
+  `endorfrq_perturb.m` element by element** (bugs B20, B27). Intensities: torchspin used the
+  matrix element (I+mI)(I−mI+1)/4 with mI the lower level, one level off from EasySpin's
+  k(2I+1−k)/4, k = 1..2I (.m:367), so the lowest transition of every nucleus had intensity 0, and
+  it dropped the factor ∏(2I+1) over all nuclei (.m:385). For 1H+14N at φ = 0.3, θ = 0.7 (340 mT)
+  torchspin gave 0 for all 1H lines and 0 / 1.58e-6 for the 14N lines; EasySpin gives 1.36e-3 and
+  9.47e-6, as torchspin does now. Order: torchspin listed transitions mS-major with mS descending;
+  EasySpin lists them per nucleus by the mI of the lower level, mS ascending within it
+  (.m:303-304, 377-381). torchspin now uses EasySpin's order, so frequencies agree element by
+  element and not only after sorting. Full Q: with `sys.fullQ` torchspin read row i of the 3×3
+  matrix as principal values (14N with a full Q: sorted 12.27/12.33/14.37/14.40 MHz vs EasySpin
+  11.15/13.31/13.42/15.48); it now uses the matrix as EasySpin does (.m:84-85). Agreement over 8
+  systems × 4 orientations × PerturbOrder 1 and 2: frequencies 7.4e-16, intensities 4.9e-16
+  relative. Callers that index the output by position or use its intensities see different
+  values; sorted frequencies are unchanged except with a full Q. `salt` does not call
+  `endorfrq_perturb` and is unaffected. EasySpin references: tests/data/endorfrq_perturb_refs.mat.
 
 ## [0.8.7] — 2026-11-11
 

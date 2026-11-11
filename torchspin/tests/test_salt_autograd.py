@@ -51,24 +51,34 @@ def test_perturbative_path_gradients():
 
 
 def test_matrix_path_gradients():
-    """14N with quadrupole (matrix diagonalization), fixed D2h grid: d spec / d(A, Q)."""
+    """14N with quadrupole (matrix diagonalization), fixed D2h grid: d spec / d(A, Q, lw)."""
     exp = Experiment(Field=3394, mwFreq=95); opt = Options(GridSize=19, GridSymmetry='D2h')
+    # lw 0.2 MHz = 2.9 increments (35/511 MHz): a width of at most 2 increments is
+    # not convolved (0.8.11, as in EasySpin), which would leave the convolution untested
+    lw0 = 0.2
+    assert lw0 > 2 * 35 / 511
 
-    def run(Av, Qv):
+    def run(Av, Qv, lw=lw0):
         sys = SpinSystem(S=[0.5], g=[[2.2, 2.2, 2.0]], Nucs='14N', A=Av, Q=Qv)
-        return salt(sys, exp, opt, freq_range=(0, 35), n_points=512, lw_mhz=0.1)[1]
+        return salt(sys, exp, opt, freq_range=(0, 35), n_points=512, lw_mhz=lw)[1]
     A = torch.tensor([[4.0, 4.0, 5.0]], requires_grad=True)
     Q = torch.tensor([[0.84, 0.84, -1.68]], requires_grad=True)
-    y = run(A, Q)
+    lw = torch.tensor(lw0, requires_grad=True)
+    y = run(A, Q, lw)
     assert y.requires_grad
-    J = _jac(y, [A, Q], 4)
-    for name, i, col in (('A', 2, 2), ('Q', 0, 3), ('Q', 2, 5)):
+    J = _jac(y, [A, Q, lw], 4)
+    for name, i, col in (('A', 2, 2), ('Q', 0, 3), ('Q', 2, 5), ('lw', 0, 6)):
         def f(d):
-            Av, Qv = [[4.0, 4.0, 5.0]], [[0.84, 0.84, -1.68]]
-            (Av if name == 'A' else Qv)[0][i] += d
-            return run(Av, Qv)[::4]
+            Av, Qv, lwv = [[4.0, 4.0, 5.0]], [[0.84, 0.84, -1.68]], lw0
+            if name == 'lw':
+                lwv += d
+            else:
+                (Av if name == 'A' else Qv)[0][i] += d
+            return run(Av, Qv, lwv)[::4]
         h = 1e-5
-        _check(J[:, col], (f(h) - f(-h)) / (2 * h), 1e-4)
+        fd = (f(h) - f(-h)) / (2 * h)
+        assert float(fd.norm()) > 0.0, f'{name}: no effect, the test checks nothing'
+        _check(J[:, col], fd, 1e-4)
 
 
 def test_grad_tensor_in_field_swept_mode_raises():

@@ -853,6 +853,15 @@ def saffron(
     # --- Determine algorithm path ---
     n_electrons = sys.nElectrons
     two_manifolds = (n_electrons == 1 and float(sys.S[0]) == 0.5)
+    # The S = 1/2 fast path builds the electron Zeeman term from sys.g only.
+    # EasySpin's saffron rejects every Sys.Ham* (saffron.m:130-131); torchspin
+    # keeps them on the S > 1/2 path (full electronic Hamiltonian, ham()).
+    if two_manifolds and sys.Ham is not None and any(
+            bool(torch.any(torch.as_tensor(v) != 0)) for v in sys.Ham.values()):
+        raise ValueError(
+            "saffron does not support Sys.Ham* parameters for S = 1/2 (the "
+            "fast algorithm uses Sys.g only). Give the linear Zeeman term as "
+            "Sys.g, or use Opt.SimulationMode='thyme' with real pulses.")
     if n_electrons > 1:
         raise NotImplementedError(
             "saffron's fast algorithm requires a single electron spin "
