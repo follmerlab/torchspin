@@ -514,6 +514,9 @@ def pepper_autograd(sys_or_list, exp: Experiment, opt: Optional[Options] = None)
 
 def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> tuple[torch.Tensor, torch.Tensor]:
     """pepper_autograd for one isotopologue (no weight applied)."""
+    # Sys.HStrainL: HStrain widths drawn as Lorentzian lines (see pepper)
+    from torchspin.strainwidth import lorentzian_strain_system
+    sys, strain_lorentz = lorentzian_strain_system(sys)
     device = torch.device(opt.device)
     nPoints = int(exp.nPoints)
     B_lo, B_hi = float(exp.Range[0]), float(exp.Range[1])
@@ -526,7 +529,8 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
 
     user_ori = _pep._user_orientations(exp)
     if user_ori is not None:
-        return _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori)
+        return _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori,
+                                    strain_lorentz=strain_lorentz)
 
     # Grid symmetry and knots (discrete; detached)
     grid_sym = opt.GridSymmetry
@@ -661,7 +665,8 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
                              torch.full_like(fSpread, float('inf')))
         gam = torch.where(pos_spread, 1.0 / torch.sqrt(c1 * Lambda ** 2 + c2 * Lambda ** 4), torch.zeros_like(Lambda))
         fWidC = fWidM * (1.0 + 2.0 * gam)                        # Opt.Smoothing = 2
-        spec = gaussian_bins_t(x, fPosC, fWidC, fIntC, dx / 100.0)
+        _bins = _lorentzian_bins_t if strain_lorentz else gaussian_bins_t
+        spec = _bins(x, fPosC, fWidC, fIntC, dx / 100.0)
         spec = spec / dx * (2.0 * math.pi)
 
     # Global line width and harmonic (EasySpin convspec; with strain the harmonic
@@ -703,7 +708,7 @@ def _lorentzian_bins_t(x: torch.Tensor, pos: torch.Tensor, fwhm: torch.Tensor, a
     return out
 
 
-def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori):
+def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, strain_lorentz=False):
     """``Exp.Orientations`` on the graph: the stick sum of
     ``pepper._pepper_single``'s orientation branch — χ-averaged resonances at the
     given molecular-frame field directions, amplitude I·4π·w, per-line templates
@@ -755,7 +760,8 @@ def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori):
         B_all = torch.cat(Bs); k_all = torch.cat(ks)
         amp = torch.cat(Is) * (4.0 * math.pi) * w[k_all]
         if has_strain:
-            spec = gaussian_bins_t(x, B_all, torch.cat(Ws), amp, min_fwhm)
+            _bins = _lorentzian_bins_t if strain_lorentz else gaussian_bins_t
+            spec = _bins(x, B_all, torch.cat(Ws), amp, min_fwhm)
         elif _pos(fwhm_g):
             spec = gaussian_bins_t(x, B_all, torch.as_tensor(fwhm_g, dtype=_F64) * torch.ones_like(B_all), amp, min_fwhm)
         elif _pos(fwhm_l):

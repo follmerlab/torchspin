@@ -374,7 +374,7 @@ class TorchSpinParameterHandler:
     # field name is known; the plain-vector style has no names to go on, which
     # is also true of EasySpin.
     _NONNEGATIVE_FIELDS = frozenset({
-        'lw', 'lwpp', 'lwEndor', 'HStrain', 'gStrain', 'DStrain', 'AStrain',
+        'lw', 'lwpp', 'lwEndor', 'HStrain', 'HStrainL', 'gStrain', 'DStrain', 'AStrain',
         'weight', 'initState', 'tcorr', 'Diff', 'T1', 'T2',
     })
 
