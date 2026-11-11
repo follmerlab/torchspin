@@ -6,6 +6,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **Flaky test `test_orientations_at_zero_field_match_the_powder`.** Its zero-field lines
+  (0.6, 2.7, 3.3 GHz) sat exactly on bin edges of the 10 MHz axis, so the powder projection
+  put each line in one of two bins depending on the last bit of the eigenvalues, and the test
+  failed by 4 % on some CI runners. The lines are now a third of a bin from any edge, and the
+  powder is compared on the half-bin-shifted axis. pepper is unchanged: the single-bin deposit
+  matches EasySpin and the B → 0⁺ limit. KNOWN_LIMITATIONS documents the bin-edge case.
+
 ## [0.7.7] — 2026-11-10
 
 ### Added
