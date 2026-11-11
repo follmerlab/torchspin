@@ -11,6 +11,7 @@ regular simulator. Grad tensors entering an unsupported stage raise instead of d
 |---|---|---|
 | `pepper` (`pepper_autograd`, `differentiable_spectrum`) | matrix + perturbation routes, strains (HStrain/gStrain/AStrain; DStrain magnitudes constant), `ModAmp`, Temperature | forward = `pepper` to 1e-10; `test_pepper_autograd.py`. Not yet: `mwPhase`, ordering, photoselection, crystals, frequency sweeps |
 | `salt` | fixed-field ENDOR (perturbative and matrix paths) | `test_salt_autograd.py`; field-swept mode raises for grad tensors |
+| `orisel` | yes (0.9.0; full diagonalization, torch) — weights w.r.t. g, A, D, HStrain, ...; the same code (`orisel._orisel_weights`) gives salt's orientation selection | `test_orisel.py` (autograd vs central differences) |
 | `garlic` | all modes | grad tensors switch nearest-bin sticks to `AccumMethod='linear'` (sub-bin quantisation difference); `test_garlic_autograd.py` |
 | `saffron` | ESEEM/HYSCORE (ideal pulses) | grad tensors → tensor outputs and `TimeDomain=True`; Mims-ENDOR raises; `test_saffron_autograd.py` |
 | `curry` | yes (pure torch) | `test_curry_autograd.py` |

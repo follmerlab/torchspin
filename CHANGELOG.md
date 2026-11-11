@@ -14,6 +14,54 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.0] — 2026-11-11
+
+### Changed
+
+- **`orisel` now has EasySpin's interface (API break; minor version bump).** The call is
+  `orisel(sys, exp, opt=None, *, per_transition=False)`. `Experiment.Field` (mT), `mwFreq` (GHz)
+  and `ExciteWidth` (FWHM, MHz) are required, as in EasySpin (orisel.m:52-54), and a missing one
+  raises a `ValueError` that names it; `Exp.Range` is no longer read (an experiment with `Range`
+  but no `Field` gets a migration hint). `Exp.Orientations` (`(N, 2)` `[phi, theta]`) replaces
+  the grid when given. `OriselOptions` is now `GridSize=46` (was 19; EasySpin orisel.m:66),
+  `GridSymmetry='auto'` (hamsymm, with the grid rotated into the symmetry frame, orisel.m:79-93)
+  and `AveragedIntensity=True`; `ExcitBandwidth` and `Threshold` were removed and raise with a
+  hint. The return values are torch tensors (were NumPy arrays): `(weights, phi, theta)` with
+  the weights summed over level pairs (EasySpin's one-output form), not normalized and not
+  multiplied by grid weights; `per_transition=True` gives EasySpin's two-output form as
+  `(Weights, Transitions, phi, theta)`, `Weights` of shape `(nOri, nTrans)` and `Transitions`
+  the 1-based level pairs `(u, v)`, `u < v`, in the order of `nchoosek(1:N, 2)` (the numbering of
+  `Options.Transitions`). `phi`, `theta` are the orientations the weights belong to. Systems
+  with several electron spins and `SpinSystem.H0Extra` are now supported (full
+  diagonalization). Migration: `orisel(sys, Experiment(mwFreq=9.5, Range=[300, 380]),
+  OriselOptions(ExcitBandwidth=100))` becomes `orisel(sys, Experiment(mwFreq=9.5, Field=B,
+  ExciteWidth=100))` at the observer field `B`; divide by `w.max()` for the old normalization.
+
+### Fixed
+
+- **`orisel` selected the wrong orientations** (all releases up to 0.8.7). It ignored
+  `Exp.Field` and the excitation width, computed resonance fields over `Exp.Range` by one-electron
+  perturbation theory and weighted them with a field-domain Lorentzian always centered at the
+  g = 2.0023 field, with the width converted at the free-electron slope, `HStrain` ignored,
+  SOPHE grid weights multiplied in and the result normalized to 1 (old orisel.py:137-169).
+  EasySpin diagonalizes the full Hamiltonian at `Exp.Field` and weights every level pair by its
+  transition rate times `exp(-2 xi^2)`, `xi = (nu_uv - mwFreq)/Gamma`,
+  `Gamma = sqrt(sum_i n_i^2 HStrain_i^2 + ExciteWidth^2)/sqrt(2 ln 2)` (orisel.m:110-153). Per
+  orientation, the old weights correlated with EasySpin's at -0.57 to +0.98 depending on the
+  observer field (rhombic S = 1/2, Cu(II) with 63Cu, g = [1.9 2.0 6.0]; 9 fields), with cosine
+  0.000 at the g = 6 and g = 4 fields. torchspin now runs EasySpin's model, and the weights and
+  transitions agree with EasySpin to 7e-13 (relative to the largest weight) in 18 cases: the three
+  systems above, S = 1 and S = 3/2 with D and HStrain, two coupled electron spins,
+  `AveragedIntensity` false, `ExciteWidth = Inf`, and six default grids incl. rotated D2h and
+  C2h GridFrames, Dinfh, O3 and an explicit Ci, where the orientations also agree to 1e-15.
+  EasySpin's own regression data (`orisel_rhombic.mat`, `orisel_onenucleus.mat`) agree to 4e-6
+  after normalization. The weights are now differentiable (g, A, D, HStrain, ...). The
+  computation is shared with `salt`'s orientation selection (`orisel._orisel_weights`), which
+  was already EasySpin's model.
+  - **Results that change:** every `orisel` result. No other torchspin function called `orisel`;
+    `salt` spectra are bit-identical (checked with and without HStrain, S = 1, two electron
+    spins, 14N with Q, and zero field), and saffron keeps its own selection.
+
 ## [0.8.7] — 2026-11-11
 
 ### Fixed

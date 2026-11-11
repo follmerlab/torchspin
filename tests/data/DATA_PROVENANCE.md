@@ -40,6 +40,7 @@ Tests comparing against these are true cross-validation.
 | `generate_pepper_narrowlw_refs.m` | `ref_pepper_narrowlw.mat` | Final `Sys.lw` convolution (0.8.5, B13): widths of at most two increments with harmonic 0 not convolved (S=1 triplet frequency sweep, default and `Transitions [1 2]`; field sweeps with a narrow Gaussian / Lorentzian), Voigt widths with Harmonic 1 and `mwPhase` (harmonic and phase on the Lorentzian), narrow Gaussian beside a Lorentzian, Voigt frequency sweep (8 cases) |
 | `generate_pepper_zerofield_refs.m` | `ref_pepper_zerofield.mat` | Zero-field frequency sweeps (`Exp.Field = 0`, torchspin `Options.ZeroField`, 0.7.4): S = 1 with D, E (plain, Boltzmann 0.1 K, HStrain), S = 3/2 Kramers, S = 1/2 + 1H isotropic hyperfine (5 cases) |
 | `generate_pepper_quadzeeman_refs.m` | `ref_pepper_quadzeeman.mat` | Field-quadratic `Sys.Ham220`/`Ham222` terms in pepper (S=1 with lwpp and with HStrain, S=3/2), EasySpin field sweeps, and one frequency sweep (`S1_ham2_freqsweep`, added 2026-11-11; needs EasySpin's `resfreqs_matrix.m` Ham check from StollLab/EasySpin d46e5ef9, applied as a one-line patch to the local Dec-2025 copy; the three field-sweep cases regenerated bit-identical); `Options.QuadraticZeeman` (0.7.1) |
+| `generate_orisel_refs.m` | `ref_orisel.mat` | `orisel` (0.9.0, B26; EasySpin main, R2024b, 2026-11-11): `[Weights,Trans]` and the summed weights for 18 cases: 12 with `Exp.Orientations` (a 400-point Fibonacci sphere; rhombic S=1/2 at the gz/gy/gx fields, Cu(II) 63Cu at 2 fields, g=[1.9 2.0 6.0] at g=6 and g=4, S=1 with D and HStrain incl. `AveragedIntensity` false, S=3/2 with D, two coupled electrons, `ExciteWidth` Inf) and 6 on default grids, stored with the orientations orisel.m builds (hamsymm D2h, rotated D2h, C2h from an AFrame, Dinfh, O3, explicit Ci) |
 
 ### MATLAB-sourced .mat files (by module)
 
@@ -113,7 +114,8 @@ Tests comparing against these are true cross-validation.
 `endor_enhancement_refs.mat` — MATLAB-gen (`generate_endor_enhancement_refs.m`, EasySpin main, R2024b, 2026-11-10): endorfrq (powder mode) and fixed-field salt with `Opt.Enhancement` 'off'/'on'
 
 **Orientation selection:**
-`orisel_*.mat` — MATLAB
+`orisel_*.mat` — MATLAB (EasySpin's own regression tests `orisel_rhombic.m`, `orisel_onenucleus.m`, 2008; used by `test_orisel.py` since 0.9.0, compared after normalization as in EasySpin)
+`ref_orisel.mat` — MATLAB-gen (`generate_orisel_refs.m`, EasySpin main, R2024b, 2026-11-11)
 
 **Grids:**
 `sphgrid_regression.mat` — MATLAB
