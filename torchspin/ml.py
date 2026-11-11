@@ -164,7 +164,7 @@ class ParamSpec:
 
 
 _SYS_FIELDS = ('S', 'g', 'gFrame', 'Nucs', 'n', 'A', 'AFrame', 'Q', 'QFrame', 'D', 'DFrame', 'ee', 'eeFrame',
-               'lw', 'lwpp', 'lwEndor', 'tcorr', 'logtcorr', 'HStrain', 'gStrain', 'AStrain', 'DStrain',
+               'lw', 'lwpp', 'lwEndor', 'tcorr', 'logtcorr', 'HStrain', 'HStrainL', 'gStrain', 'AStrain', 'DStrain',
                'Potential', 'T1', 'T2', 'weight')
 
 

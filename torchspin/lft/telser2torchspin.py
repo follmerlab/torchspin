@@ -36,7 +36,8 @@ dimer: + J S1.S2 (J > 0 antiferromagnetic)    ``ee`` = J 1 + Ddip + [d]x (full 3
 dimer: j[(S1.S2)^2 - X1 X2/3]                ``ee2 = j``, levels shifted by -j X1 X2/3 (:func:`dimer_energy_offset`)
 dimer: 24 JQ T2(S1).T2(S2) (S1, S2 >= 1)      ``ee2 += 24 JQ``, ``ee += 12 JQ``, shift -8 JQ X1 X2
 dimer: site g2, D2 Euler angles               ``gFrame``/``DFrame`` (or full tensors)
-EPR half width W_k (MHz, HWHM, frequency)    ``HStrain = 2 W`` (FWHM, same sqrt(sum W_k^2 n_k^2) rule)
+EPR half width W_k (MHz, HWHM, frequency)    ``HStrain = 2 W`` (FWHM, same sqrt(sum W_k^2 n_k^2) rule);
+                                             Lorentzian lines: ``HStrainL = 2 W`` (torchspin >= 0.7.7)
 ENDOR line half width w (MHz)                ``salt(..., lw_mhz=2 w)``
 H1 mode 0 / < 0                              ``Experiment.Mode = 'perpendicular' / 'parallel'``
 populations at T                             ``Experiment.Temperature = T`` (normalized Boltzmann, Telser exact mode)
@@ -54,7 +55,7 @@ w becomes ``Sys.Ham`` lB = 2 rows (run with ``Options(QuadraticZeeman=True)``; `
 ``Sys.H0Extra`` term, and a zero field a true ``Field = 0`` (``Options(ZeroField=True)``, per spectrum in
 ``extras['spectra']``).  Not mapped for pepper (see ``docs/lft_gap_analysis.md``): NMR/NQR powder spectra
 (S = 0; the nuclear SpinSystem itself is built), the DDPOWH/DDPOWJ strain models, Lorentzian
-frequency-domain widths and mixed H1 modes.  With ``strict=True`` (default) these
+frequency-domain widths for ENDOR (salt has no Lorentzian strain) and mixed H1 modes.  With ``strict=True`` (default) these
 raise ``NotImplementedError``; with ``strict=False`` they are dropped with a warning and listed in
 ``TelserConversion.extras['dropped']``.  Telser's Flygare frequency factor has no counterpart either; compare
 with telser-tools' ``frequency_factor=False``.  ``ddpowh2sys``/``ddpowj2sys`` with ``target='lft'`` map all of
@@ -823,6 +824,11 @@ def _ddpowh_strain_check(inp, strict: bool, dropped: list) -> None:
                   "torchspin's HStrain/gStrain/AStrain/DStrain are different models")
 
 
+_LORENTZ_CUTOFF_NOTE = ("Lorentzian EPR line -> SpinSystem.HStrainL = 2 W (torchspin >= 0.7.7). Telser cuts each line "
+                        "at ICUTOFF = {c} half widths (it keeps (2/pi) atan(ICUTOFF) of the area); pepper does not cut. "
+                        "Compare with telser-tools' frequency_factor=False and a large epr_cutoff.")
+
+
 def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool = True, target: str = "pepper",
                **sys_kwargs) -> TelserConversion:
     """A DDPOWH input (telser-tools ``ddpowh.DdpowhInput``) as SpinSystem + Experiment for pepper/salt.
@@ -837,8 +843,9 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
       Telser selects orientations with the EPR line itself (``HStrain`` = 2 W here and ExciteWidth ~ 0 in
       salt, as telser-tools' docs map it).
 
-    The EPR half widths W (MHz, HWHM) become ``HStrain = 2 W``.  Telser's Lorentzian frequency-domain line,
-    the Flygare nu factors (compare with telser-tools' ``frequency_factor=False``), the DDPOWH strain model,
+    The EPR half widths W (MHz, HWHM) become ``HStrain = 2 W``, or ``HStrainL = 2 W`` for Telser's Lorentzian
+    frequency-domain line in EPR and FDMR (``extras['notes']``: Telser cuts the line at ICUTOFF half widths,
+    pepper does not).  The Lorentzian line for ENDOR (salt's selection is Gaussian), the Flygare nu factors (compare with telser-tools' ``frequency_factor=False``), the DDPOWH strain model,
     ORFACT (use :func:`ordering`), the <g^2> normalization (a constant) and NMR/NQR spectra (S = 0) are not mapped.
 
     ``target='lft'`` maps every feature instead, for :mod:`torchspin.lft.ddpowh` (Telser's own field-point
@@ -859,15 +866,21 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
               "spin2sys gives the nuclear SpinSystem for levels")
     if any(float(x) for x in getattr(inp, "sigma_khz", (0.0, 0.0, 0.0))):
         _drop("S = 0 chemical shielding", strict, dropped, "not mapped to SpinSystem.sigma")
-    if getattr(inp, "epr_shape", "G") in ("L", "l") and any(float(x) for x in inp.epr_width):
-        _drop("Lorentzian EPR line (frequency domain)", strict, dropped, "HStrain is Gaussian")
+    lorentz = getattr(inp, "epr_shape", "G") in ("L", "l") and any(float(x) for x in inp.epr_width)
+    notes: list = []
+    if lorentz and kind == "N":
+        _drop("Lorentzian EPR line (frequency domain) for ENDOR", strict, dropped,
+              "salt's orientation selection uses the Gaussian HStrain; use target='lft'")
+        lorentz = False
+    elif lorentz:
+        notes.append(_LORENTZ_CUTOFF_NOTE.format(c=int(getattr(inp, "epr_cutoff", 0))))
     _ddpowh_strain_check(inp, strict, dropped)
     if not getattr(inp, "powder", True) and (float(getattr(inp, "lam_x", 0.0)) or float(getattr(inp, "lam_z", 0.0))):
         dropped.append("ORFACT (pass Experiment(Ordering=telser2torchspin.ordering(lam_x, lam_z)))")
     hs = [2.0 * float(x) for x in inp.epr_width]
     extra = dict(sys_kwargs)
     if any(hs):
-        extra.setdefault("HStrain", hs)
+        extra.setdefault("HStrainL" if lorentz else "HStrain", hs)
     sy = spin2sys(_single_spin_params(inp, correct_table=True), units="cm^-1", constants=constants,
                   full_tensors=full_tensors, strict=strict, dropped=dropped, **extra)
     temp = float(inp.temperature) if getattr(inp, "populations", False) else None
@@ -879,10 +892,10 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
                              deriv=inp.epr_deriv, temperature=temp, h1mode=float(inp.h1mode), strict=strict,
                              dropped=dropped)
         qz = quadratic_zeeman_options(sy)
-        return TelserConversion(sy, exp, dict(dropped=dropped, spectra=[dict(exp=exp, options=qz)],
+        return TelserConversion(sy, exp, dict(dropped=dropped, notes=notes, spectra=[dict(exp=exp, options=qz)],
                                               h1mode=float(inp.h1mode), options=qz))
     if float(inp.s) < 0.5:
-        return TelserConversion(sy, None, dict(dropped=dropped, spectra=[], h1mode=float(inp.h1mode)))
+        return TelserConversion(sy, None, dict(dropped=dropped, notes=notes, spectra=[], h1mode=float(inp.h1mode)))
     mode = _mode(float(inp.h1mode), strict, dropped)
     for sp in inp.spectra:
         if sp.entered == "G":
@@ -921,7 +934,7 @@ def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
     for sp in spectra:
         sp["options"] = {**qz, **sp.get("options", {})}
     return TelserConversion(sy, spectra[0]["exp"] if spectra else None,
-                            dict(dropped=dropped, spectra=spectra, h1mode=float(inp.h1mode), options=qz))
+                            dict(dropped=dropped, notes=notes, spectra=spectra, h1mode=float(inp.h1mode), options=qz))
 
 
 def _dimer_params(inp, separate_d_euler: bool):
@@ -990,7 +1003,8 @@ def ddpowj2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
 
     Site 2's g and D have separate Euler angles (DDPOWJ v5.0).  W (MHz, HWHM) -> ``HStrain = 2 W``.  Use
     ``Options(Threshold=0)`` in pepper: its default transition pruning drops weak singlet-triplet lines.
-    The DDPOWJ strain model (WMS1 x WMS2 basis weights, (H/Hset)^b) and Lorentzian lines are not mapped.
+    Lorentzian lines become ``HStrainL = 2 W`` (Telser's ICUTOFF truncation is listed in ``extras['notes']``).
+    The DDPOWJ strain model (WMS1 x WMS2 basis weights, (H/Hset)^b) is not mapped.
 
     ``target='lft'`` maps everything for :mod:`torchspin.lft.ddpowj` (strain, Lorentzian lines, level ranges,
     Flygare factor, cutoff, mixed H1 modes); ``extras['spectra'][0]`` holds ``func='epr'`` and its ``kwargs``.
@@ -1003,8 +1017,8 @@ def ddpowj2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
     if target != "pepper":
         raise ValueError("target must be 'pepper' or 'lft'")
     dropped: list = []
-    if getattr(inp, "epr_shape", "G") in ("L", "l"):
-        _drop("Lorentzian EPR line (frequency domain)", strict, dropped, "HStrain is Gaussian")
+    lorentz = getattr(inp, "epr_shape", "G") in ("L", "l") and any(float(x) for x in inp.epr_width)
+    notes = [_LORENTZ_CUTOFF_NOTE.format(c=int(getattr(inp, "epr_cutoff", 0)))] if lorentz else []
     if getattr(inp, "strain", False):
         _drop("DDPOWJ strain (WMS1 x WMS2 weights, (H/Hset)^b)", strict, dropped,
               "torchspin's strain models are different")
@@ -1012,12 +1026,12 @@ def ddpowj2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
     hs = [2.0 * float(x) for x in inp.epr_width]
     extra = dict(sys_kwargs)
     if any(hs):
-        extra.setdefault("HStrain", hs)
+        extra.setdefault("HStrainL" if lorentz else "HStrain", hs)
     sy = dimer2sys(p, constants=constants, full_tensors=full_tensors, **extra)
     temp = float(inp.temperature) if inp.populations else None
     exp = epr_experiment(inp.freq_ghz, inp.field_range, inp.npts, field_units=inp.field_units, deriv=inp.epr_deriv,
                          temperature=temp, h1mode=float(inp.h1mode), strict=strict, dropped=dropped)
-    return TelserConversion(sy, exp, dict(dropped=dropped, energy_offset=_offset_for(p, constants),
+    return TelserConversion(sy, exp, dict(dropped=dropped, notes=notes, energy_offset=_offset_for(p, constants),
                                           h1mode=float(inp.h1mode)))
 
 

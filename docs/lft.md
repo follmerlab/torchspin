@@ -193,10 +193,14 @@ dim = t2t.dimer2sys(site1=..., site2=..., J=12.0, Ddip=0.02)   # Telser's +J S1.
   needed keywords in `extras['options']` (and per spectrum in `extras['spectra'][k]['options']`).
 - `target='lft'` in `ddpowh2sys`/`ddpowj2sys` maps everything instead, for `lft.ddpowh`/`lft.ddpowj`
   (next section): strain, Lorentzian lines, w, U, S = 0, zero field, mixed H1 modes.
+- **Lorentzian lines** (torchspin ≥ 0.7.7): Telser's Lorentzian EPR/FDMR width becomes
+  `SpinSystem.HStrainL = 2 W` on the pepper path. Telser's ICUTOFF truncation is listed in
+  `extras['notes']`; Lorentzian ENDOR still needs `target='lft'`.
 - [lft_gap_analysis.md](lft_gap_analysis.md) lists every Telser spin-family feature as supported,
-  converted (with the difference), filled in `lft`, or a gap. Core proposals remain for: the second-order
-  Zeeman w and the U term in `levels`/`resfields`/`pepper`, zero-field frequency sweeps, pepper
-  transition selection, a Lorentzian `HStrain`, restricted pepper grids, and ENDOR hyperfine enhancement.
+  converted (with the difference), filled in `lft`, or a gap. The core changes it proposed are all in
+  torchspin 0.7.1–0.7.7 (w, U, ENDOR enhancement, zero field, transition selection, orientation lists,
+  Lorentzian strain); what pepper still lacks is Telser's level-composition strain, which `lft.ddpowh`
+  and `lft.ddpowj` provide.
 
 ## Powder spectra with Telser's level strain (`lft.ddpowh`, `lft.ddpowj`)
 

@@ -39,7 +39,7 @@ The Fortran quirks it documents (findings DDZHQ-01 … DDPOWJ-12) are not ported
 | Resonance fields, intensities (`resfields`) | S = ½ + ¹⁴N, ⁶³Cu (rotated A, Q); S = 3/2 (D ≫ hν, u, ¹H); S = 5/2 (B4q, u) | fields rel 1e-7 (resfields' convergence), intensities rel 1e-6 |
 | ENDOR frequencies and intensities (`endorfrq`) | 3 DDZHQ inputs | 1e-8 |
 | DJDZE spin magnitudes (`spin_projections`) | every DJDZE input that prints them | 1e-9, summed over degenerate levels |
-| DDPOWH/DDPOWJ powder spectra (`pepper`, `salt`) | 17 comparisons | max abs. difference after normalizing both spectra to their maximum; tolerances below |
+| DDPOWH/DDPOWJ powder spectra (`pepper`, `salt`) | 17 comparisons, plus 5 tests with Lorentzian lines through `HStrainL` | max abs. difference after normalizing both spectra to their maximum; tolerances below |
 | DDPOWH/DDPOWJ powder spectra (`lft.ddpowh`, `lft.ddpowj`, `target='lft'`) | all 70 DDPOWH and 33 DDPOWJ golden inputs (EPR, FDMR, ENDOR, NMR/NQR; strain, Lorentzian, w, U, mixed modes), plus option switches | 1e-10 of the maximum, unnormalized (observed ≤ 4.5e-11) |
 
 The powder tolerances do not test the converter, which is exact (the levels and probabilities above
@@ -115,7 +115,7 @@ The tolerances are 1.5–2× the calibrated difference:
 |---|---|---|---|
 | field-swept EPR (TRTYP E), G or T | converter | `pepper`, `epr_experiment` (Range in mT, npts + 1 points) | field axes equal to 1e-12 (tested) |
 | Gaussian frequency-domain half width W(n) = √Σ W_k² n_k² (HWHM, MHz) | as is | `HStrain = 2W` | |
-| Lorentzian frequency-domain width | **gap**; filled (lft) | `lft.ddpowh(shape='lorentzian')` | `HStrain` is Gaussian; `lw` Lorentzian is in field units. For FDMR an isotropic W maps to `lw = [0, 2W]` (frequency sweep). The converter raises on the pepper path. **Core proposal (item C6):** a Lorentzian component of `HStrain` (EasySpin has none either). |
+| Lorentzian frequency-domain width | converter (core 0.7.7, `SpinSystem.HStrainL`); filled (lft) | `HStrainL = 2W` for EPR and FDMR; `lft.ddpowh(shape='lorentzian')` | `HStrainL` has `HStrain`'s orientation rule and dB/dE, with a Lorentzian line per transition; not an EasySpin field (its strains are Gaussian). Telser's ICUTOFF truncation and Flygare ν³/ν₀² are not mapped (`extras['notes']`). pepper vs telser-tools (cutoff lifted, `frequency_factor=False`): rhombic S = ½ 0.14 % (anisotropic W 0.04 %, derivative 1.9 %), FDMR 1.1 % at zero field / 0.6 % at 2 T, Cu(II)₂ 0.15 %. ENDOR still raises on the pepper path (salt's selection is Gaussian). |
 | line cutoff at ICUTOFF half widths (Fortran: √ICUTOFF, DDPOWH-05) | not needed; filled (lft) | pepper convolves fully; `lft.ddpowh(cutoff=, exact_cutoff=)` | A cut Lorentzian loses area: (2/π)·atan(ICUTOFF) is kept. `exact_cutoff=False` gives the Fortran's √ICUTOFF. ENDOR has separate EPR and NMR cutoffs (`nmr_cutoff=`). |
 | exact derivative d/dB (Fortran: d/dν, DDPOWH-02) | as is | `Harmonic = 1` | tested |
 | Flygare factor ν (Gaussian) or ν³/ν₀² (Lorentzian) | converter (relation); filled (lft) | none in EasySpin; `lft.ddpowh(frequency_factor=True)` (default) | Compare pepper with telser-tools `frequency_factor=False`. Tested: y_ff = hν_mw·y to O(W/ν). For a THz FDMR axis Telser divides ν³ (cm⁻¹) by the axis in THz²; the converter folds that constant into `scale`. |
@@ -151,7 +151,7 @@ The tolerances are 1.5–2× the calibrated difference:
 | DDPOWJ powder spectrum | converter; exact (lft) | `pepper` with `Options(Threshold=0)`; `lft.ddpowj.epr` | default pruning drops weak singlet–triplet lines (6 %) |
 | DDPOWJ strain: basis weights WMS₁(m₁)·WMS₂(m₂) (product), (H/Hset)^b | **filled (lft)** | `lft.ddpowj.epr(..., strain=Strain(ddpowj.strain_weights(sys, ms1, ms2, s12_weight=0.0), b, B_set))` | Telser's product form. **Open question DDPOWJ-10 (waiting on J. Telser):** an S = ½ partner has no WMS factors (WMS = 0), so every product weight is 0 and only (H/Hset)^b remains; the Fortran sets WMS = 1, which doubles every width. `s12_weight` (converter: `s12_strain_weight`) keeps both: 0.0 (default, exact) and 1.0 (Fortran); both match telser-tools' option of the same name. Treat strain fits of dimers with an S = ½ partner as provisional. |
 | DDPOWJ level ranges (all pairs i < j by default) | gap; filled (lft) | `lft.ddpowj.level_range_pairs((a, b, c, d), n)` | as DDPOWH |
-| DDPOWJ Lorentzian, cutoff, Flygare, populations, octant (DDPOWJ-06 … -11) | as DDPOWH; filled (lft) | `lft.ddpowj.epr` | Octant with general d (DDPOWJ-11): pepper picks the symmetry itself; `lft.ddpowj` takes Telser's NROT from the input. |
+| DDPOWJ Lorentzian, cutoff, Flygare, populations, octant (DDPOWJ-06 … -11) | as DDPOWH (Lorentzian: `HStrainL`, 0.7.7); filled (lft) | `lft.ddpowj.epr` | Octant with general d (DDPOWJ-11): pepper picks the symmetry itself; `lft.ddpowj` takes Telser's NROT from the input. |
 
 ## Proposals, by size
 
@@ -172,9 +172,9 @@ The tolerances are 1.5–2× the calibrated difference:
    - Field = 0 in frequency sweeps and `salt`: `Options.ZeroField` (0.7.4, #24);
    - transition selection in `pepper`: `Options.Transitions` (0.7.5, #25);
    - user orientation lists in `pepper`: `Exp.Orientations`/`OrientationWeights` (0.7.6, #26);
-   - **deferred:** a Lorentzian `HStrain`. `lw[1]` already covers the isotropic case and `lft.ddpowh` the
-     Telser case; only an anisotropic, transition-dependent Lorentzian would be new, at the cost of a
-     per-facet Voigt in pepper and pepper_autograd.
+   - Lorentzian strain in `pepper`: `SpinSystem.HStrainL` (0.7.7). Pure Lorentzian per line; combining it
+     with a Gaussian strain raises (no per-line Voigt). The converters map Telser's Lorentzian EPR/FDMR
+     width onto it.
 
 ## torchspin defects found (logged as new entries in the mol2g bug log)
 

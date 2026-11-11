@@ -146,6 +146,35 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## Simulator — Lorentzian strain, `SpinSystem.HStrainL` (0.7.7)
+
+`HStrainL` (`[3]` MHz FWHM, molecular frame) gives every pepper line a Lorentzian
+profile whose width has `HStrain`'s form, `sqrt(sum_k (HStrainL_k n_k)^2)` in frequency
+and that divided by |dE/dB| in a field sweep.
+
+- **No EasySpin counterpart.** EasySpin's strains are Gaussian. The validation chains
+  to EasySpin through the isotropic case, which equals pepper's `Sys.lw(2)` Lorentzian
+  exactly; anisotropic widths are checked against analytic single lines (1e-12) and a
+  brute-force powder sum (0.6 %; the Gaussian `HStrain` meets the same reference to
+  0.7 %: the difference is the facet summation with Λ smoothing, shared by both).
+- **No Voigt per line.** `HStrainL` together with `HStrain`, `gStrain`, `AStrain` or
+  `DStrain` raises `ValueError`. A global `Sys.lw` (Gaussian and/or Lorentzian) can be
+  added; it is convolved afterwards, as for the Gaussian strains.
+- **Linearized in field.** As for `HStrain`, the field width is the frequency width
+  divided by |dE/dB| at the resonance. Where levels curve within a line width (looping
+  transitions, D ≈ hν) this differs from Telser's field-point line shape; use
+  `torchspin.lft.ddpowh(shape='lorentzian')` for that.
+- **Tails.** Lorentzian tails are long. Only resonances inside the sweep window are
+  found, so a line just outside contributes no tail, and the area inside the window is
+  `(atan(b) − atan(a))/π` of the line's. A residual `Sys.lw` is convolved by FFT, which
+  truncates tails at the window edges: with `Exp.mwPhase` (dispersion decays as 1/x)
+  this is 1.3 % of the maximum in a 40 mT window around a 2 mT line, 0.2 % in 200 mT.
+- **Cost.** The Lorentzian template is evaluated over the whole axis (a Gaussian's is
+  windowed), and with `Exp.mwPhase` per line in NumPy: slower than `HStrain` on large
+  powder grids.
+- **Only pepper and pepper_autograd** read `HStrainL`. `resfields` returns no Lorentzian
+  widths; `salt`, `garlic`, `chili` and the other simulators ignore the field.
+
 ## Simulator — user-supplied orientations in pepper (0.7.6)
 
 `Experiment.Orientations` (`(N, 2)` `[phi, theta]`, molecular frame) and
