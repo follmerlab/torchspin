@@ -34,6 +34,13 @@ samples parameters, simulates, normalizes, resamples and adds noise
 deterministically for a given seed) and the differentiable losses
 `cosine_loss` / `rmsd`.
 
+## Ligand-field tools (`torchspin.lft`)
+
+Joshua Telser's ligand-field programs (DDN, DDNFIT, DDNSUS, DDNMAG, DDNLOOP, DDNPOW, DPN, DPNFIT,
+DSOXF, Tanabe–Sugano, DLSD5, DIPOLE, DTD), differentiable, with joint fits of one ligand-field model to
+band energies, magnetometry, g values and EPR spectra, plots in cm⁻¹, and converters for Telser's
+spin-Hamiltonian programs: [lft.md](lft.md), [lft_gap_analysis.md](lft_gap_analysis.md).
+
 ## Reference material in the repository
 
 - [README](../README.md) — installation, quick start, feature list, validation status.

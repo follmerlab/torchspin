@@ -6,6 +6,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-11
+
+The first PyPI release since 0.7.0: it also contains 0.7.1–0.7.7 below, which were merged but not
+published separately.
+
+### Added
+
+- **`torchspin.lft`: ligand-field tools.** Joshua Telser's programs, ported from
+  telser-tools and differentiable. `lft.ddn`, `ddnloop`, `ddnpow`, `ddnfit`, `ddnsus`, `ddnmag`,
+  `dpn`, `dpnfit`, `dsoxf`, `tanabe_sugano`, `dlsd5`, `dipole`, `dtd`.
+  - `lft.fit.JointFit` fits one model to band energies, g values, χ, M and EPR spectra together,
+    with exact Jacobians.
+  - `lft.dn2sys` builds a `SpinSystem` with the full g matrix, for a differentiable route from a
+    ligand field to `pepper`.
+  - `lft.plot` draws its plots in cm⁻¹ by default.
+  - `lft.telser2torchspin` converts DDZHQ, DDPOWH, DJDZE and DDPOWJ inputs.
+  - `lft.ddpowh`, `lft.ddpowj`: Telser's field-point powder EPR, FDMR, ENDOR and S = 0 NMR/NQR on a
+    `SpinSystem`. They add what `pepper` lacks: the level strain width that depends on the composition of
+    each level (DDPOWH sum and DDPOWJ product weights), m_S-manifold pair selection, Lorentzian
+    frequency-domain lines, the Flygare factor, the line cutoff, zero-field FDMR, chemical shielding, and
+    Telser's w and U terms. The converters' `target='lft'` runs a Telser input through them; all 103
+    DDPOWH/DDPOWJ golden inputs match telser-tools to 1e-10.
+  - The package is additive: only `torchspin/__init__.py` gains `lft`. See `docs/lft.md`.
+
 ### Fixed
 
 - **Flaky test `test_orientations_at_zero_field_match_the_powder`.** Its zero-field lines
