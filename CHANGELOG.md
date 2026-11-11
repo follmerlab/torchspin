@@ -20,6 +20,50 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `'perturb2'`, `'matrix'`, `'hybrid'`, all non-differentiable `pepper` results, and the
   `Exp.CrystalOrientation` route (which already passed the order).
 
+## [0.8.2] — 2026-11-11
+
+### Fixed
+
+- **`nucspinrmv`, `nucspinkeep` and `nucspinadd` dropped most fields of the spin system**
+  (all releases up to 0.8.1). They rebuilt it from a short list of fields, so `ee` became zero,
+  `Ham` None, and `ee2`, `eeFrame`, `D_`, `sigma`, `n`, `Abund`, `L`/`gL`/`soc`/`CF*`, `initState`,
+  `tdm`, `tcorr`/`Diff`, `T1`/`T2` and the other non-hyperfine fields were lost. They now copy every
+  field and filter only the per-nucleus ones (`Nucs`, `n`, `A`/`A_`, `AFrame`, `gnscale`, `sigma`,
+  `sigmaFrame`, `Q`, `QFrame`, `Abund`, full 3×3 forms included), as EasySpin's `nucspinrmv.m` does;
+  tensors are passed without copying, so the result stays on the autograd graph.
+  - **Results that change:** pepper `Method='hybrid'` for systems whose core carries `ee`, `ee2`,
+    `Sys.Ham`, OAM/crystal-field terms or `initState` (cosine to EasySpin's hybrid: exchange-coupled dimers
+    0.00 and −0.02, now 1.00000 and 0.99998; S = 3/2 with `Ham132` 0.945, now 1.00000; with
+    `initState` the hybrid spectrum was the thermal one), and saffron's fast algorithm for S > 1/2 with `Sys.Ham` (the term was missing from the
+    electronic Hamiltonian). Hybrid for a single electron without these fields, and every other
+    method, are unchanged.
+  - `AStrain` applies to the first nucleus: it is dropped with a `UserWarning` when that nucleus is
+    removed. `initState` given for the full spin space raises when the nuclear dimension changes.
+    Nonzero `nn` raises (as in EasySpin) unless fewer than two nuclei remain.
+  - `nucspinadd` accepts `[Aperp, Apar]`, full 3×3 `A` and `Q`, `Q` as `e2qQ/h` or
+    `[e2qQ/h, eta]`, and tensors that require grad (they were converted through NumPy, which
+    detached them); mixing a full and a principal-value tensor writes both as full matrices.
+
+## [0.8.1] — 2026-11-11
+
+### Fixed
+
+- **`salt`'s first-order perturbation path gave every ENDOR line unit intensity** (all releases with
+  this path). For one electron without quadrupole couplings `salt` picks first-order perturbation
+  theory by itself; its lines had intensity 1, while the matrix path (and EasySpin, with both
+  `Opt.Method='matrix'` and `'perturb1'`) uses |⟨i|μ⊥|j⟩|² in (MHz/mT)². The absolute scale therefore
+  jumped about 2200× for 1H with the path (e.g. when `Options.Enhancement` was switched on), and
+  nuclei with different gn or spin I had wrong relative weights (1H+14N: cosine 0.649 against
+  EasySpin). Each first-order line now carries EasySpin `endorfrq_perturb.m`'s intensity, summed
+  over its 2I coinciding mI transitions: (gn·μN/h)²/4 · 2I(I+1)/3 · ∏(2I+1). This matches EasySpin
+  `perturb1` to round-off (shape and scale) and EasySpin's default `matrix` to 0.3 % (1H) in area.
+  Both the fixed-field (`Experiment.Field`) and the field-swept (`Experiment.Range`) modes are
+  fixed. **What changes:** the absolute scale of every one-electron, no-Q `salt` spectrum (by
+  1/2206 for a lone 1H), and the shape of spectra with several kinds of nuclei. Fitted amplitude
+  scales change accordingly. **What does not change:** systems with Q, more than one electron,
+  `Options.Enhancement=True` or `Options.ZeroField=True` (all on the matrix path), line positions,
+  and the automatic choice of the first-order path.
+
 ## [0.8.0] — 2026-11-11
 
 The first PyPI release since 0.7.0: it also contains 0.7.1–0.7.7 below, which were merged but not
