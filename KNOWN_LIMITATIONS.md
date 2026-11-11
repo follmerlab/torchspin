@@ -165,6 +165,15 @@ field holds what the constructor would store and invalid values raise at the ass
   `object.__setattr__(sys, name, value)` stores a value unnormalized (tests use it to
   check `validate()`).
 - **Cost.** An assignment costs one construction (about 0.02 ms).
+- **`dataclasses.replace` and `D_`/`A_`.** `dataclasses.replace(sys, ...)` passes every stored
+  field, so for a system built with `D_` (or `A_`) it also passes the `D` (`A`) derived from
+  it, and the constructor raises "Zero-field splitting given in both D and D_" ("Hyperfine
+  data given in both A and A_"). The constructor is deliberately unchanged. Assign the field
+  instead (`sys2 = copy.copy(sys); sys2.weight = 0.5`), or build a new `SpinSystem`.
+  torchspin's own rebuilds (isotopologue expansion, `HStrainL`, `spin2sys`'s U term) use the
+  internal `spinsystem._replace`, which passes such pairs through their source only; up to
+  0.8.11 they used `dataclasses.replace` and raised for systems with `D_` (or with `A_`
+  and `HStrainL`).
 
 ## Powder grid interpolation on closed-φ grids (fixed 0.8.9)
 
@@ -218,10 +227,17 @@ Differences from EasySpin:
   remain (no pair left to couple; saffron's fast path removes all nuclei).
 - **`nucspinadd`** accepts systems with several electron spins (EasySpin raises); a
   3-element `A` is used for every electron.
-- **Left over: saffron's S = 1/2 fast path ignores `Sys.Ham`.** It builds the Zeeman
-  term from `Sys.g` alone (no `nucspinrmv` core), so linear `Ham110`/`Ham112` terms are
-  silently dropped there; EasySpin's saffron rejects `Sys.Ham*` altogether. The S > 1/2
-  fast path includes them since 0.8.2.
+- **saffron and `Sys.Ham`.** EasySpin's saffron rejects every `Sys.Ham*` (saffron.m:130-131).
+  torchspin's S = 1/2 fast path builds the Zeeman term from `Sys.g` alone, so up to 0.8.12
+  it silently dropped nonzero `Ham` terms (a g given as `Ham110`/`Ham112` gave a signal of
+  exactly zero); since 0.8.13 it raises. The S > 1/2 fast path (since 0.8.2, electronic
+  Hamiltonian from `ham()`) and the real-pulse engine (`Opt.SimulationMode='thyme'`) include
+  `Ham` and are kept as torchspin extensions: with the Zeeman term written as
+  `Ham110`/`Ham112` they reproduce the result for the same `g` to 1e-11 (S = 3/2 3pESEEM,
+  S = 1/2 two-pulse ESEEM with real pulses); there is no EasySpin reference. **Open:**
+  `Ham` on the S = 1/2 fast path. Sending S = 1/2 through the general (S > 1/2) path
+  reproduces the fast path's shape exactly (residual 3e-16 for 14N, 2e-7 for 1H) but at
+  0.5× its amplitude, so that route needs the normalization worked out first.
 
 ## Simulator — Lorentzian strain, `SpinSystem.HStrainL` (0.7.7)
 
@@ -339,7 +355,7 @@ for field and frequency sweeps:
   starts at or below two increments with Harmonic 0 therefore does not move; use more points.
   (`test_autograd.py::TestNSpinFDAccuracy::test_linewidth_fd_agreement` uses 512 points for this
   reason and asserts a nonzero finite difference.)
-- `salt` still convolves narrow ENDOR line widths (salt.m:884-911 skips them); not changed here.
+- `salt` applies the same rule to its ENDOR line width since 0.8.11 (see § ENDOR).
 - EasySpin agreement (tests/data/ref_pepper_narrowlw.mat, 8 cases): amplitude within 2e-7 and
   cosine 1 − 1e-9 since 0.8.9. Up to 0.8.8 the three field-sweep Voigt cases at Harmonic 1 were
   1.002–1.005, from the closed-φ row spline (see § Powder grid interpolation on closed-φ grids).
@@ -481,7 +497,7 @@ Hamiltonian.
   interaction tensors raise `ValueError` when `H0Extra` is set: pepper with
   `Method='perturb*'` or `'hybrid'` (for a component with nuclei), `pepper_autograd`
   with `'perturb*'`, `resfields_perturb`, `resfreqs_perturb`, `endorfrq_perturb`,
-  `orisel`, `salt` for one electron spin (its EPR and ENDOR steps use perturbation
+  `salt` for one electron spin (its EPR and ENDOR steps use perturbation
   theory), garlic, chili, fastmotion, cardamom, saffron's fast (ideal-pulse) algorithm,
   and `nucspinrmv`/`nucspinkeep`/`nucspinadd` (the operator lives on the full spin
   space and cannot be reduced or extended).
@@ -506,12 +522,21 @@ Hamiltonian.
 - **Gradients.** Reverse mode works through `levels`, `ham` and `pepper_autograd`; forward
   mode (dual numbers) works through `ham`/`levels`, not through pepper (known issue).
 
-## `orisel` — one electron spin only (0.8.6)
+## `orisel` — differences from EasySpin (0.9.0)
 
-`orisel` is built on the one-electron perturbation solver (`resfields_perturb`), whereas
-EasySpin's `orisel.m` diagonalizes the full Hamiltonian. Systems with more than one electron
-spin raise `NotImplementedError` (before 0.8.6 they silently returned zero weights). Solver
-errors are no longer converted to zero selectivity.
+Since 0.9.0 `orisel` runs EasySpin's model (full diagonalization at `Exp.Field`, orisel.m:110-153;
+weights agree to 7e-13 in `test_orisel.py`) for any number of electron and nuclear spins. Before
+0.9.0 it used one-electron perturbation theory over `Exp.Range` with a field-domain Lorentzian at
+the g = 2.0023 field, and its weights did not follow `Exp.Field` (bug B26). Deliberate differences:
+
+- **Return values.** EasySpin's output depends on `nargout`; torchspin returns
+  `(weights, phi, theta)`, or `(Weights, Transitions, phi, theta)` with `per_transition=True`.
+  `Transitions` keeps EasySpin's 1-based level numbering. There is no plot (EasySpin's
+  `nargout = 0` / `Opt.Display`).
+- **Inputs.** `Exp.Field` must be positive (EasySpin also runs at 0 mT, where degenerate levels
+  make the per-pair rates basis-dependent), and a negative `ExciteWidth` is rejected.
+  `Exp.Orientations` is `(N, 2)` `[phi, theta]`; EasySpin's `3 x N` form (whose third angle it
+  ignores) is not accepted.
 
 ## Pepper — absolute intensity (fixed 2026-09-01)
 
@@ -618,6 +643,45 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
   bins and values), so this is kept.
 - **gnscale.** The first-order path (frequencies and intensities) ignores `Sys.gnscale`, as
   EasySpin's `endorfrq_perturb.m` does; the matrix path applies it (via `ham_nz`).
+- **Equivalent nuclei.** `salt` raises for `Sys.n > 1`, as EasySpin does (salt.m:135-136).
+  Before 0.8.10 it ignored `n` and returned the spectrum of a single nucleus. Give equivalent
+  nuclei as separate entries of `Nucs`.
+- **Line width (0.8.11).** `lw_mhz` is a Gaussian FWHM, applied as EasySpin's salt.m applies
+  `Sys.lwEndor(1)` (salt.m:899-911): a width of at most two rf increments is not convolved,
+  as the line is delta-like. Before 0.8.11 torchspin convolved it, which lowered peaks of
+  under-resolved spectra (1H, g = [2 2.05 2.1], A = [5 8 12] MHz, 0.02 MHz increments: 0.933 of
+  EasySpin at 1.5 increments, 0.900 at 2.0); all five cases of `salt_narrowlw_refs.mat` (0, 1.5,
+  2.0, 2.5, 10 increments) now agree to 4e-13 of the peak. The field-swept (`Experiment.Range`)
+  mode, which EasySpin's salt does not have, uses the same rule. A skipped width that requires
+  grad stays in the graph with zero gradient, so a fit of `lw_mhz` that starts at or below two
+  increments does not move; use more points. The default `lw_mhz = 0.1` with the default axis
+  (0 to 2·mwFreq, 512 points, about 37 MHz increments at X band) is therefore a stick spectrum.
+- **Not supported:** a Lorentzian ENDOR width (`Sys.lwEndor(2)`) and `Exp.Harmonic` for salt.
+  torchspin's salt returns the absorption spectrum with one Gaussian width.
+- **Range padding.** When the spectrum is nonzero at an end of the rf range, EasySpin pads the
+  range with the edge values before convolving (salt.m:858-882, `Opt.PaddingMultiplier`);
+  torchspin's convolution pads with zeros, so the points within about two widths of that end
+  come out lower: 1H as above on 10–19 MHz, lw 0.2 MHz (10 increments), 20 points at each end
+  differ (end point 0.56 of EasySpin's, 0.26 of the peak), the rest agree to 2e-13; cosine 0.9980. Spectra that fall to zero inside the range (all
+  EasySpin reference cases) are not affected. A skipped width is unaffected either way.
+
+## ENDOR — `endorfrq_perturb` (0.8.8)
+
+`endorfrq_perturb` matches EasySpin's `endorfrq_perturb.m` element by element: frequencies within
+7.4e-16 and intensities within 4.9e-16 relative (tests/data/endorfrq_perturb_refs.mat: 1H with
+AFrame, 14N with Q/QFrame, 1H+14N, 55Mn with Q, strongly coupled 1H, 14N with a full Q, 1H+14N
+with full non-symmetric A and full Q, S = 3/2 with D; 4 orientations, PerturbOrder 1 and 2).
+Before 0.8.8 the intensities were wrong (lowest transition 0, ∏(2I+1) missing), the elements were
+in a different order and a full 3×3 Q was misread (B20, B27; see CHANGELOG).
+
+- **Kept as in EasySpin.** The second-order quadrupole term uses P2² = 2·tr(P)² + (kPk)² − 4kPPk
+  (.m:281) with P already made traceless, so its first term is always 0 (tr(P²) was presumably
+  meant). With `nuclei=[...]` the intensities still carry ∏(2I+1) over all nuclei of the system,
+  as with EasySpin's `Opt.Nuclei`. `Sys.gnscale` is ignored (see § ENDOR (`salt`)).
+- **Not ported.** One orientation per call (no orientation list), no `Transitions` or
+  `Info.Selectivity` output, no `Exp.ExciteWidth` orientation selection (.m:310-339). The function
+  is not differentiable: values pass through `float()` and a tensor that requires grad gives an
+  output without grad. Use `endorfrq` (matrix diagonalization) or `salt` for these.
 
 ## ENDOR — hyperfine enhancement (`Options.Enhancement`, 0.7.3)
 

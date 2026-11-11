@@ -143,6 +143,27 @@ class TestEndorfrqPerturb:
         with pytest.raises(ValueError, match="nElectrons"):
             endorfrq_perturb(sys, 340.0)
 
+    def test_order_and_intensity_closed_form(self):
+        """EasySpin element order and intensities (B20, 0.8.8), in closed form.
+
+        1H + 14N, isotropic A, first order. Per nucleus the lines run by the
+        lower-level mI, mS ascending (mS = -1/2 first), so 1H gives
+        nu_H + A/2 then nu_H - A/2. Intensity of transition k = 1..2I is
+        (gn*muN/h)^2 * k(2I+1-k)/4 / (2I+1) * prod(2I+1), the product over
+        both nuclei (= 6); k(2I+1-k) = 1 for 1H and 2 for both 14N lines.
+        """
+        A_H, A_N, B0 = 8.0, 30.0, 340.0
+        sys = SpinSystem(S=[0.5], g=[[2.0, 2.0, 2.0]], Nucs=['1H', '14N'],
+                         A=[[A_H] * 3, [A_N] * 3])
+        freqs, ints = endorfrq_perturb(sys, B0, order=1)
+        gn_H, gn_N = float(sys.gn[0]), float(sys.gn[1])
+        nu_H = _larmor_MHz(gn_H, B0)
+        np.testing.assert_allclose(freqs[:2].numpy(), [nu_H + A_H / 2, nu_H - A_H / 2],
+                                   rtol=1e-12)
+        pre = lambda gn: (gn * NMAGN / PLANCK * 1e-9) ** 2  # (MHz/mT)^2
+        expected = [pre(gn_H) * 1 / 4 / 2 * 6] * 2 + [pre(gn_N) * 2 / 4 / 3 * 6] * 4
+        np.testing.assert_allclose(ints.numpy(), expected, rtol=1e-12)
+
 
 # ============================================================
 # resfreqs_perturb tests
