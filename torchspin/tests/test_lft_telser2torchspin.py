@@ -630,7 +630,7 @@ def test_ddpowh_endor_matches_salt():
     assert dev < 6e-3 and corr > 0.99999, (dev, corr)
 
 
-@pytest.mark.parametrize("name,match", [("rhombic_s12_lorentz", "Lorentzian"), ("s32_strain", "strain"),
+@pytest.mark.parametrize("name,match", [("s32_strain", "strain"),
                                         ("mode_1_nrho8", "mixed H1"), ("nqr_n14", "NMR/NQR")])
 def test_ddpowh_unmapped_features(name, match):
     ddpowh, inp = _ddpowh(name)
@@ -640,6 +640,45 @@ def test_ddpowh_unmapped_features(name, match):
         warnings.simplefilter("ignore")
         cv = t2t.ddpowh2sys(inp, strict=False)
     assert cv.extras["dropped"]
+
+
+# Lorentzian EPR lines -> SpinSystem.HStrainL = 2 W (torchspin 0.7.7).  Telser's cutoff is lifted (pepper does
+# not cut lines) and the Flygare factor is off.  Tolerances 2x the difference measured with both grids refined
+# (telser igloo 30/60, pepper GridSize 91/181); the Gaussian counterparts are in the tests above.
+@pytest.mark.parametrize("replace,tol", [
+    (dict(igloo=60), 3e-3),                                               # measured 0.14 %
+    (dict(igloo=40, epr_width=(40.0, 80.0, 150.0)), 1e-3),                # anisotropic W: 0.04 %
+    (dict(igloo=40, epr_width=(40.0, 80.0, 150.0), epr_deriv=1), 4e-2),   # derivative: 1.9 % (Gaussian: 2.5 %)
+], ids=["isotropic", "anisotropic", "derivative"])
+def test_ddpowh_lorentzian_matches_pepper_hstrainl(replace, tol):
+    ddpowh, inp = _ddpowh("rhombic_s12_lorentz", epr_cutoff=10000, **replace)
+    sp = ddpowh.simulate(inp, frequency_factor=False).spectra[0]
+    cv = t2t.ddpowh2sys(inp)
+    assert cv.sys.HStrain is None
+    np.testing.assert_allclose(cv.sys.HStrainL.numpy(), 2.0 * np.asarray(inp.epr_width), rtol=1e-15)
+    assert any("ICUTOFF" in n for n in cv.extras["notes"])
+    x, y = pepper(cv.sys, cv.exp, Options(GridSize=91, Threshold=0.0))
+    dev, corr = _norm_dev(sp.y, y.numpy())
+    assert dev < tol and corr > 0.999, (dev, corr)
+
+
+def test_ddpowh_lorentzian_fdmr_matches_pepper_hstrainl():
+    """Zero field (Options.ZeroField) and 2 T; measured 1.07 % / 0.57 % (Gaussian lines: 0.68 % / 0.47 %)."""
+    ddpowh, inp = _ddpowh("fdmr_s1_cm", igloo=40, epr_shape="L", epr_cutoff=10000)
+    res = ddpowh.simulate(inp, frequency_factor=False).spectra
+    cv = t2t.ddpowh2sys(inp)
+    assert cv.sys.HStrainL is not None and cv.sys.HStrain is None
+    for sp, z, tol in zip(res, cv.extras["spectra"], (2.5e-2, 1.2e-2)):
+        _, y = pepper(cv.sys, z["exp"], Options(GridSize=91, Threshold=0.0, **z["options"]))
+        dev, corr = _norm_dev(sp.y, y.numpy())
+        assert dev < tol and corr > 0.999, (dev, corr)
+
+
+def test_ddpowh_lorentzian_endor_is_not_mapped():
+    """salt's orientation selection is Gaussian (it ignores HStrainL): Lorentzian ENDOR stays a strict refusal."""
+    ddpowh, inp = _ddpowh("gen_endor_n14", epr_shape="L")
+    with pytest.raises(NotImplementedError, match="Lorentzian"):
+        t2t.ddpowh2sys(inp)
 
 
 def test_ddpowh_partial_orientation_is_listed():
@@ -676,11 +715,24 @@ def test_ddpowj_matches_pepper(name, replace, tol):
     assert dev < tol and corr > (0.995 if tol > 0.05 else 0.999), (dev, corr)
 
 
-@pytest.mark.parametrize("name,match", [("cu2_strain", "strain"), ("cu2_bq_lorentz", "Lorentzian")])
+@pytest.mark.parametrize("name,match", [("cu2_strain", "strain")])
 def test_ddpowj_unmapped_features(name, match):
     ddpowj, inp = _ddpowj(name)
     with pytest.raises(NotImplementedError, match=match):
         t2t.ddpowj2sys(inp)
+
+
+def test_ddpowj_lorentzian_matches_pepper_hstrainl():
+    """Lorentzian lines -> HStrainL = 2 W (0.7.7); cutoff lifted, Flygare off.  Measured 0.15 % (igloo 40/80,
+    pepper GridSize 91/181: 0.144-0.150 %)."""
+    ddpowj, inp = _ddpowj("cu2_bq_lorentz", igloo=40, epr_cutoff=10000)
+    sp = ddpowj.simulate(inp, frequency_factor=False).spectra[0]
+    cv = t2t.ddpowj2sys(inp)
+    assert cv.sys.HStrain is None and cv.sys.HStrainL is not None
+    assert any("ICUTOFF" in n for n in cv.extras["notes"])
+    x, y = pepper(cv.sys, cv.exp, Options(GridSize=91, Threshold=0.0))
+    dev, corr = _norm_dev(sp.y, y.numpy())
+    assert dev < 3e-3 and corr > 0.999, (dev, corr)
 
 
 def test_ddpowj_s12_strain_is_a_width_doubling_in_telser_exact_mode():
