@@ -32,6 +32,7 @@ Tests comparing against these are true cross-validation.
 | `generate_esfit_crossval.m` | `esfit_test*.mat` | Fitting cross-validation |
 | `generate_examples_*.m` | `example_*.mat` | Example simulation outputs |
 | `generate_endor_enhancement_refs.m` | `endor_enhancement_refs.mat` | ENDOR hyperfine enhancement (`Opt.Enhancement` off/on): endorfrq per level pair for 1H, 14N+1H, 63Cu+14N at 4 orientations; fixed-field salt for 14N (Q), 1H, 14N+1H |
+| `generate_endorfrq_perturb_refs.m` | `endorfrq_perturb_refs.mat` | `endorfrq_perturb` element by element (0.8.8, B20/B27): frequencies and intensities, PerturbOrder 2 and 1, 4 orientations (one `SampleFrame` row `[0 -theta -phi]` each), 340 mT; 1H with AFrame, 14N with Q/QFrame, 1H+14N, 55Mn with Q, strongly coupled 1H, 14N with full Q, 1H+14N with full A and full Q, S = 3/2 with D + 14N (8 cases) |
 | `generate_salt_first_order_refs.m` | `salt_first_order_refs.mat` | salt first-order intensity scale (bug B16, 0.8.1): fixed-field salt with `Opt.Method` `'matrix'` and `'perturb1'` for 1H and 1H+14N (no Q) |
 | `generate_pepper_cupc_refs.m` | `ref_pepper_cupc.mat` | Cu(II) + ligand nuclei: `matrix`/`perturb`/`hybrid` on the same systems (34 cases), incl. natural-abundance isotopologues, tilted and anisotropic ligand A tensors, quadrupole coupling, enlarged exact core, two components |
 | `generate_nucspin_core_refs.m` | `ref_nucspin_core.mat` | Cores built with `nucspinrmv` (0.8.2, B14): pepper `hybrid` and `matrix` on an anisotropic exchange-coupled Cu dimer, an isotropic dimer and S = 3/2 with `Ham132` |
@@ -112,6 +113,7 @@ Tests comparing against these are true cross-validation.
 
 **ENDOR frequencies:**
 `endorfrq_ref_*.mat` — MATLAB
+`endorfrq_perturb_refs.mat` — MATLAB-gen (`generate_endorfrq_perturb_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`, `ori`, `Field`)
 `endor_enhancement_refs.mat` — MATLAB-gen (`generate_endor_enhancement_refs.m`, EasySpin main, R2024b, 2026-11-10): endorfrq (powder mode) and fixed-field salt with `Opt.Enhancement` 'off'/'on'
 
 **Orientation selection:**

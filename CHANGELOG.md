@@ -37,6 +37,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   exact (`pepper_autograd` vs central differences to 1e-6 for d/d g_z). Spectra without
   interpolation, on axial (Dinfh) grids and on open-φ grids are bit-identical. EasySpin references:
   tests/data/ref_closedphi_interp.mat.
+## [0.8.8] — 2026-11-11
+
+### Fixed
+
+- **`endorfrq_perturb` intensities, element order and full 3×3 `Q` now match EasySpin's
+  `endorfrq_perturb.m` element by element** (bugs B20, B27). Intensities: torchspin used the
+  matrix element (I+mI)(I−mI+1)/4 with mI the lower level, one level off from EasySpin's
+  k(2I+1−k)/4, k = 1..2I (.m:367), so the lowest transition of every nucleus had intensity 0, and
+  it dropped the factor ∏(2I+1) over all nuclei (.m:385). For 1H+14N at φ = 0.3, θ = 0.7 (340 mT)
+  torchspin gave 0 for all 1H lines and 0 / 1.58e-6 for the 14N lines; EasySpin gives 1.36e-3 and
+  9.47e-6, as torchspin does now. Order: torchspin listed transitions mS-major with mS descending;
+  EasySpin lists them per nucleus by the mI of the lower level, mS ascending within it
+  (.m:303-304, 377-381). torchspin now uses EasySpin's order, so frequencies agree element by
+  element and not only after sorting. Full Q: with `sys.fullQ` torchspin read row i of the 3×3
+  matrix as principal values (14N with a full Q: sorted 12.27/12.33/14.37/14.40 MHz vs EasySpin
+  11.15/13.31/13.42/15.48); it now uses the matrix as EasySpin does (.m:84-85). Agreement over 8
+  systems × 4 orientations × PerturbOrder 1 and 2: frequencies 7.4e-16, intensities 4.9e-16
+  relative. Callers that index the output by position or use its intensities see different
+  values; sorted frequencies are unchanged except with a full Q. `salt` does not call
+  `endorfrq_perturb` and is unaffected. EasySpin references: tests/data/endorfrq_perturb_refs.mat.
 
 ## [0.8.7] — 2026-11-11
 
