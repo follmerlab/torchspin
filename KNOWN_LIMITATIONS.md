@@ -146,6 +146,32 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## `nucspinrmv` / `nucspinkeep` / `nucspinadd` keep every field (fixed 0.8.2)
+
+Up to 0.8.1 these rebuilt the spin system from a short list of fields, so `ee`,
+`ee2`, `Ham`, `L`/`soc`/`CF*`, `initState`, `tdm`, dynamics and pulse fields and the
+nuclear `sigma`/`n`/`Abund` were dropped. pepper `Method='hybrid'` and saffron's fast
+algorithm for S > 1/2 build their exact core with `nucspinrmv`, so an exchange-coupled
+dimer, a system with `Sys.Ham` or a non-equilibrium `initState` got the wrong core
+(hybrid on a J = 1000 MHz dimer: cosine 0.0 to the matrix result). Since 0.8.2 they copy
+the system and filter only the per-nucleus fields, as EasySpin does; hybrid on dimers
+and `Sys.Ham` systems matches EasySpin's hybrid (`tests/data/generate_nucspin_core_refs.m`).
+Differences from EasySpin:
+
+- **`AStrain`** belongs to the first nucleus. When that nucleus is removed it is dropped
+  with a `UserWarning` (EasySpin keeps it, and it then applies to the new first nucleus).
+- **`initState`** given for the full spin space (electrons and nuclei) raises when the
+  nuclear dimension changes; electron-space forms (strings, `'xyz'`, states of the
+  electron spins only) are kept.
+- **`nn`**: nonzero couplings raise, as in EasySpin, except when fewer than two nuclei
+  remain (no pair left to couple; saffron's fast path removes all nuclei).
+- **`nucspinadd`** accepts systems with several electron spins (EasySpin raises); a
+  3-element `A` is used for every electron.
+- **Left over: saffron's S = 1/2 fast path ignores `Sys.Ham`.** It builds the Zeeman
+  term from `Sys.g` alone (no `nucspinrmv` core), so linear `Ham110`/`Ham112` terms are
+  silently dropped there; EasySpin's saffron rejects `Sys.Ham*` altogether. The S > 1/2
+  fast path includes them since 0.8.2.
+
 ## Simulator — Lorentzian strain, `SpinSystem.HStrainL` (0.7.7)
 
 `HStrainL` (`[3]` MHz FWHM, molecular frame) gives every pepper line a Lorentzian

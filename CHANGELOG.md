@@ -6,6 +6,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-11-11
+
+### Fixed
+
+- **`nucspinrmv`, `nucspinkeep` and `nucspinadd` dropped most fields of the spin system**
+  (all releases up to 0.8.1). They rebuilt it from a short list of fields, so `ee` became zero,
+  `Ham` None, and `ee2`, `eeFrame`, `D_`, `sigma`, `n`, `Abund`, `L`/`gL`/`soc`/`CF*`, `initState`,
+  `tdm`, `tcorr`/`Diff`, `T1`/`T2` and the other non-hyperfine fields were lost. They now copy every
+  field and filter only the per-nucleus ones (`Nucs`, `n`, `A`/`A_`, `AFrame`, `gnscale`, `sigma`,
+  `sigmaFrame`, `Q`, `QFrame`, `Abund`, full 3×3 forms included), as EasySpin's `nucspinrmv.m` does;
+  tensors are passed without copying, so the result stays on the autograd graph.
+  - **Results that change:** pepper `Method='hybrid'` for systems whose core carries `ee`, `ee2`,
+    `Sys.Ham`, OAM/crystal-field terms or `initState` (cosine to EasySpin's hybrid: exchange-coupled dimers
+    0.00 and −0.02, now 1.00000 and 0.99998; S = 3/2 with `Ham132` 0.945, now 1.00000; with
+    `initState` the hybrid spectrum was the thermal one), and saffron's fast algorithm for S > 1/2 with `Sys.Ham` (the term was missing from the
+    electronic Hamiltonian). Hybrid for a single electron without these fields, and every other
+    method, are unchanged.
+  - `AStrain` applies to the first nucleus: it is dropped with a `UserWarning` when that nucleus is
+    removed. `initState` given for the full spin space raises when the nuclear dimension changes.
+    Nonzero `nn` raises (as in EasySpin) unless fewer than two nuclei remain.
+  - `nucspinadd` accepts `[Aperp, Apar]`, full 3×3 `A` and `Q`, `Q` as `e2qQ/h` or
+    `[e2qQ/h, eta]`, and tensors that require grad (they were converted through NumPy, which
+    detached them); mixing a full and a principal-value tensor writes both as full matrices.
+
 ## [0.8.0] — 2026-11-11
 
 The first PyPI release since 0.7.0: it also contains 0.7.1–0.7.7 below, which were merged but not

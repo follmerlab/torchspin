@@ -1482,7 +1482,7 @@ def _pepper_single(
     _zho = None
     if bool(getattr(opt, 'QuadraticZeeman', False)):
         from torchspin.ham_ezho import field_nonlinear_zeeman_ops, has_field_nonlinear_zeeman
-        if has_field_nonlinear_zeeman(sys):   # sys, not ham_sys: nucspinrmv (hybrid core) drops Sys.Ham
+        if has_field_nonlinear_zeeman(sys):
             if str(opt.Method).startswith('perturb') or hybrid_info is not None:
                 raise NotImplementedError(
                     f"pepper: Options.Method='{opt.Method}' does not support Options.QuadraticZeeman=True "
