@@ -464,6 +464,13 @@ Hamiltonian.
 - **Gradients.** Reverse mode works through `levels`, `ham` and `pepper_autograd`; forward
   mode (dual numbers) works through `ham`/`levels`, not through pepper (known issue).
 
+## `orisel` — one electron spin only (0.8.6)
+
+`orisel` is built on the one-electron perturbation solver (`resfields_perturb`), whereas
+EasySpin's `orisel.m` diagonalizes the full Hamiltonian. Systems with more than one electron
+spin raise `NotImplementedError` (before 0.8.6 they silently returned zero weights). Solver
+errors are no longer converted to zero selectivity.
+
 ## Pepper — absolute intensity (fixed 2026-09-01)
 
 Until 2026-09-01 `pepper()` multiplied the spectrum by one of four empirical

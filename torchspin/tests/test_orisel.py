@@ -75,3 +75,34 @@ class TestOriselBasic:
         nonzero = weights[weights > 0]
         if len(nonzero) > 0:
             assert np.all(nonzero >= 0.5)
+
+
+class TestOriselErrors:
+    """B15: solver errors propagate instead of becoming zero selectivity."""
+
+    def test_two_electrons_raise(self):
+        """orisel is perturbation-based (one electron); before 0.8.6 a two-electron
+        system returned all-zero weights silently."""
+        sys = SpinSystem(S=[0.5, 0.5], g=[[2.0, 2.0, 2.0], [2.1, 2.1, 2.1]], ee=[300.0],
+                         lw=[1.0, 0.0])
+        exp = Experiment(mwFreq=9.5, Range=[300, 360])
+        with pytest.raises(NotImplementedError, match='one electron spin'):
+            orisel(sys, exp, OriselOptions(GridSize=10))
+
+    def test_solver_error_propagates(self, monkeypatch):
+        """Any exception from the resonance solver reaches the caller."""
+        import torchspin.resfields_perturb as rp
+
+        def boom(*args, **kwargs):
+            raise RuntimeError('solver failed')
+        monkeypatch.setattr(rp, 'resfields_perturb', boom)
+        sys, exp = _make_sys_exp()
+        with pytest.raises(RuntimeError, match='solver failed'):
+            orisel(sys, exp, OriselOptions(GridSize=10))
+
+    def test_no_resonances_give_zero_weights(self):
+        """A field range without resonances is a legitimate empty result: all weights 0."""
+        sys = SpinSystem(S=[0.5], g=[[2.0, 2.1, 2.2]], lw=[0.5, 0.0])
+        exp = Experiment(mwFreq=9.5, Range=[10, 20])
+        weights, _, _ = orisel(sys, exp, OriselOptions(GridSize=10))
+        assert np.all(weights == 0.0)

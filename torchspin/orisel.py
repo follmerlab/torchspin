@@ -101,6 +101,12 @@ def orisel(sys, exp, opt: Optional[OriselOptions] = None):
         opt = OriselOptions()
     from torchspin.spinsystem import _reject_h0extra
     _reject_h0extra(sys, 'orisel (perturbation theory)')
+    if sys.nElectrons != 1:
+        # EasySpin's orisel diagonalizes the full Hamiltonian; this port uses the
+        # one-electron perturbation solver (resfields_perturb).
+        raise NotImplementedError(
+            f"orisel supports one electron spin (perturbation theory); the system has "
+            f"{sys.nElectrons} electron spins.")
 
     from torchspin.sphgrid import sphgrid
     from torchspin.hamsymm import hamsymm
@@ -128,16 +134,7 @@ def orisel(sys, exp, opt: Optional[OriselOptions] = None):
         phi_i = float(phi_arr[i])
         theta_i = float(theta_arr[i])
 
-        try:
-            result = resfields_perturb(sys, phi_i, theta_i, exp)
-            if isinstance(result, tuple) and len(result) == 2:
-                B_res, intens = result
-            else:
-                selectivity[i] = 0.0
-                continue
-        except Exception:
-            selectivity[i] = 0.0
-            continue
+        B_res, intens = resfields_perturb(sys, phi_i, theta_i, exp)
 
         if len(B_res) == 0:
             selectivity[i] = 0.0
