@@ -29,6 +29,70 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `Nucs` with a different number of nuclei before `n`) now raises; build a new `SpinSystem`
     instead.
 
+## [0.8.6] — 2026-11-11
+
+### Fixed
+
+- **`orisel` turned every solver error into zero selectivity.** It wrapped the per-orientation
+  call to `resfields_perturb` in `try/except Exception` and set the weight to 0, so an unsupported
+  system or a real bug returned plausible-looking weights (a two-electron system gave all zeros
+  without a warning). Errors now propagate, and a system with more than one electron spin raises
+  `NotImplementedError` up front (`orisel` uses the one-electron perturbation solver; EasySpin's
+  `orisel` diagonalizes the full Hamiltonian). A field range without resonances still gives
+  weight 0. Unchanged: the weights of every system that ran without an error (bit-identical for
+  S = 1/2 with and without nuclei, S = 1 and S = 5/2 with D).
+
+## [0.8.5] — 2026-11-11
+
+### Fixed
+
+- **`pepper` no longer convolves line widths of at most two increments when no harmonic is taken,
+  and with a Voigt width the Lorentzian carries the harmonic and `Exp.mwPhase`, as in EasySpin**
+  (pepper.m:1152-1223). torchspin convolved such delta-like lines anyway, which lowered peak
+  amplitudes: the S=1 frequency sweep (D = 3000 MHz, lwpp = 10 MHz at 9.8 MHz increments) was 0.989
+  of EasySpin's amplitude, 0.984 and 0.971 for pairs (1,2) and (2,3); narrow field sweeps at
+  Harmonic 0 were 0.974 (Gaussian) and 0.926 (Lorentzian). All are now 1.0000. Results change only
+  for (a) a width ≤ 2 increments whose harmonic is 0 and (b) spectra with both `lw` components and a
+  harmonic or `mwPhase` (Voigt frequency sweep at Harmonic 1: 1.039 → 1.000). Every other spectrum
+  is bit-identical. Applied to field and frequency sweeps in `pepper` and `pepper_autograd`. A narrow
+  width with a harmonic is still convolved (EasySpin raises); see KNOWN_LIMITATIONS.md. EasySpin
+  references: tests/data/ref_pepper_narrowlw.mat.
+
+## [0.8.4] — 2026-11-11
+
+### Fixed
+
+- **The SOPHE triangle projection lost mass for near-zero-width triangles straddling a bin
+  edge** (`pepper._projecttriangles` and the differentiable `projecttriangles_t`). The
+  edge-bin integrals subtracted terms of the size of the bin index, and the ramp slope
+  (∝ 1/width²) amplified their rounding: vertices [10 − 1e-14, 10 − 1e-14, 10] on a
+  5 + 0.01·k axis gave area 1.0526 instead of 1, and a seeded fuzz found per-bin errors up
+  to 33 %. The integrals are now written in the overlaps with the edge bins, and mass is
+  conserved to rounding for every geometry. Only spectra with such triangles change
+  (narrow powder features sitting on a bin edge, e.g. zero-field or axial lines). Results
+  for ordinary triangles agree with 0.8.0 to ~1e-15 relative, and gradients are unchanged
+  apart from rounding. EasySpin's `projecttriangles.c` has the same cancellation (see
+  KNOWN_LIMITATIONS.md).
+- `salt` at zero field no longer pins the interpolated line positions to the coarse-grid
+  values; that workaround for the projection error above is removed.
+- `salt` no longer warns "Converting a tensor with requires_grad=True to a scalar": the
+  transition-selection threshold is now computed from detached intensities (it is a
+  discrete selection; gradients are unchanged).
+
+## [0.8.3] — 2026-11-11
+
+### Fixed
+
+- **`pepper_autograd` used second-order perturbation theory for `Options.Method='perturb1'`.** Its
+  powder route called the perturbation solver without the order, so `'perturb1'` gave the
+  second-order spectrum (and its gradient) while `pepper` gave the first-order one: up to 1.47
+  relative max deviation for axial Cu(II). Because `pepper` hands inputs that require grad to
+  `pepper_autograd`, `pepper(..., Method='perturb1')` with a differentiable parameter was affected
+  too. The order now follows `PEPPER_PERTURB_ORDER`, as in `pepper` and the orientation route.
+  Changes: differentiable `'perturb1'` powder spectra and gradients. Unchanged: `'perturb'`,
+  `'perturb2'`, `'matrix'`, `'hybrid'`, all non-differentiable `pepper` results, and the
+  `Exp.CrystalOrientation` route (which already passed the order).
+
 ## [0.8.2] — 2026-11-11
 
 ### Fixed
@@ -52,6 +116,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - `nucspinadd` accepts `[Aperp, Apar]`, full 3×3 `A` and `Q`, `Q` as `e2qQ/h` or
     `[e2qQ/h, eta]`, and tensors that require grad (they were converted through NumPy, which
     detached them); mixing a full and a principal-value tensor writes both as full matrices.
+
+## [0.8.1] — 2026-11-11
+
+### Fixed
+
+- **`salt`'s first-order perturbation path gave every ENDOR line unit intensity** (all releases with
+  this path). For one electron without quadrupole couplings `salt` picks first-order perturbation
+  theory by itself; its lines had intensity 1, while the matrix path (and EasySpin, with both
+  `Opt.Method='matrix'` and `'perturb1'`) uses |⟨i|μ⊥|j⟩|² in (MHz/mT)². The absolute scale therefore
+  jumped about 2200× for 1H with the path (e.g. when `Options.Enhancement` was switched on), and
+  nuclei with different gn or spin I had wrong relative weights (1H+14N: cosine 0.649 against
+  EasySpin). Each first-order line now carries EasySpin `endorfrq_perturb.m`'s intensity, summed
+  over its 2I coinciding mI transitions: (gn·μN/h)²/4 · 2I(I+1)/3 · ∏(2I+1). This matches EasySpin
+  `perturb1` to round-off (shape and scale) and EasySpin's default `matrix` to 0.3 % (1H) in area.
+  Both the fixed-field (`Experiment.Field`) and the field-swept (`Experiment.Range`) modes are
+  fixed. **What changes:** the absolute scale of every one-electron, no-Q `salt` spectrum (by
+  1/2206 for a lone 1H), and the shape of spectra with several kinds of nuclei. Fitted amplitude
+  scales change accordingly. **What does not change:** systems with Q, more than one electron,
+  `Options.Enhancement=True` or `Options.ZeroField=True` (all on the matrix path), line positions,
+  and the automatic choice of the first-order path.
 
 ## [0.8.0] — 2026-11-11
 
