@@ -1,4 +1,4 @@
-"""Zero-field lines exactly on bin edges with an interpolated powder grid (0.8.14).
+"""Zero-field lines exactly on bin edges with an interpolated powder grid (0.9.1).
 
 S = 1, D = [-700, -1300, 2000] MHz has its lines at 0.6, 2.7 and 3.3 GHz, which coincide with points of
 the 10 MHz axis 0:0.01:5 GHz, i.e. with bin edges (bin k covers [x_k, x_k + dx), as in EasySpin).  With

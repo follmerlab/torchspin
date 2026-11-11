@@ -1,5 +1,5 @@
 % Zero-field lines exactly on bin edges with an interpolated powder grid
-% (torchspin 0.8.14, pepper._zf_const_pos). S = 1, D = [-700 -1300 2000] MHz:
+% (torchspin 0.9.1, pepper._zf_const_pos). S = 1, D = [-700 -1300 2000] MHz:
 % the levels are at -2000, 700 and 1300 MHz, so the three lines (0.6, 2.7 and
 % 3.3 GHz) coincide with points of the 10 MHz axis (0:0.01:5 GHz), i.e. with
 % bin edges (bin k covers [x_k, x_k + dx)). GridSize [19 4] and [10 8]
