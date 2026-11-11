@@ -1304,9 +1304,15 @@ def _pepper_single(
     * Strain broadening: If any strain parameters are present, per-transition
       broadening is applied. This is slower than global broadening but essential
       for realistic spectra. sys.lw is added in quadrature with strain widths.
+    * ``Sys.HStrainL`` (Lorentzian strain): the widths come from the HStrain
+      code; every line is then drawn as a Lorentzian instead of a Gaussian.
     """
     if opt is None:
         opt = Options()
+    # Sys.HStrainL: Lorentzian strain = HStrain widths with Lorentzian lines.
+    # Default (None) leaves sys untouched and strain_lorentz False.
+    from torchspin.strainwidth import lorentzian_strain_system
+    sys, strain_lorentz = lorentzian_strain_system(sys)
 
     # Dispatch to frequency-swept path when Exp.Field and Exp.mwRange are set
     # Frequency sweeps (Exp.Field + Exp.mwRange) run through the same grid /
@@ -1694,6 +1700,16 @@ def _pepper_single(
     if freq_sweep:
         lw_effective = [float(v) / 1e3 for v in lw_effective]   # Sys.lw in MHz → GHz axis
         mw_phase = -mw_phase                                      # EasySpin: mwPhase negated for frequency sweeps
+
+    def _strain_bins(x_, pos, fwhm, amp, min_fwhm):
+        """Per-line strain template: Gaussian (EasySpin strains) or, with
+        Sys.HStrainL, a Lorentzian that carries Exp.mwPhase itself."""
+        if strain_lorentz:
+            return _lorentzian_bins(x_, pos, fwhm, amp, min_fwhm, phase=mw_phase)
+        return _gaussian_bins(x_, pos, fwhm, amp, min_fwhm)
+    # With Lorentzian strain the dispersion admixture is already in every line,
+    # so the remaining Sys.lw is convolved with an absorption kernel.
+    _conv_phase = 0.0 if strain_lorentz else mw_phase
     # EasySpin auto-harmonic: with no broadening at all (no lw, no strain) the
     # spectrum is a stick/projection absorption spectrum; a derivative of it
     # is not meaningful, so Harmonic falls back to 0 (EasySpin errors when the
@@ -1773,7 +1789,7 @@ def _pepper_single(
 
         def _ori_template(B0, W0, amp0):
             if has_strain:
-                return _gaussian_bins(x, B0, W0, amp0, _min_fwhm0)
+                return _strain_bins(x, B0, W0, amp0, _min_fwhm0)
             if fwhm_g0 > 0:
                 return _gaussian_bins(x, B0, np.full(B0.size, fwhm_g0), amp0, _min_fwhm0)
             if fwhm_l0 > 0:
@@ -1794,7 +1810,7 @@ def _pepper_single(
         else:
             g_rem, l_rem, deriv_fd = 0.0, 0.0, True
         spec = _finish_field_sweep(spec, x, dx, exp, g_rem, l_rem, deriv_fd,
-                                   phase=mw_phase if l_rem > 0 else 0.0)
+                                   phase=_conv_phase if l_rem > 0 else 0.0)
         return x, spec
 
     # EasySpin p_sampletype: a crystal needs Exp.MolFrame or Exp.CrystalSymmetry;
@@ -1859,7 +1875,7 @@ def _pepper_single(
             W0 = W_l[k].detach().cpu().numpy() if (W_l[k] is not None and W_l[k].numel() == B0.size) else np.zeros_like(B0)
             amp0 = I0 * (4.0 * math.pi) / n_sites_eff / n_samples
             if has_strain:
-                line = _gaussian_bins(x, B0, W0, amp0, _min_fwhm0)
+                line = _strain_bins(x, B0, W0, amp0, _min_fwhm0)
             elif fwhm_g0 > 0:
                 line = _gaussian_bins(x, B0, np.full(B0.size, fwhm_g0), amp0, _min_fwhm0)
             elif fwhm_l0 > 0:
@@ -1878,7 +1894,7 @@ def _pepper_single(
         spec = torch.stack(list(specs)) if n_spec > 1 else specs[0]
         # phase enters the Lorentzian template (above) or the Lorentzian convolution
         spec = _finish_field_sweep(spec, x, dx, exp, g_rem, l_rem, deriv_fd,
-                                   phase=mw_phase if l_rem > 0 else 0.0)
+                                   phase=_conv_phase if l_rem > 0 else 0.0)
         return x, spec
 
     if grid_sym == 'O3':
@@ -1903,7 +1919,7 @@ def _pepper_single(
         fwhm_g0, fwhm_l0 = lw_effective[0], lw_effective[1]
         def _o3_template(sel):
             if has_strain:
-                return _gaussian_bins(x, B0[sel], W0[sel], amp0[sel], _min_fwhm0)
+                return _strain_bins(x, B0[sel], W0[sel], amp0[sel], _min_fwhm0)
             if fwhm_g0 > 0:
                 return _gaussian_bins(x, B0[sel], np.full(B0[sel].size, fwhm_g0), amp0[sel], _min_fwhm0)
             if fwhm_l0 > 0:
@@ -1926,7 +1942,7 @@ def _pepper_single(
         spec = spec / dx * (2.0 * math.pi)
         # EasySpin disregards mwPhase for a Gaussian-only template spectrum
         spec = _finish_field_sweep(spec, x, dx, exp, g_rem, l_rem, deriv_fd,
-                                   phase=mw_phase if l_rem > 0 else 0.0)
+                                   phase=_conv_phase if l_rem > 0 else 0.0)
         return x, spec
 
     # Strain on a projectable grid (D2h-type or Dinfh): EasySpin pepper.m's
@@ -2016,7 +2032,7 @@ def _pepper_single(
                 gam = 1.0 / np.sqrt(c1 * Lambda ** 2 + c2 * Lambda ** 4)
             gam[~np.isfinite(gam)] = 0.0
             fWidC = fWidM * (1.0 + smoothing * gam)
-            _acc(i_t, _gaussian_bins(x, fPosC, fWidC, fIntC, _min_fwhm), np.nanmax(np.abs(I_c)) if np.isfinite(I_c).any() else 0.0)
+            _acc(i_t, _strain_bins(x, fPosC, fWidC, fIntC, _min_fwhm), np.nanmax(np.abs(I_c)) if np.isfinite(I_c).any() else 0.0)
         if opt.Verbosity >= 1:
             print(f"pepper: strain summation over {len(facet_w)} facets, {len(slot_B)} transition slots"
                   f"{' (interpolated)' if do_interp_s else ''}")
@@ -2199,6 +2215,10 @@ def _pepper_single(
                                     continue
 
                                 fwhm_strain  = max(float(Wj), _min_fwhm)
+                                if strain_lorentz:
+                                    _acc(i_t, wj * _lorentzian_bins(x, np.array([float(Bj)]), np.array([fwhm_strain]),
+                                                                    np.array([float(Ij)]), _min_fwhm, phase=mw_phase))
+                                    continue
                                 fwhm_g_total = fwhm_strain  # global lw is convolved afterwards (EasySpin)
                                 fwhm_l       = 0.0
                                 if fwhm_l == 0.0:
@@ -2373,6 +2393,10 @@ def _pepper_single(
                             Bi = B_res[i].item()
                             Ai = intens[i].item()
                             fwhm_strain  = max(widths[i].item(), _min_fwhm)
+                            if strain_lorentz:
+                                spec = spec + w_k * _lorentzian_bins(x, np.array([Bi]), np.array([fwhm_strain]),
+                                                                     np.array([Ai]), _min_fwhm, phase=mw_phase)
+                                continue
                             fwhm_g_total = fwhm_strain  # global lw is convolved afterwards (EasySpin)
                             fwhm_l       = 0.0
 
@@ -2433,5 +2457,5 @@ def _pepper_single(
     # modulation; otherwise the harmonic is produced by the convolution
     # (ConvHarmonic) or, without lw, by finite differences (DerivHarmonic).
     # Exp.mwPhase (dispersion admixture) enters through the line-shape kernel.
-    spec = _finish_field_sweep(spec, x, dx, exp, fwhm_g, fwhm_l, has_strain, phase=mw_phase)
+    spec = _finish_field_sweep(spec, x, dx, exp, fwhm_g, fwhm_l, has_strain, phase=_conv_phase)
     return x, spec

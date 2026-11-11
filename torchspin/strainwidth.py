@@ -371,6 +371,40 @@ def _has_any_strain(sys: SpinSystem) -> bool:
     )
 
 
+_GAUSSIAN_STRAINS = ('HStrain', 'gStrain', 'AStrain', 'DStrain')
+
+
+def lorentzian_strain_system(sys: SpinSystem) -> tuple[SpinSystem, bool]:
+    """Route ``Sys.HStrainL`` through the ``HStrain`` width code.
+
+    ``HStrainL`` has the functional form of ``HStrain`` (FWHM
+    ``sqrt(sum_k (W_k n_k)^2)`` in frequency, divided by ``|dE/dB|`` in a field
+    sweep); only the line profile differs.  Returns ``(sys, False)`` unchanged
+    when ``HStrainL`` is absent or zero, else ``(sys', True)`` where ``sys'`` is
+    a copy with ``HStrain = HStrainL`` and ``HStrainL = None``: the caller
+    computes the widths as usual and draws every line as a Lorentzian.  The
+    tensor is passed through as is, so its autograd graph is kept.
+
+    Raises ``ValueError`` when ``HStrainL`` is combined with a Gaussian strain
+    (``HStrain``, ``gStrain``, ``AStrain``, ``DStrain``): that would need a
+    Voigt profile per line, which pepper does not implement.
+    """
+    hl = getattr(sys, 'HStrainL', None)
+    if hl is None or not bool(torch.any(torch.as_tensor(hl).detach() != 0)):
+        return sys, False
+    if bool(torch.any(torch.as_tensor(hl).detach() < 0)):
+        raise ValueError("HStrainL values must be non-negative.")
+    for k in _GAUSSIAN_STRAINS:
+        v = getattr(sys, k, None)
+        if v is not None and bool(torch.any(torch.as_tensor(v).detach() != 0)):
+            raise ValueError(
+                f"SpinSystem.HStrainL (Lorentzian strain) cannot be combined with {k} "
+                f"(Gaussian strain): pepper has no per-line Voigt profile. Use one kind "
+                f"of strain per system; a global Sys.lw can be added to either.")
+    import dataclasses
+    return dataclasses.replace(sys, HStrain=hl, HStrainL=None), True
+
+
 def _orientation_vector(
     phi: float,
     theta: float,
