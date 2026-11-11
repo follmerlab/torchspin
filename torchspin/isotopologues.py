@@ -24,7 +24,6 @@ Following EasySpin,
 """
 from __future__ import annotations
 
-import dataclasses
 import math
 import re
 from typing import TYPE_CHECKING, Optional
@@ -166,6 +165,7 @@ def isotopologues(sys, n=None, abund=None, rel_threshold: float = DEFAULT_ISO_CU
                                                             and isinstance(abund[0], (list, tuple, np.ndarray))):
             abund = [abund]
         sys = SpinSystem(S=[0.5], Nucs=nuc_list, n=n_list, Abund=None if abund is None else list(abund))
+    from .spinsystem import _replace
     if rel_threshold is None:
         rel_threshold = DEFAULT_ISO_CUTOFF
     nucs = list(sys.Nucs)
@@ -277,7 +277,7 @@ def isotopologues(sys, n=None, abund=None, rel_threshold: float = DEFAULT_ISO_CU
             kw['gnscale'] = _cat(gs_, gnscale)
         else:
             kw.update(A=None, AFrame=None, Q=None, QFrame=None, gnscale=None)
-        result.append(dataclasses.replace(sys, **kw))
+        result.append(_replace(sys, **kw))
     return result
 
 

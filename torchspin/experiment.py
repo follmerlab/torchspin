@@ -80,10 +80,13 @@ class Experiment:
     ExciteWidth:
         Microwave excitation bandwidth (FWHM, MHz) for orientation
         selection in fixed-field experiments (e.g. ENDOR via ``salt``).
-        ``None`` (default) = no orientation selection.
+        ``None`` (default) = no orientation selection.  Required by
+        :func:`~torchspin.orisel.orisel` (``math.inf``: no selection).
 
     Orientations:
-        pepper only. ``None`` (default) = powder average on the SOPHE grid.
+        pepper and orisel. ``None`` (default) = powder average on the SOPHE grid
+        (orisel: its grid).  orisel only reads the ``(N, 2)`` angles below and
+        returns one weight per orientation.
         Otherwise an ``(N, 2)`` array-like (or tensor) of field directions
         ``[phi, theta]`` (radians) in the molecular frame: the static field
         B0 points along ``(sinθ cosφ, sinθ sinφ, cosθ)``, the convention of
@@ -131,7 +134,7 @@ class Experiment:
     Field: Optional[float] = None
     mwRange: Optional[list] = None
     ExciteWidth: Optional[float] = None
-    Orientations: Optional[object] = None        # (N, 2) [phi, theta] (rad), molecular frame; pepper only
+    Orientations: Optional[object] = None        # (N, 2) [phi, theta] (rad), molecular frame; pepper, orisel
     OrientationWeights: Optional[object] = None  # (N,) weights, fraction of the sphere (default 1/N); pepper only
 
     @property
