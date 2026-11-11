@@ -739,6 +739,33 @@ class SpinSystem:
         if self.H0Extra is not None:
             self.H0Extra = _normalize_h0extra(self)
 
+        # From here on, assigning a field re-runs the normalization (__setattr__).
+        object.__setattr__(self, '_normalized', True)
+
+    def __setattr__(self, name: str, value) -> None:
+        """Assigning a field normalizes it as the constructor does.
+
+        ``sys.HStrain = [1, 2, 3]`` after construction rebuilds the system with
+        the new value (``SpinSystem(**{**fields, name: value})``) and adopts the
+        result, so the field holds the same tensor it would have if it had been
+        given to the constructor, and a value the constructor rejects raises
+        here.  Tensors are not copied, so an assigned tensor that requires grad
+        stays on the autograd graph.  Assigning one of an alternative pair
+        (``D``/``D_``, ``A``/``A_``, ``lw``/``lwpp``, ``tcorr``/``logtcorr``,
+        ``Diff``/``logDiff``) clears the other.  During construction, and for
+        attributes that are not constructor fields, this is plain assignment.
+        To bypass the normalization use ``object.__setattr__(sys, name, value)``.
+        """
+        if name not in _INIT_FIELDS or not self.__dict__.get('_normalized', False):
+            object.__setattr__(self, name, value)
+            return
+        kw = _init_kwargs(self)
+        for other in _ALTERNATIVE_FIELDS.get(name, ()):
+            kw[other] = None
+        kw[name] = value
+        rebuilt = type(self)(**kw)
+        self.__dict__.update(rebuilt.__dict__)
+
     # ------------------------------------------------------------------
     # Read-only derived properties
     # ------------------------------------------------------------------
@@ -1312,6 +1339,18 @@ def nucspinadd(sys: 'SpinSystem', nuc: str, A=None, Q=None,
 # ---------------------------------------------------------------------------
 # Rebuilding a SpinSystem, per-nucleus field helpers
 # ---------------------------------------------------------------------------
+
+_INIT_FIELDS = frozenset(f.name for f in dataclasses.fields(SpinSystem) if f.init)
+
+# Fields that give the same quantity in two forms: assigning one clears the other.
+_ALTERNATIVE_FIELDS = {
+    'D': ('D_',), 'D_': ('D',),
+    'A': ('A_',), 'A_': ('A',),
+    'lw': ('lwpp',), 'lwpp': ('lw',),
+    'tcorr': ('logtcorr',), 'logtcorr': ('tcorr',),
+    'Diff': ('logDiff',), 'logDiff': ('Diff',),
+}
+
 
 def _init_kwargs(sys: 'SpinSystem') -> dict:
     """Constructor keyword arguments that rebuild *sys*.

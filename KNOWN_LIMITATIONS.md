@@ -146,6 +146,26 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## `SpinSystem` field assignment normalizes (0.8.7)
+
+Since 0.8.7 `sys.<field> = value` rebuilds the spin system with the new value, so the
+field holds what the constructor would store and invalid values raise at the assignment
+(up to 0.8.6 the raw value was stored and failed later, e.g. pepper's TypeError for
+`sys.HStrain = [1, 2, 3]`). Consequences:
+
+- **One field at a time.** Every assignment must give a consistent system: changing the
+  number of nuclei through `Nucs` raises because `n` (and the per-nucleus tensors) still
+  have the old length. Build a new `SpinSystem`, or use `nucspinadd`/`nucspinrmv`.
+- **Alternative pairs.** Assigning `D`, `A`, `lw`, `tcorr` or `Diff` clears `D_`, `A_`,
+  `lwpp`, `logtcorr` or `logDiff` (and the other way round).
+- **Defaults are re-applied.** `sys.A = None` gives zero hyperfine, as in the constructor;
+  `sys.g = ...` on a system with `Ham110`/`Ham112` raises, as in the constructor.
+  Conversely `sys.Ham = {'112': ...}` raises on a system built without `g`, because `g`
+  already holds the default g_free; give `Ham` to the constructor instead.
+  `object.__setattr__(sys, name, value)` stores a value unnormalized (tests use it to
+  check `validate()`).
+- **Cost.** An assignment costs one construction (about 0.02 ms).
+
 ## `nucspinrmv` / `nucspinkeep` / `nucspinadd` keep every field (fixed 0.8.2)
 
 Up to 0.8.1 these rebuilt the spin system from a short list of fields, so `ee`,
