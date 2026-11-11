@@ -584,7 +584,9 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
         from torchspin.resfields_perturb import resfields_perturb_batch
         _w = B_hi - B_lo
         exp_search = _dc_replace(exp, Range=[max(0.0, B_lo - 0.2 * _w), B_hi + 0.2 * _w], CenterSweep=None)
-        B_list, I_list = resfields_perturb_batch(sys, phi_arr, theta_arr, exp_search, opt, return_full=True)
+        B_list, I_list = resfields_perturb_batch(sys, phi_arr, theta_arr, exp_search, opt,
+                                                 order=_pep.PEPPER_PERTURB_ORDER.get(str(opt.Method), 2),
+                                                 return_full=True)
         for j in range(n_orient):
             all_B[j], all_I[j] = B_list[j], I_list[j]          # index-matched slots, no level pairs
     else:
