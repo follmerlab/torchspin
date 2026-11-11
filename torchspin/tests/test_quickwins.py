@@ -95,9 +95,10 @@ class TestValidate:
     def test_g_wrong_rows(self):
         """g tensor with wrong number of rows."""
         sys = SpinSystem(S=[0.5, 0.5])
-        # Force bad g shape after construction
+        # Force bad g shape after construction, bypassing the normalization
+        # that plain assignment runs (SpinSystem.__setattr__)
         import torch
-        sys.g = torch.zeros(1, 3)  # 1 row for 2 electrons
+        object.__setattr__(sys, 'g', torch.zeros(1, 3))  # 1 row for 2 electrons
         with pytest.raises(ValueError, match="g tensor"):
             sys.validate()
 
@@ -128,8 +129,9 @@ class TestValidate:
     def test_nuclei_without_A(self):
         """Nuclei specified but no A tensor."""
         sys = SpinSystem(S=[0.5], Nucs=['14N'], A=None)
-        # A gets set to zero in __post_init__, so manually remove it
-        sys.A = None
+        # A gets set to zero in __post_init__ (and again on assignment), so
+        # remove it bypassing SpinSystem.__setattr__
+        object.__setattr__(sys, 'A', None)
         with pytest.raises(ValueError, match="hyperfine"):
             sys.validate()
 

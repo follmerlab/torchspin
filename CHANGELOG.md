@@ -6,6 +6,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.8.7] — 2026-11-11
+
+### Fixed
+
+- **Assigning a `SpinSystem` field after construction skipped its normalization** (all releases up
+  to 0.8.6). `sys.HStrain = [1, 2, 3]` left a raw list, and pepper then failed with
+  `TypeError: '>' not supported between instances of 'list' and 'int'`; other fields kept
+  shorthand forms (`D = [D, E]`, scalar `g`, `Q = [e2qQ/h, eta]`, ...) that the solvers do not
+  read. `SpinSystem.__setattr__` now rebuilds the system with the new value, so an assigned field
+  holds exactly what the constructor would have stored, and a value the constructor rejects raises
+  at the assignment (the system is left unchanged). Assigning one of an alternative pair (`D`/`D_`,
+  `A`/`A_`, `lw`/`lwpp`, `tcorr`/`logtcorr`, `Diff`/`logDiff`) clears the other. Tensors are not
+  copied, so an assigned tensor that requires grad stays on the autograd graph. Attributes that are
+  not constructor fields (e.g. `ZeemanFreq` for spidyan) are assigned as before;
+  `object.__setattr__(sys, name, value)` bypasses the normalization.
+  - **Results that change:** none for systems built in the constructor. After an assignment, results
+    are now those of the system constructed with that value. Two cases behave differently from
+    before: assigning `tcorr` over a set `logtcorr` now takes effect (logtcorr, which the solvers
+    read first, is cleared), and `sys.A = None` now gives the constructor default (zero hyperfine)
+    instead of leaving `None`. Assigning a value that only fits after a second assignment (e.g.
+    `Nucs` with a different number of nuclei before `n`) now raises; build a new `SpinSystem`
+    instead.
+
 ## [0.8.6] — 2026-11-11
 
 ### Fixed

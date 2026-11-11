@@ -146,6 +146,26 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## `SpinSystem` field assignment normalizes (0.8.7)
+
+Since 0.8.7 `sys.<field> = value` rebuilds the spin system with the new value, so the
+field holds what the constructor would store and invalid values raise at the assignment
+(up to 0.8.6 the raw value was stored and failed later, e.g. pepper's TypeError for
+`sys.HStrain = [1, 2, 3]`). Consequences:
+
+- **One field at a time.** Every assignment must give a consistent system: changing the
+  number of nuclei through `Nucs` raises because `n` (and the per-nucleus tensors) still
+  have the old length. Build a new `SpinSystem`, or use `nucspinadd`/`nucspinrmv`.
+- **Alternative pairs.** Assigning `D`, `A`, `lw`, `tcorr` or `Diff` clears `D_`, `A_`,
+  `lwpp`, `logtcorr` or `logDiff` (and the other way round).
+- **Defaults are re-applied.** `sys.A = None` gives zero hyperfine, as in the constructor;
+  `sys.g = ...` on a system with `Ham110`/`Ham112` raises, as in the constructor.
+  Conversely `sys.Ham = {'112': ...}` raises on a system built without `g`, because `g`
+  already holds the default g_free; give `Ham` to the constructor instead.
+  `object.__setattr__(sys, name, value)` stores a value unnormalized (tests use it to
+  check `validate()`).
+- **Cost.** An assignment costs one construction (about 0.02 ms).
+
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
 The edge-bin integrals of `projecttriangles` were written as differences of O(bin index)
@@ -298,8 +318,8 @@ for field and frequency sweeps:
 - Skipping is a discrete decision on the width: in `pepper_autograd` a skipped width has zero
   gradient (it stays in the graph), as the spectrum does not depend on it. A fit of `lw` that
   starts at or below two increments with Harmonic 0 therefore does not move; use more points.
-  `test_autograd.py::TestNSpinFDAccuracy::test_linewidth_fd_agreement` (lw = 1 mT at 0.63 mT
-  increments, Harmonic 0) now compares a zero gradient with a zero finite difference.
+  (`test_autograd.py::TestNSpinFDAccuracy::test_linewidth_fd_agreement` uses 512 points for this
+  reason and asserts a nonzero finite difference.)
 - `salt` still convolves narrow ENDOR line widths (salt.m:884-911 skips them); not changed here.
 - EasySpin agreement (tests/data/ref_pepper_narrowlw.mat, 8 cases): amplitude within 0.002 and
   cosine ≥ 0.99998, except the three field-sweep Voigt cases at Harmonic 1 (1.002–1.005).
