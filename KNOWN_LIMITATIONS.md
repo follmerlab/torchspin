@@ -598,6 +598,9 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
   bins and values), so this is kept.
 - **gnscale.** The first-order path (frequencies and intensities) ignores `Sys.gnscale`, as
   EasySpin's `endorfrq_perturb.m` does; the matrix path applies it (via `ham_nz`).
+- **Equivalent nuclei.** `salt` raises for `Sys.n > 1`, as EasySpin does (salt.m:135-136).
+  Before 0.8.10 it ignored `n` and returned the spectrum of a single nucleus. Give equivalent
+  nuclei as separate entries of `Nucs`.
 
 ## ENDOR — hyperfine enhancement (`Options.Enhancement`, 0.7.3)
 

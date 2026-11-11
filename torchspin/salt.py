@@ -350,10 +350,16 @@ def salt(
     Raises
     ------
     ValueError
-        If the spin system contains no nuclei.
+        If the spin system contains no nuclei, or a set of equivalent
+        nuclei (``Sys.n > 1``), as in EasySpin.
     """
     if sys.nNuclei == 0:
         raise ValueError("salt: spin system must contain at least one nucleus.")
+    # EasySpin salt.m:135-136 rejects sets of equivalent nuclei; the ENDOR
+    # paths below treat every entry of Nucs as a single nucleus.
+    if any(int(k) > 1 for k in (sys.n or [])):
+        raise ValueError(
+            "salt does not support sets of equivalent nuclei (Sys.n>1).")
     # salt treats single-electron systems without quadrupole coupling by
     # perturbation theory (EPR fields and ENDOR), built from the tensors.
     if (getattr(sys, 'H0Extra', None) is not None and sys.nElectrons == 1):
