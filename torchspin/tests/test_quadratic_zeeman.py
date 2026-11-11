@@ -467,8 +467,8 @@ def _case_names():
 
 @pytest.mark.parametrize('name', _case_names())
 def test_pepper_quadratic_zeeman_vs_easyspin(name):
-    """EasySpin's resfields builds the level model from ham(Sys,B) at every field,
-    so Ham2xx terms enter its resonance fields. Its dB/dE uses the linear moment
+    """EasySpin's resfields (field sweeps) and resfreqs_matrix (frequency sweeps) build
+    the level model from ham(Sys,B), so Ham2xx terms enter the resonances. Its dB/dE uses the linear moment
     only (torchspin: the full slope), a ~0.3 % amplitude difference here."""
     c = _load_cases()[name]
     S = c.Sys; f = S._fieldnames
@@ -482,8 +482,13 @@ def test_pepper_quadratic_zeeman_vs_easyspin(name):
         kw['HStrain'] = np.atleast_1d(S.HStrain).astype(float).tolist()
     sys = SpinSystem(**kw)
     E = c.Exp; ef = E._fieldnames
-    exp = Experiment(mwFreq=float(E.mwFreq), Range=np.atleast_1d(E.Range).astype(float).tolist(),
-                     nPoints=int(E.nPoints), Harmonic=int(E.Harmonic) if 'Harmonic' in ef else 1)
+    harm = int(E.Harmonic) if 'Harmonic' in ef else 1
+    if 'mwRange' in ef:     # frequency sweep at fixed field
+        exp = Experiment(Field=float(E.Field), mwRange=np.atleast_1d(E.mwRange).astype(float).tolist(),
+                         nPoints=int(E.nPoints), Harmonic=harm)
+    else:
+        exp = Experiment(mwFreq=float(E.mwFreq), Range=np.atleast_1d(E.Range).astype(float).tolist(),
+                         nPoints=int(E.nPoints), Harmonic=harm)
     ref = np.asarray(c.spc, dtype=float)
     x, y = pepper(sys, exp, Options(QuadraticZeeman=True))
     assert np.allclose(x.numpy(), np.asarray(c.x, dtype=float), rtol=1e-9)
