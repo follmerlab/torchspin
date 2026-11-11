@@ -166,6 +166,25 @@ field holds what the constructor would store and invalid values raise at the ass
   check `validate()`).
 - **Cost.** An assignment costs one construction (about 0.02 ms).
 
+## Powder grid interpolation on closed-φ grids (fixed 0.8.9)
+
+`pepper`, `pepper_autograd` and `salt` interpolate resonance positions from the coarse grid
+(`GridSize(1)`) to the fine one with EasySpin's `G3` scheme: each θ row of the triangular grid is
+resampled along φ to a rectangle, then a bicubic spline is evaluated at the fine knots. Since 0.8.9
+the rows use zero end slopes as in EasySpin (gridinterp.m:184, `esspline1d(y,1,nc)`; a 2-knot row
+is the cubic Hermite polynomial with zero slopes, esspline1d.m:55-60); the bicubic step is
+not-a-knot in both codes. Up to 0.8.8 the rows were not-a-knot, which changed resonance fields
+next to the pole: field-sweep powder spectra at Harmonic 1 were 1.005–1.006 of EasySpin's peak
+amplitude (S = 1/2, g = [2 2.05 2.1], GridSize [19 4]).
+
+- EasySpin agreement (tests/data/ref_closedphi_interp.mat): field sweeps at Harmonic 0 and 1,
+  Gaussian, Lorentzian, 14N hyperfine, GridSize [19 4] and [31 4]: amplitude within 2e-7,
+  relative residual 2e-8 to 6e-7 (the same as without interpolation). Frequency sweep and
+  fixed-field `salt` (`Method 'perturb1'`): residual 1e-12. HStrain: residual 8e-5, amplitude
+  0.999996 (not traced; widths are interpolated linearly in both codes).
+- Grids without interpolation, axial (Dinfh) grids and open-φ grids (Ci, C2h, C4h, C6h, S6, C1)
+  are not affected.
+
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
 The edge-bin integrals of `projecttriangles` were written as differences of O(bin index)
@@ -321,11 +340,9 @@ for field and frequency sweeps:
   (`test_autograd.py::TestNSpinFDAccuracy::test_linewidth_fd_agreement` uses 512 points for this
   reason and asserts a nonzero finite difference.)
 - `salt` still convolves narrow ENDOR line widths (salt.m:884-911 skips them); not changed here.
-- EasySpin agreement (tests/data/ref_pepper_narrowlw.mat, 8 cases): amplitude within 0.002 and
-  cosine ≥ 0.99998, except the three field-sweep Voigt cases at Harmonic 1 (1.002–1.005).
-  Those carry an offset that predates this fix and does not depend on it: field-sweep powder
-  spectra at Harmonic 1 with a single width are already 1.005–1.006 of EasySpin's amplitude
-  (S=1/2, g = [2 2.05 2.1], lw = [1 0] or [0 0.8], at 1024 and 8192 points).
+- EasySpin agreement (tests/data/ref_pepper_narrowlw.mat, 8 cases): amplitude within 2e-7 and
+  cosine 1 − 1e-9 since 0.8.9. Up to 0.8.8 the three field-sweep Voigt cases at Harmonic 1 were
+  1.002–1.005, from the closed-φ row spline (see § Powder grid interpolation on closed-φ grids).
 - **Zero field (`Options.ZeroField`, 0.7.4).** Degenerate levels are merged into clusters, and a
   transition is labelled by the first (lowest-numbered) level of each cluster; a listed pair selects
   a zero-field line only when it names those first levels (`'all'` selects every line).

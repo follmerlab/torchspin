@@ -14,6 +14,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.8.9] — 2026-11-11
+
+### Fixed
+
+- **The closed-φ powder grid interpolation now resamples each θ row with zero end slopes, as
+  EasySpin does** (gridinterp.m:184, `esspline1d(y,1,nc)`). To turn the triangular grid (D2h and
+  the other closed-φ symmetries) into the rectangle for the bicubic spline, torchspin fitted each
+  row with scipy's default not-a-knot spline. The rows next to the pole have only 2–5 knots, so
+  the two rules give different resonance fields near g_z, which shows at Harmonic 1: for
+  S = 1/2, g = [2 2.05 2.1] at 9.5 GHz and the default GridSize [19 4], the peak amplitude was
+  1.0058 of EasySpin's with lw = [1 0] and 1.0048 with lw = [0 0.8] (relative residual 3.9e-3 and
+  6.5e-3), independent of nPoints. Both are now 1.0000000 at residual 5e-7, the field-sweep floor
+  without interpolation. Also before → after: GridSize [31 4] amplitude 0.99991 → 1.0000001; a 14N
+  hyperfine spectrum residual 1.5e-2 → 2.4e-8; a frequency sweep 4.4e-3 → 7e-13; HStrain
+  1.5e-4 → 8.0e-5; fixed-field `salt` (rhombic g and A, `Method 'perturb1'`) 7.6e-4 → 1e-12; the
+  0.8.5 Voigt cases at Harmonic 1 1.0020 / 1.0048 → 1.0000000; d spc/d g_z as a central difference
+  (h = 1e-4) 1.9e-2 → 4.2e-5. Every powder spectrum interpolated on a closed-φ grid (interpolation
+  factor > 1) changes, in `pepper`, `pepper_autograd` and `salt` (all through
+  `pepper._d2h_interp_matrix`), the large-grid fallback in `_interp_sph`, and the closed-φ rows of
+  `_interp_grid`. The 2-D step stays not-a-knot, as in EasySpin's `esspline2d`. Gradients stay
+  exact (`pepper_autograd` vs central differences to 1e-6 for d/d g_z). Spectra without
+  interpolation, on axial (Dinfh) grids and on open-φ grids are bit-identical. EasySpin references:
+  tests/data/ref_closedphi_interp.mat.
 ## [0.8.8] — 2026-11-11
 
 ### Fixed

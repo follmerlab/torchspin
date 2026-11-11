@@ -39,6 +39,7 @@ Tests comparing against these are true cross-validation.
 | `generate_pepper_orientations_refs.m` | `ref_pepper_orientations.mat` | `Exp.Orientations` (0.7.6): EasySpin crystal spectra (`MolFrame=[0 0 0]`, one `SampleFrame` row per orientation, `SampleRotation={'z',[0 pi/2]}`) as an exact χ average, 5 cases incl. strain, Boltzmann triplet, frequency sweep, 4000-point Fibonacci sphere; plus EasySpin's powder of the axial case on the normal and the half-bin-shifted axis |
 | `generate_pepper_transitions_refs.m` | `ref_pepper_transitions.mat` | `Opt.Transitions` (9 cases): S=3/2 central/outer/`'all'` (powder, HStrain, crystal), S=1 half-field line (`'all'`, `[1 3]`), frequency sweep with one pair |
 | `generate_pepper_narrowlw_refs.m` | `ref_pepper_narrowlw.mat` | Final `Sys.lw` convolution (0.8.5, B13): widths of at most two increments with harmonic 0 not convolved (S=1 triplet frequency sweep, default and `Transitions [1 2]`; field sweeps with a narrow Gaussian / Lorentzian), Voigt widths with Harmonic 1 and `mwPhase` (harmonic and phase on the Lorentzian), narrow Gaussian beside a Lorentzian, Voigt frequency sweep (8 cases) |
+| `generate_closedphi_interp_refs.m` | `ref_closedphi_interp.mat` | Closed-φ grid interpolation (0.8.9, B25): rhombic g = [2 2.05 2.1] field sweeps at Harmonic 0/1 with Gaussian and Lorentzian `lw`, GridSize [19 4] (also default options) and [31 4], HStrain, 14N hyperfine, a frequency sweep (10 pepper cases); fixed-field salt with `Method 'perturb1'` at [19 4] and [31 4]; central difference d spc/d g_z (h = 1e-4) |
 | `generate_pepper_zerofield_refs.m` | `ref_pepper_zerofield.mat` | Zero-field frequency sweeps (`Exp.Field = 0`, torchspin `Options.ZeroField`, 0.7.4): S = 1 with D, E (plain, Boltzmann 0.1 K, HStrain), S = 3/2 Kramers, S = 1/2 + 1H isotropic hyperfine (5 cases) |
 | `generate_pepper_quadzeeman_refs.m` | `ref_pepper_quadzeeman.mat` | Field-quadratic `Sys.Ham220`/`Ham222` terms in pepper (S=1 with lwpp and with HStrain, S=3/2), EasySpin field sweeps, and one frequency sweep (`S1_ham2_freqsweep`, added 2026-11-11; needs EasySpin's `resfreqs_matrix.m` Ham check from StollLab/EasySpin d46e5ef9, applied as a one-line patch to the local Dec-2025 copy; the three field-sweep cases regenerated bit-identical); `Options.QuadraticZeeman` (0.7.1) |
 
@@ -64,6 +65,7 @@ Tests comparing against these are true cross-validation.
 `ref_pepper_orientations.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-10; stores each case's `Sys`/`Exp`/`Opt` and the `ori` list)
 `ref_pepper_transitions.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-10; stores each case's `Sys`/`Exp`/`Opt`)
 `ref_pepper_narrowlw.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
+`ref_closedphi_interp.mat` — MATLAB-gen (`generate_closedphi_interp_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
 
 `ref_nucspin_core.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; spectra only, the systems are written out in `test_nucspin_keep_fields.py`)
 
