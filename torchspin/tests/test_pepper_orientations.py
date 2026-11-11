@@ -353,13 +353,16 @@ def test_unsupported_options_raise(opt):
         pepper(sys, e, opt)
 
 
-def test_orientations_at_zero_field_match_the_powder():
+@pytest.mark.parametrize('d_scale', [1 - 1e-12, 1.0, 1 + 1e-12])
+def test_orientations_at_zero_field_match_the_powder(d_scale):
     """Exp.Orientations with Options.ZeroField (0.7.4): a 4000-point Fibonacci sphere reproduces the zero-field
-    powder (S = 1, D, E; 300 MHz Lorentzian; narrower lines differ by bin discretization, 7 % at 20 MHz)."""
+    powder (S = 1, D, E; 300 MHz Lorentzian) after aligning the projection bin centres."""
     n = 4000
     i = np.arange(n) + 0.5
     ori = np.stack([(np.pi * (1 + 5 ** 0.5) * i) % (2 * np.pi), np.arccos(1 - 2 * i / n)], 1)
-    sy = SpinSystem(S=1.0, g=[2, 2, 2], D=[-700, -1300, 2000], lw=[0, 300.0])
-    a = pepper(sy, Experiment(Field=0.0, mwRange=[0, 5], nPoints=501), Options(ZeroField=True, GridSize=20))[1]
-    b = pepper(sy, Experiment(Field=0.0, mwRange=[0, 5], nPoints=501, Orientations=ori), Options(ZeroField=True))[1]
+    # Tiny D perturbations put resonances on either side of a bin boundary.
+    sy = SpinSystem(S=1.0, g=[2, 2, 2], D=np.array([-700, -1300, 2000]) * d_scale, lw=[0, 300.0])
+    expk = dict(Field=0.0, mwRange=[0, 5], nPoints=501)
+    a = _halfbin_powder(sy, expk, Options(ZeroField=True, GridSize=20), key='mwRange')
+    b = pepper(sy, Experiment(**expk, Orientations=ori), Options(ZeroField=True))[1]
     assert float((a - b).abs().max() / a.abs().max()) < 3e-3
