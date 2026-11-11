@@ -40,12 +40,13 @@ def cases():
     return _load()
 
 
-# Field-sweep powder spectra with Harmonic 1 sit 0.5-0.6 % above EasySpin even
-# with a single line-width component, which this fix does not touch (lw=[1 0]:
-# 1.0058, lw=[0 0.8]: 1.0048, independent of nPoints); the Voigt cases inherit
-# that offset.  The skip itself is checked exactly in
-# test_narrow_gaussian_next_to_lorentzian_is_skipped.
-AMP_TOL = {'field_voigt_h1': 0.006, 'field_voigt_h1_phase': 0.006, 'field_voigt_narrowG_h1': 0.006}
+# Measured since 0.8.9 (B25, closed-phi row spline with zero end slopes):
+# |amplitude - 1| <= 2e-7 and cosine 1 - 1e-9 for all eight cases.  Before,
+# the field-sweep Voigt cases at Harmonic 1 were 1.0020, 1.0020 and 1.0048
+# (tolerance 0.006, the others 0.002) and the rest within 4.1e-5.  The skip
+# itself is checked exactly in test_narrow_gaussian_next_to_lorentzian_is_skipped.
+AMP_TOL = 1e-5
+COS_MIN = 1 - 1e-7
 
 
 def _case_names():
@@ -72,8 +73,8 @@ def test_pepper_narrowlw_vs_matlab(cases, name):
     cs = cosine(spc, ref)
     amp = abs(spc).max() / abs(ref).max()
     print(f'{name}: cosine {cs:.7f}, amplitude ratio {amp:.5f}')
-    assert cs > 0.99995, (name, cs)
-    assert amp == pytest.approx(1.0, abs=AMP_TOL.get(name, 0.002)), (name, amp)
+    assert cs > COS_MIN, (name, cs)
+    assert amp == pytest.approx(1.0, abs=AMP_TOL), (name, amp)
 
 
 def test_narrow_gaussian_next_to_lorentzian_is_skipped():
