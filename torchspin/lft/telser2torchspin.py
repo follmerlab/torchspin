@@ -537,11 +537,11 @@ def spin2sys(params: Any = None, *, s=None, g=None, w=None, u=None, D=None, E=No
         kw["Ham"] = _merge_ham(kw.get("Ham"), sys_kwargs.pop("Ham"))
     sy = SpinSystem(**kw, **sys_kwargs)
     if xi >= 0.5 and u_term:
-        import dataclasses
+        from torchspin.spinsystem import _replace
 
         extra = list(sy.H0Extra or [])
         extra.append((_t(U_), u_term_operator(sy, 1.0)))
-        sy = dataclasses.replace(sy, H0Extra=extra)
+        sy = _replace(sy, H0Extra=extra)
     return sy
 
 

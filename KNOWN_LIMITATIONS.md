@@ -165,6 +165,15 @@ field holds what the constructor would store and invalid values raise at the ass
   `object.__setattr__(sys, name, value)` stores a value unnormalized (tests use it to
   check `validate()`).
 - **Cost.** An assignment costs one construction (about 0.02 ms).
+- **`dataclasses.replace` and `D_`/`A_`.** `dataclasses.replace(sys, ...)` passes every stored
+  field, so for a system built with `D_` (or `A_`) it also passes the `D` (`A`) derived from
+  it, and the constructor raises "Zero-field splitting given in both D and D_" ("Hyperfine
+  data given in both A and A_"). The constructor is deliberately unchanged. Assign the field
+  instead (`sys2 = copy.copy(sys); sys2.weight = 0.5`), or build a new `SpinSystem`.
+  torchspin's own rebuilds (isotopologue expansion, `HStrainL`, `spin2sys`'s U term) use the
+  internal `spinsystem._replace`, which passes such pairs through their source only; up to
+  0.8.11 they used `dataclasses.replace` and raised for systems with `D_` (or with `A_`
+  and `HStrainL`).
 
 ## Powder grid interpolation on closed-φ grids (fixed 0.8.9)
 

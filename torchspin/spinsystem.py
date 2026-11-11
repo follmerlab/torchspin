@@ -1385,6 +1385,25 @@ def _init_kwargs(sys: 'SpinSystem') -> dict:
     return kw
 
 
+def _replace(sys: 'SpinSystem', **changes) -> 'SpinSystem':
+    """``dataclasses.replace`` for a :class:`SpinSystem` that accepts ``D_``/``A_``.
+
+    ``dataclasses.replace`` passes every stored field, so a system built with
+    ``D_`` (or ``A_``) also passes the ``D`` (``A``) that ``__post_init__``
+    derived from it, and the constructor raises ("given in both D and D_").
+    This rebuilds from :func:`_init_kwargs` instead, which passes such pairs
+    through their source only, and a changed field clears its alternative
+    (``_ALTERNATIVE_FIELDS``), as attribute assignment does.  Tensors are not
+    copied, so the new system stays on the autograd graph of *sys*.
+    """
+    kw = _init_kwargs(sys)
+    for name in changes:
+        for other in _ALTERNATIVE_FIELDS.get(name, ()):
+            kw[other] = None
+    kw.update(changes)
+    return type(sys)(**kw)
+
+
 def _nonzero(T) -> bool:
     return T is not None and bool(torch.any(torch.as_tensor(T) != 0))
 
