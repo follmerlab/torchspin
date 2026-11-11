@@ -494,7 +494,7 @@ Hamiltonian.
   interaction tensors raise `ValueError` when `H0Extra` is set: pepper with
   `Method='perturb*'` or `'hybrid'` (for a component with nuclei), `pepper_autograd`
   with `'perturb*'`, `resfields_perturb`, `resfreqs_perturb`, `endorfrq_perturb`,
-  `orisel`, `salt` for one electron spin (its EPR and ENDOR steps use perturbation
+  `salt` for one electron spin (its EPR and ENDOR steps use perturbation
   theory), garlic, chili, fastmotion, cardamom, saffron's fast (ideal-pulse) algorithm,
   and `nucspinrmv`/`nucspinkeep`/`nucspinadd` (the operator lives on the full spin
   space and cannot be reduced or extended).
@@ -519,12 +519,21 @@ Hamiltonian.
 - **Gradients.** Reverse mode works through `levels`, `ham` and `pepper_autograd`; forward
   mode (dual numbers) works through `ham`/`levels`, not through pepper (known issue).
 
-## `orisel` — one electron spin only (0.8.6)
+## `orisel` — differences from EasySpin (0.9.0)
 
-`orisel` is built on the one-electron perturbation solver (`resfields_perturb`), whereas
-EasySpin's `orisel.m` diagonalizes the full Hamiltonian. Systems with more than one electron
-spin raise `NotImplementedError` (before 0.8.6 they silently returned zero weights). Solver
-errors are no longer converted to zero selectivity.
+Since 0.9.0 `orisel` runs EasySpin's model (full diagonalization at `Exp.Field`, orisel.m:110-153;
+weights agree to 7e-13 in `test_orisel.py`) for any number of electron and nuclear spins. Before
+0.9.0 it used one-electron perturbation theory over `Exp.Range` with a field-domain Lorentzian at
+the g = 2.0023 field, and its weights did not follow `Exp.Field` (bug B26). Deliberate differences:
+
+- **Return values.** EasySpin's output depends on `nargout`; torchspin returns
+  `(weights, phi, theta)`, or `(Weights, Transitions, phi, theta)` with `per_transition=True`.
+  `Transitions` keeps EasySpin's 1-based level numbering. There is no plot (EasySpin's
+  `nargout = 0` / `Opt.Display`).
+- **Inputs.** `Exp.Field` must be positive (EasySpin also runs at 0 mT, where degenerate levels
+  make the per-pair rates basis-dependent), and a negative `ExciteWidth` is rejected.
+  `Exp.Orientations` is `(N, 2)` `[phi, theta]`; EasySpin's `3 x N` form (whose third angle it
+  ignores) is not accepted.
 
 ## Pepper — absolute intensity (fixed 2026-09-01)
 
