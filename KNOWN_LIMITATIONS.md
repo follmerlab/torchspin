@@ -599,6 +599,24 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
 - **gnscale.** The first-order path (frequencies and intensities) ignores `Sys.gnscale`, as
   EasySpin's `endorfrq_perturb.m` does; the matrix path applies it (via `ham_nz`).
 
+## ENDOR — `endorfrq_perturb` (0.8.8)
+
+`endorfrq_perturb` matches EasySpin's `endorfrq_perturb.m` element by element: frequencies within
+7.4e-16 and intensities within 4.9e-16 relative (tests/data/endorfrq_perturb_refs.mat: 1H with
+AFrame, 14N with Q/QFrame, 1H+14N, 55Mn with Q, strongly coupled 1H, 14N with a full Q, 1H+14N
+with full non-symmetric A and full Q, S = 3/2 with D; 4 orientations, PerturbOrder 1 and 2).
+Before 0.8.8 the intensities were wrong (lowest transition 0, ∏(2I+1) missing), the elements were
+in a different order and a full 3×3 Q was misread (B20, B27; see CHANGELOG).
+
+- **Kept as in EasySpin.** The second-order quadrupole term uses P2² = 2·tr(P)² + (kPk)² − 4kPPk
+  (.m:281) with P already made traceless, so its first term is always 0 (tr(P²) was presumably
+  meant). With `nuclei=[...]` the intensities still carry ∏(2I+1) over all nuclei of the system,
+  as with EasySpin's `Opt.Nuclei`. `Sys.gnscale` is ignored (see § ENDOR (`salt`)).
+- **Not ported.** One orientation per call (no orientation list), no `Transitions` or
+  `Info.Selectivity` output, no `Exp.ExciteWidth` orientation selection (.m:310-339). The function
+  is not differentiable: values pass through `float()` and a tensor that requires grad gives an
+  output without grad. Use `endorfrq` (matrix diagonalization) or `salt` for these.
+
 ## ENDOR — hyperfine enhancement (`Options.Enhancement`, 0.7.3)
 
 `Options.Enhancement=True` (default `False`, as in EasySpin) makes the rf operator of
