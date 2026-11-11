@@ -275,6 +275,13 @@ and `resfreqs_perturb` always). A negative field still raises in the constructor
   ⟨u|∂H|u⟩ is replaced by its cluster mean tr(P_a ∂H)/n_a. This is exact for Kramers
   doublets, where time-even operators are proportional to the identity. For accidental
   non-Kramers degeneracies it ignores the splitting the strain itself would cause.
+- **Lines on a bin edge.** At B = 0 every orientation puts a line at one frequency, so the
+  powder projection drops the whole line into the bin that contains it (bin k covers
+  [x_k, x_k + dx), as in EasySpin, and as a very narrow line at B → 0⁺ does). A line exactly on
+  a bin edge then lands in either neighbor depending on the last bit of round-off, which can
+  differ between machines (a one-bin shift; 4 % of the maximum for a 300 MHz line at 10 MHz
+  bins). Avoid axes whose points coincide with the zero-field splittings, or compare on the
+  axis shifted by dx/2.
 - **Not supported.** Non-equilibrium populations (`Sys.initState`) raise with
   `ZeroField`. Frequency sweeps have no differentiable pepper path (`pepper_autograd`
   raises for them, as before). The zero-field resonances from `resfreqs_batch`
