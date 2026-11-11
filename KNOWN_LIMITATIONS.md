@@ -146,6 +146,18 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
+
+The edge-bin integrals of `projecttriangles` were written as differences of O(bin index)
+terms (`b − (a + first + 1)/2`). For a triangle much narrower than a bin that straddles a
+bin edge, rounding of those terms was amplified by the 1/width² ramp slope: area errors
+up to tens of percent per triangle (salt's zero-field 1H line was 2.6 % too large before
+a workaround). Fixed in `pepper._ramp_bins` and `pepper_autograd._ramp_bins_t`, which now
+use only the small overlaps with the edge bins. EasySpin's `projecttriangles.c`, and
+torchspin's line-by-line port `pepper._projecttriangles_loop` (kept as the test reference
+for the vectorised projection), still use the old expressions; in these geometries torchspin
+now deliberately deviates from them, toward the exact integral.
+
 ## `nucspinrmv` / `nucspinkeep` / `nucspinadd` keep every field (fixed 0.8.2)
 
 Up to 0.8.1 these rebuilt the spin system from a short list of fields, so `ee`,

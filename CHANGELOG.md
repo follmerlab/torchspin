@@ -6,6 +6,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.8.4] — 2026-11-11
+
+### Fixed
+
+- **The SOPHE triangle projection lost mass for near-zero-width triangles straddling a bin
+  edge** (`pepper._projecttriangles` and the differentiable `projecttriangles_t`). The
+  edge-bin integrals subtracted terms of the size of the bin index, and the ramp slope
+  (∝ 1/width²) amplified their rounding: vertices [10 − 1e-14, 10 − 1e-14, 10] on a
+  5 + 0.01·k axis gave area 1.0526 instead of 1, and a seeded fuzz found per-bin errors up
+  to 33 %. The integrals are now written in the overlaps with the edge bins, and mass is
+  conserved to rounding for every geometry. Only spectra with such triangles change
+  (narrow powder features sitting on a bin edge, e.g. zero-field or axial lines). Results
+  for ordinary triangles agree with 0.8.0 to ~1e-15 relative, and gradients are unchanged
+  apart from rounding. EasySpin's `projecttriangles.c` has the same cancellation (see
+  KNOWN_LIMITATIONS.md).
+- `salt` at zero field no longer pins the interpolated line positions to the coarse-grid
+  values; that workaround for the projection error above is removed.
+- `salt` no longer warns "Converting a tensor with requires_grad=True to a scalar": the
+  transition-selection threshold is now computed from detached intensities (it is a
+  discrete selection; gradients are unchanged).
+
 ## [0.8.3] — 2026-11-11
 
 ### Fixed

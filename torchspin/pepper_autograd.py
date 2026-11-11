@@ -172,12 +172,17 @@ def _ramp_bins_t(n: int, base: torch.Tensor, a: torch.Tensor, b: torch.Tensor, d
     base, a, b, width, first, last = base[multi], a[multi], b[multi], width[multi], first[multi], last[multi]
     f0 = base / (width * delta)                      # width > 0 here (different bins)
     firstf = first.to(_F64); lastf = last.to(_F64)
+    # Edge bins from the small overlaps c, d and the width only: differences of
+    # O(bin index) terms such as b − (a+first+1)/2 cancel catastrophically for
+    # near-zero widths straddling a bin edge (f0 ∝ 1/width²).
+    c = firstf + 1.0 - a                             # overlap with the first bin, 0 < c ≤ width
+    d = b - lastf                                    # overlap with the last bin, 0 ≤ d < width
     if rising:
-        v_first = f0 * (firstf + 1.0 - a) ** 2 / 2.0
-        v_last = f0 * ((lastf + b) / 2.0 - a) * (b - lastf)
+        v_first = f0 * c * c / 2.0
+        v_last = f0 * d * (width - d / 2.0)
     else:
-        v_first = f0 * (firstf + 1.0 - a) * (b - (a + firstf + 1.0) / 2.0)
-        v_last = f0 * (b - lastf) ** 2 / 2.0
+        v_first = f0 * c * (width - c / 2.0)
+        v_last = f0 * d * d / 2.0
     m = first >= 0
     spec = spec.index_add(0, first[m], v_first[m])
     m = last < n
