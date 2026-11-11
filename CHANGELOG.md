@@ -6,6 +6,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.8.6] — 2026-11-11
+
+### Fixed
+
+- **`orisel` turned every solver error into zero selectivity.** It wrapped the per-orientation
+  call to `resfields_perturb` in `try/except Exception` and set the weight to 0, so an unsupported
+  system or a real bug returned plausible-looking weights (a two-electron system gave all zeros
+  without a warning). Errors now propagate, and a system with more than one electron spin raises
+  `NotImplementedError` up front (`orisel` uses the one-electron perturbation solver; EasySpin's
+  `orisel` diagonalizes the full Hamiltonian). A field range without resonances still gives
+  weight 0. Unchanged: the weights of every system that ran without an error (bit-identical for
+  S = 1/2 with and without nuclei, S = 1 and S = 5/2 with D).
+
 ## [0.8.0] — 2026-11-11
 
 The first PyPI release since 0.7.0: it also contains 0.7.1–0.7.7 below, which were merged but not
