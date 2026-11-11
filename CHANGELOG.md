@@ -14,6 +14,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.8.12] — 2026-11-11
+
+### Fixed
+
+- **Spin systems built with `D_` (or `A_`) failed in torchspin's internal rebuilds: the
+  isotopologue expansion, the Lorentzian strain path (`HStrainL`) and `spin2sys`'s U term.** All
+  three used `dataclasses.replace`, which passes every stored field, so the `D` (`A`) that
+  `__post_init__` derives from `D_` (`A_`) was passed together with it and the constructor raised
+  "Zero-field splitting given in both D and D_" (spinsystem.py, `__post_init__`). For example
+  `pepper(SpinSystem(S=1, D_=[300, 0.1], Nucs='Cu', A=...), ...)` and `pepper` with `D_` and
+  `HStrainL` raised; `isotopologues.py` cleared `A_` but not `D_`, and `HStrainL` also failed with
+  `A_`. The new internal helper `spinsystem._replace(sys, **changes)` rebuilds from `_init_kwargs`
+  (pairs passed through their source only) and clears the alternative of a changed field, as
+  attribute assignment does; it is used at all three sites. Tensors are not copied, so a `D_` that
+  requires grad keeps its gradient (autograd vs central differences 1e-6 through `HStrainL`).
+  Spectra with `D_` now equal those with the same `D` (1e-10); no other result changes. The
+  constructor is unchanged: calling `dataclasses.replace` directly on such a system still raises
+  (see KNOWN_LIMITATIONS.md for the workaround).
+
 ## [0.8.7] — 2026-11-11
 
 ### Fixed
