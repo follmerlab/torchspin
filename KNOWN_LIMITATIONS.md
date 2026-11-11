@@ -320,7 +320,7 @@ for field and frequency sweeps:
   starts at or below two increments with Harmonic 0 therefore does not move; use more points.
   (`test_autograd.py::TestNSpinFDAccuracy::test_linewidth_fd_agreement` uses 512 points for this
   reason and asserts a nonzero finite difference.)
-- `salt` still convolves narrow ENDOR line widths (salt.m:884-911 skips them); not changed here.
+- `salt` applies the same rule to its ENDOR line width since 0.8.11 (see § ENDOR).
 - EasySpin agreement (tests/data/ref_pepper_narrowlw.mat, 8 cases): amplitude within 0.002 and
   cosine ≥ 0.99998, except the three field-sweep Voigt cases at Harmonic 1 (1.002–1.005).
   Those carry an offset that predates this fix and does not depend on it: field-sweep powder
@@ -598,6 +598,24 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
   bins and values), so this is kept.
 - **gnscale.** The first-order path (frequencies and intensities) ignores `Sys.gnscale`, as
   EasySpin's `endorfrq_perturb.m` does; the matrix path applies it (via `ham_nz`).
+- **Line width (0.8.11).** `lw_mhz` is a Gaussian FWHM, applied as EasySpin's salt.m applies
+  `Sys.lwEndor(1)` (salt.m:899-911): a width of at most two rf increments is not convolved,
+  as the line is delta-like. Before 0.8.11 torchspin convolved it, which lowered peaks of
+  under-resolved spectra (1H, g = [2 2.05 2.1], A = [5 8 12] MHz, 0.02 MHz increments: 0.933 of
+  EasySpin at 1.5 increments, 0.900 at 2.0); all five cases of `salt_narrowlw_refs.mat` (0, 1.5,
+  2.0, 2.5, 10 increments) now agree to 4e-13 of the peak. The field-swept (`Experiment.Range`)
+  mode, which EasySpin's salt does not have, uses the same rule. A skipped width that requires
+  grad stays in the graph with zero gradient, so a fit of `lw_mhz` that starts at or below two
+  increments does not move; use more points. The default `lw_mhz = 0.1` with the default axis
+  (0 to 2·mwFreq, 512 points, about 37 MHz increments at X band) is therefore a stick spectrum.
+- **Not supported:** a Lorentzian ENDOR width (`Sys.lwEndor(2)`) and `Exp.Harmonic` for salt.
+  torchspin's salt returns the absorption spectrum with one Gaussian width.
+- **Range padding.** When the spectrum is nonzero at an end of the rf range, EasySpin pads the
+  range with the edge values before convolving (salt.m:858-882, `Opt.PaddingMultiplier`);
+  torchspin's convolution pads with zeros, so the points within about two widths of that end
+  come out lower: 1H as above on 10–19 MHz, lw 0.2 MHz (10 increments), 20 points at each end
+  differ (end point 0.56 of EasySpin's, 0.26 of the peak), the rest agree to 2e-13; cosine 0.9980. Spectra that fall to zero inside the range (all
+  EasySpin reference cases) are not affected. A skipped width is unaffected either way.
 
 ## ENDOR — hyperfine enhancement (`Options.Enhancement`, 0.7.3)
 

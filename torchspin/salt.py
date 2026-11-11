@@ -23,7 +23,7 @@ Pipeline::
         for each B_res:
             endorfrq(…, _H0=H0, …)  → freqs, intens  (reuses device operators)
             bin freqs into freq_axis
-    convspec(...)       → Gaussian broadening
+    _lw_convolve(...)   → Gaussian broadening (skipped at <= 2 increments)
     return freq_axis, spec
 """
 from __future__ import annotations
@@ -36,7 +36,6 @@ import torch
 from torchspin._linalg import eigh as _eigh
 
 
-from torchspin.convspec import convspec
 from torchspin.endorfrq import endorfrq
 from torchspin.experiment import Experiment, Options
 from torchspin.ham import ham
@@ -335,6 +334,8 @@ def salt(
         Number of points in the frequency axis.  Default 512.
     lw_mhz:
         Gaussian FWHM (MHz) for the ENDOR lineshape convolution.  Default 0.1.
+        As in EasySpin (salt.m:899-911), a width of at most two frequency
+        increments is not convolved: the spectrum is returned unbroadened.
 
     Returns
     -------
@@ -553,8 +554,12 @@ def salt(
             # amplitude, the same scale as the stick-binning path.
             spec = dens * (df / (4.0 * math.pi))
             if float(torch.as_tensor(lw_mhz).detach()) > 0.0:
-                from torchspin.pepper_autograd import convspec_t
-                spec = convspec_t(spec, df, lw_mhz, 0.0, deriv=0)
+                # salt.m:899-911: a Gaussian of at most two increments with
+                # harmonic 0 is not convolved (a skipped tensor width stays in
+                # the graph with zero gradient)
+                from torchspin.pepper import _lw_convolve
+                from torchspin.pepper_autograd import _conv_t
+                spec = _lw_convolve(spec, df, lw_mhz, 0.0, 0, conv=_conv_t)
             return freq_axis.cpu(), spec.cpu()
 
         B_res_all  = [B_fixed] * n_orient
@@ -844,6 +849,8 @@ def salt(
 
     # ── Lineshape broadening ───────────────────────────────────────────────
     if lw_mhz > 0.0:
-        spec = convspec(spec, df, fwhm_g=lw_mhz, fwhm_l=0.0, deriv=0)
+        # skip a Gaussian of at most two increments, as in the fixed-field mode
+        from torchspin.pepper import _lw_convolve
+        spec = _lw_convolve(spec, df, lw_mhz, 0.0, 0)
 
     return freq_axis.cpu(), spec.cpu()

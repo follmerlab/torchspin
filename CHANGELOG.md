@@ -14,6 +14,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.8.11] — 2026-11-11
+
+### Fixed
+
+- **`salt` no longer convolves an ENDOR line width of at most two rf increments, as in EasySpin**
+  (salt.m:899-911; EasySpin skips a Gaussian or Lorentzian `Sys.lwEndor` component of FWHM ≤ 2
+  increments when its harmonic is 0). torchspin always convolved `lw_mhz`, which lowered the peaks
+  of under-resolved spectra: 1H (g = [2 2.05 2.1], A = [5 8 12] MHz, 2–28 MHz at 0.02 MHz
+  increments, `perturb1`) was 0.933 of EasySpin's peak at 1.5 increments and 0.900 at 2.0. Both are
+  now 1.0000 (max deviation 3e-13 of the peak); 2.5 and 10 increments were already exact and are
+  bit-identical. Applied in the fixed-field mode (via `pepper._lw_convolve`, the B13 rule of 0.8.5)
+  and the field-swept mode (no EasySpin counterpart). Results change only for `lw_mhz` ≤ 2
+  increments, which now give the unbroadened spectrum; this includes the default `lw_mhz = 0.1`
+  on the default 512-point axis. A skipped width that requires grad has zero gradient. EasySpin
+  references: tests/data/salt_narrowlw_refs.mat. A Lorentzian ENDOR width and `Exp.Harmonic` are
+  still not supported in salt (KNOWN_LIMITATIONS.md § ENDOR).
+
 ## [0.8.7] — 2026-11-11
 
 ### Fixed
