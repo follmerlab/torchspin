@@ -197,7 +197,7 @@ def _fixed_field_transitions(
         # EasySpin endorfrq transition selection: drop pairs that are weak
         # everywhere (relative to the strongest) or never enter the window.
         # With enhancement the selection uses the nuclear-only rates (EasySpin).
-        sel_rows = S_rows if enhancement else I_rows
+        sel_rows = (S_rows if enhancement else I_rows).detach()   # discrete selection
         max_all = float(sel_rows.max()) if sel_rows.numel() else 0.0
         strong = sel_rows.max(dim=0).values >= threshold * max_all if max_all > 0 \
             else torch.ones(n_pairs, dtype=torch.bool, device=device)
@@ -230,7 +230,6 @@ def _project_powder(
     dx: float,
     n_points: int,
     verbosity: int = 0,
-    const_pos: bool = False,
 ) -> torch.Tensor:
     """Powder average by grid interpolation and triangle/zone projection.
 
@@ -256,11 +255,6 @@ def _project_powder(
         N_final, theta_final = nfKnots, theta_f
         P_f = _interp_slots_t(Pdat, grid_sym, N_coarse, nfKnots, 'pos', False)
         I_f = _interp_slots_t(Idat, grid_sym, N_coarse, nfKnots, 'val', False)
-        if const_pos:
-            # zero field: positions are orientation independent; keep them exact
-            # (interpolation round-off would make near-zero-width triangles that
-            # straddle bin edges, where the projection formulas cancel badly)
-            P_f = Pdat[:, :1].expand(-1, P_f.shape[1])
     else:
         N_final, theta_final = N_coarse, theta_sym
         P_f, I_f = Pdat, Idat
@@ -513,7 +507,7 @@ def salt(
             if zero_field:
                 dens = _project_powder(
                     Pdat, Idat, grid_sym, N_coarse, N_interp, theta_sym,
-                    f_lo, df, n_points, verbosity=opt.Verbosity, const_pos=True,
+                    f_lo, df, n_points, verbosity=opt.Verbosity,
                 )
             else:
                 dens = _project_powder(
