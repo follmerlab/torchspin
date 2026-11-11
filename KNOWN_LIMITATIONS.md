@@ -146,6 +146,44 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
+
+The edge-bin integrals of `projecttriangles` were written as differences of O(bin index)
+terms (`b − (a + first + 1)/2`). For a triangle much narrower than a bin that straddles a
+bin edge, rounding of those terms was amplified by the 1/width² ramp slope: area errors
+up to tens of percent per triangle (salt's zero-field 1H line was 2.6 % too large before
+a workaround). Fixed in `pepper._ramp_bins` and `pepper_autograd._ramp_bins_t`, which now
+use only the small overlaps with the edge bins. EasySpin's `projecttriangles.c`, and
+torchspin's line-by-line port `pepper._projecttriangles_loop` (kept as the test reference
+for the vectorised projection), still use the old expressions; in these geometries torchspin
+now deliberately deviates from them, toward the exact integral.
+
+## `nucspinrmv` / `nucspinkeep` / `nucspinadd` keep every field (fixed 0.8.2)
+
+Up to 0.8.1 these rebuilt the spin system from a short list of fields, so `ee`,
+`ee2`, `Ham`, `L`/`soc`/`CF*`, `initState`, `tdm`, dynamics and pulse fields and the
+nuclear `sigma`/`n`/`Abund` were dropped. pepper `Method='hybrid'` and saffron's fast
+algorithm for S > 1/2 build their exact core with `nucspinrmv`, so an exchange-coupled
+dimer, a system with `Sys.Ham` or a non-equilibrium `initState` got the wrong core
+(hybrid on a J = 1000 MHz dimer: cosine 0.0 to the matrix result). Since 0.8.2 they copy
+the system and filter only the per-nucleus fields, as EasySpin does; hybrid on dimers
+and `Sys.Ham` systems matches EasySpin's hybrid (`tests/data/generate_nucspin_core_refs.m`).
+Differences from EasySpin:
+
+- **`AStrain`** belongs to the first nucleus. When that nucleus is removed it is dropped
+  with a `UserWarning` (EasySpin keeps it, and it then applies to the new first nucleus).
+- **`initState`** given for the full spin space (electrons and nuclei) raises when the
+  nuclear dimension changes; electron-space forms (strings, `'xyz'`, states of the
+  electron spins only) are kept.
+- **`nn`**: nonzero couplings raise, as in EasySpin, except when fewer than two nuclei
+  remain (no pair left to couple; saffron's fast path removes all nuclei).
+- **`nucspinadd`** accepts systems with several electron spins (EasySpin raises); a
+  3-element `A` is used for every electron.
+- **Left over: saffron's S = 1/2 fast path ignores `Sys.Ham`.** It builds the Zeeman
+  term from `Sys.g` alone (no `nucspinrmv` core), so linear `Ham110`/`Ham112` terms are
+  silently dropped there; EasySpin's saffron rejects `Sys.Ham*` altogether. The S > 1/2
+  fast path includes them since 0.8.2.
+
 ## Simulator — Lorentzian strain, `SpinSystem.HStrainL` (0.7.7)
 
 `HStrainL` (`[3]` MHz FWHM, molecular frame) gives every pepper line a Lorentzian
@@ -516,6 +554,22 @@ projection / convolution shared with `pepper_autograd`; gradients vs finite
 differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swept
 (multi-field) mode is not and raises for grad tensors.
 
+- **Method choice.** `salt` ignores `Options.Method`. For one electron without Q it uses
+  first-order perturbation theory (EasySpin `Opt.Method='perturb1'`), otherwise the matrix
+  path; EasySpin's default is always `'matrix'`. Since 0.8.1 both give the same intensity
+  scale (|⟨i|μ⊥|j⟩|² in (MHz/mT)²); the first-order path matches EasySpin `perturb1` to
+  round-off and EasySpin's default to the first-order error (0.3 % in area for 1H and
+  1H+14N with |A| ≤ 7 MHz at 326.5 mT, about 1 % for 1H with |A| up to 16 MHz).
+- **Absolute scale vs EasySpin.** The fixed-field spectrum is the per-bin,
+  orientation-averaged amplitude: EasySpin's `salt` output times Δx/(8π²) (Δx = rf bin width
+  in MHz; EasySpin integrates over χ with 2π and returns a density), for every path.
+- **Bin positions.** The triangle/zone projection assigns a line to the bin whose lower edge
+  is at or below it (a line at 13.408 MHz with Δx = 0.01 lands in the 13.40 bin), so lines
+  sit on average half a bin low. EasySpin's `salt` does exactly the same (verified, identical
+  bins and values), so this is kept.
+- **gnscale.** The first-order path (frequencies and intensities) ignores `Sys.gnscale`, as
+  EasySpin's `endorfrq_perturb.m` does; the matrix path applies it (via `ham_nz`).
+
 ## ENDOR — hyperfine enhancement (`Options.Enhancement`, 0.7.3)
 
 `Options.Enhancement=True` (default `False`, as in EasySpin) makes the rf operator of
@@ -538,12 +592,13 @@ strongest line per level pair (endorfrq) and cosine > 0.99995 (salt).
   EasySpin skips enhancement there with a log message. `salt` normally picks first-order
   perturbation theory by itself for one electron without Q. With `Enhancement=True` it
   uses the matrix path instead, which is slower (one eigh per orientation).
-- **Intensity scale.** For those one-electron, no-Q systems, the default first-order path
-  uses unit line intensities, while the matrix path uses |⟨i|μ|j⟩|² in (MHz/mT)². So
-  switching `Enhancement` on changes the overall scale by orders of magnitude in addition
-  to the enhancement. Normalize before you compare the two. Systems with Q, or more than
-  one electron, are on the matrix path either way, and their on/off ratio matches
-  EasySpin to 1e-3.
+- **Intensity scale.** Since 0.8.1 (bug B16) the first-order path gives each line EasySpin
+  `endorfrq_perturb.m`'s intensity, |⟨i|μ⊥|j⟩|² in (MHz/mT)², the scale of the matrix path. Before,
+  its lines had unit intensity, so switching `Enhancement` on changed the overall scale by about
+  2200× for 1H. For the 1H system of `endor_enhancement_refs.mat` (A up to 16 MHz) the on/off area
+  ratio is now EasySpin's to 1.1 %; the rest is first-order theory against diagonalization
+  (EasySpin's `'off'` uses the matrix path). Systems with Q, or more than one electron, are on the
+  matrix path either way, and their on/off ratio matches EasySpin to 1e-3.
 
 ## Garlic — what is and is not ported
 

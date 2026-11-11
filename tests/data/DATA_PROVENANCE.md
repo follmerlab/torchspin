@@ -32,7 +32,9 @@ Tests comparing against these are true cross-validation.
 | `generate_esfit_crossval.m` | `esfit_test*.mat` | Fitting cross-validation |
 | `generate_examples_*.m` | `example_*.mat` | Example simulation outputs |
 | `generate_endor_enhancement_refs.m` | `endor_enhancement_refs.mat` | ENDOR hyperfine enhancement (`Opt.Enhancement` off/on): endorfrq per level pair for 1H, 14N+1H, 63Cu+14N at 4 orientations; fixed-field salt for 14N (Q), 1H, 14N+1H |
+| `generate_salt_first_order_refs.m` | `salt_first_order_refs.mat` | salt first-order intensity scale (bug B16, 0.8.1): fixed-field salt with `Opt.Method` `'matrix'` and `'perturb1'` for 1H and 1H+14N (no Q) |
 | `generate_pepper_cupc_refs.m` | `ref_pepper_cupc.mat` | Cu(II) + ligand nuclei: `matrix`/`perturb`/`hybrid` on the same systems (34 cases), incl. natural-abundance isotopologues, tilted and anisotropic ligand A tensors, quadrupole coupling, enlarged exact core, two components |
+| `generate_nucspin_core_refs.m` | `ref_nucspin_core.mat` | Cores built with `nucspinrmv` (0.8.2, B14): pepper `hybrid` and `matrix` on an anisotropic exchange-coupled Cu dimer, an isotropic dimer and S = 3/2 with `Ham132` |
 | `generate_pepper_orientations_refs.m` | `ref_pepper_orientations.mat` | `Exp.Orientations` (0.7.6): EasySpin crystal spectra (`MolFrame=[0 0 0]`, one `SampleFrame` row per orientation, `SampleRotation={'z',[0 pi/2]}`) as an exact χ average, 5 cases incl. strain, Boltzmann triplet, frequency sweep, 4000-point Fibonacci sphere; plus EasySpin's powder of the axial case on the normal and the half-bin-shifted axis |
 | `generate_pepper_transitions_refs.m` | `ref_pepper_transitions.mat` | `Opt.Transitions` (9 cases): S=3/2 central/outer/`'all'` (powder, HStrain, crystal), S=1 half-field line (`'all'`, `[1 3]`), frequency sweep with one pair |
 | `generate_pepper_narrowlw_refs.m` | `ref_pepper_narrowlw.mat` | Final `Sys.lw` convolution (0.8.5, B13): widths of at most two increments with harmonic 0 not convolved (S=1 triplet frequency sweep, default and `Transitions [1 2]`; field sweeps with a narrow Gaussian / Lorentzian), Voigt widths with Harmonic 1 and `mwPhase` (harmonic and phase on the Lorentzian), narrow Gaussian beside a Lorentzian, Voigt frequency sweep (8 cases) |
@@ -62,6 +64,8 @@ Tests comparing against these are true cross-validation.
 `ref_pepper_transitions.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-10; stores each case's `Sys`/`Exp`/`Opt`)
 `ref_pepper_narrowlw.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
 
+`ref_nucspin_core.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; spectra only, the systems are written out in `test_nucspin_keep_fields.py`)
+
 **Solution EPR (garlic):**
 `ref_garlic.mat`, `garlic_*.mat` (all 12 files) — MATLAB-gen / MATLAB
 
@@ -72,6 +76,7 @@ Tests comparing against these are true cross-validation.
 **ENDOR (salt):**
 `salt_ref_14N.mat`, `salt_ref_1H.mat` — MATLAB
 `salt_*.mat` (remaining ~12 files) — MATLAB
+`salt_first_order_refs.mat` — MATLAB-gen (`generate_salt_first_order_refs.m`, EasySpin main, R2024b, 2026-11-11): fixed-field salt, `Opt.Method` 'matrix' and 'perturb1', 1H and 1H+14N without Q
 
 **Fitting (esfit):**
 `esfit_test*.mat` — MATLAB-gen

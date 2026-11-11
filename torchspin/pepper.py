@@ -1011,16 +1011,20 @@ def _ramp_bins(spec: np.ndarray, f0: np.ndarray, a: np.ndarray, b: np.ndarray, r
         inr = (idx >= 0) & (idx < nPoints)
         np.add.at(spec, idx[inr], (f0[one] * width[one] * width[one] / 2.0)[inr])
     multi = ~one
-    f0, a, b, first, last = f0[multi], a[multi], b[multi], first[multi], last[multi]
+    f0, a, b, width, first, last = f0[multi], a[multi], b[multi], width[multi], first[multi], last[multi]
     if f0.size == 0:
         return
-    # edge bins
+    # edge bins, from the small overlaps c, d and the width only: differences of
+    # O(bin index) terms such as b − (a+first+1)/2 cancel catastrophically for
+    # near-zero widths straddling a bin edge (f0 ∝ 1/width²)
+    c = first + 1 - a                             # overlap with the first bin, 0 < c ≤ width
+    d = b - last                                  # overlap with the last bin, 0 ≤ d < width
     if rising:
-        v_first = f0 * (first + 1 - a) ** 2 / 2.0
-        v_last = f0 * ((last + b) / 2.0 - a) * (b - last)
+        v_first = f0 * c * c / 2.0
+        v_last = f0 * d * (width - d / 2.0)
     else:
-        v_first = f0 * (first + 1 - a) * (b - (a + first + 1) / 2.0)
-        v_last = f0 * (b - last) ** 2 / 2.0
+        v_first = f0 * c * (width - c / 2.0)
+        v_last = f0 * d * d / 2.0
     m = first >= 0
     np.add.at(spec, first[m], v_first[m])
     m = last < nPoints
@@ -1525,7 +1529,7 @@ def _pepper_single(
     _zho = None
     if bool(getattr(opt, 'QuadraticZeeman', False)):
         from torchspin.ham_ezho import field_nonlinear_zeeman_ops, has_field_nonlinear_zeeman
-        if has_field_nonlinear_zeeman(sys):   # sys, not ham_sys: nucspinrmv (hybrid core) drops Sys.Ham
+        if has_field_nonlinear_zeeman(sys):
             if str(opt.Method).startswith('perturb') or hybrid_info is not None:
                 raise NotImplementedError(
                     f"pepper: Options.Method='{opt.Method}' does not support Options.QuadraticZeeman=True "

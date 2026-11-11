@@ -199,14 +199,26 @@ def test_salt_enhanced_vs_brute_force(mk, B, rng, lw):
 
 
 def test_salt_enhancement_bypasses_perturb_path():
-    """1H, one electron, no Q: default uses first-order perturbation theory; Enhancement uses the matrix path."""
-    s = _sys_1H()
-    exp = Experiment(Field=326.5, mwFreq=9.7)
-    _, y_off = salt(s, exp, Options(GridSize=[11, 3]), freq_range=(2, 25), n_points=300)
-    _, y_on = salt(s, exp, Options(GridSize=[11, 3], Enhancement=True), freq_range=(2, 25), n_points=300)
-    assert torch.isfinite(y_on).all() and y_on.max() > 0
-    # first-order path: unit intensities; matrix path: |mu|^2 rates (MHz/mT)^2, far smaller
-    assert float(y_on.max()) < 1e-2 * float(y_off.max())
+    """1H, one electron, no Q: default uses first-order perturbation theory; Enhancement uses the matrix path.
+
+    Both paths give |<i|mu|j>|^2 intensities in (MHz/mT)^2 (the first-order path since 0.8.1, bug B16),
+    so the on/off scale is EasySpin's (whose 'off' is the matrix path) up to the first-order error.
+    """
+    r = [r for r in _refs()["salt"] if r['Sys']['Nucs'] == '1H'][0]
+    S, E = r['Sys'], r['Exp']
+    s = _sys_from(S)
+    assert s.A.tolist() == _sys_1H().A.tolist()
+    y = {}
+    for enh in (False, True):
+        _, yy = salt(s, Experiment(Field=float(E['Field']), mwFreq=float(E['mwFreq'])),
+                     Options(GridSize=[31, 6], Threshold=1e-4, Enhancement=enh),
+                     freq_range=tuple(E['Range']), n_points=int(E['nPoints']), lw_mhz=float(S['lwEndor']))
+        y[enh] = yy.numpy()
+    assert np.isfinite(y[True]).all() and y[True].max() > 0
+    ratio = (y[True].sum() / y[False].sum()) / (np.sum(r['yon']) / np.sum(r['yoff']))
+    # Before 0.8.1 (unit first-order intensities) this ratio was ~4.5e-4.  The remaining
+    # difference is first-order theory vs diagonalization (A up to 16 MHz, nu_I 13.9 MHz).
+    assert abs(ratio - 1) < 2e-2, ratio
 
 
 def test_salt_field_swept_enhancement_runs():

@@ -70,6 +70,10 @@ def _fixed_field_transitions(
     followed smoothly across orientations: a ``(nucleus, mS)`` pair for the
     first-order perturbation path, an energy-level pair for the matrix path.
     ``Idat`` already carries the orientation-selection weight ``orisel_w``.
+    Intensities are |<i|mu_perp|j>|^2 in (MHz/mT)^2 on both paths: the matrix
+    path from the eigenvectors, the first-order path from EasySpin
+    ``endorfrq_perturb.m``'s closed form summed over the row's 2I coinciding
+    mI transitions (:func:`_first_order_weights`).
 
     ``zero_field`` (``field_mT = 0``, Options.ZeroField): H0 is diagonalized
     once and every row is a pair of degenerate level clusters, with the rate
@@ -90,7 +94,8 @@ def _fixed_field_transitions(
 
     if use_perturb:
         # First-order perturbation theory (EasySpin Opt.Method='perturb1'):
-        # freq = |mS * A@u + nuI * h|, unit ENDOR intensity.
+        # freq = |mS * A@u + nuI * h|; each row carries the summed transition
+        # moment of its 2I degenerate mI transitions (_first_order_weights).
         from torchspin.rotations import erot as _erot
         from torchspin.constants import NMAGN as _NMAGN, PLANCK as _PLANCK
         if sys.fullg:
@@ -104,7 +109,8 @@ def _fixed_field_transitions(
         u_all = gn_all / gn_all.norm(dim=1, keepdim=True).clamp(min=1e-30)
         S_val = float(sys.S[0])
         mS_vals = torch.arange(S_val, -S_val - 0.5, -1.0, dtype=dt64, device=device)
-        rows = []
+        rows, row_w = [], []
+        nuc_w = _first_order_weights(sys)
         for iNuc in range(sys.nNuclei):
             gn_i = float(sys.gn[iNuc])
             nuI = -gn_i * _NMAGN * (field_mT * 1e-3) / _PLANCK * 1e-6  # MHz
@@ -119,8 +125,10 @@ def _fixed_field_transitions(
             for mS_val in mS_vals.tolist():
                 K = mS_val * Ah + nuI * h_all
                 rows.append(K.norm(dim=1))
+                row_w.append(nuc_w[iNuc])
         Pdat = torch.stack(rows, dim=0)                            # (T, M)
-        Idat = orisel_w.to(dt64).unsqueeze(0).expand_as(Pdat).clone()
+        w_rows = torch.tensor(row_w, dtype=dt64, device=device).unsqueeze(1)
+        Idat = w_rows * orisel_w.to(dt64).unsqueeze(0)
     elif zero_field:
         # B = 0: one Hamiltonian, levels grouped into degenerate clusters
         from torchspin._zerofield import level_clusters, cluster_means
@@ -197,7 +205,7 @@ def _fixed_field_transitions(
         # EasySpin endorfrq transition selection: drop pairs that are weak
         # everywhere (relative to the strongest) or never enter the window.
         # With enhancement the selection uses the nuclear-only rates (EasySpin).
-        sel_rows = S_rows if enhancement else I_rows
+        sel_rows = (S_rows if enhancement else I_rows).detach()   # discrete selection
         max_all = float(sel_rows.max()) if sel_rows.numel() else 0.0
         strong = sel_rows.max(dim=0).values >= threshold * max_all if max_all > 0 \
             else torch.ones(n_pairs, dtype=torch.bool, device=device)
@@ -206,6 +214,29 @@ def _fixed_field_transitions(
         Pdat, Idat = Pdat[keep], Idat[keep]
 
     return Pdat, Idat
+
+
+def _first_order_weights(sys: SpinSystem) -> list[float]:
+    """Per-nucleus ENDOR intensity of one first-order ``(nucleus, mS)`` row.
+
+    EasySpin ``endorfrq_perturb.m`` gives the transition mI-1 <-> mI of nucleus
+    i (lower level index m = 1..2I) the intensity
+    ``(pre_i * sqrt(m (2I+1-m)) / 2)^2 / (2I+1) * prod(2I+1)`` with
+    ``pre_i = gn_i * nmagn / planck * 1e-9`` (MHz/mT), the same
+    |<i|mu_perp|j>|^2 (MHz/mT)^2 scale as the matrix path.  At first order
+    without Q these 2I transitions coincide, so one row carries their sum,
+    ``pre_i^2 / 4 * 2 I (I+1) / 3 * prod(2I+1)``.  As in EasySpin's
+    perturbation code, ``gnscale`` is not applied (nor is it to the Larmor
+    frequencies of this path).
+    """
+    from torchspin.constants import NMAGN, PLANCK
+    I_all = [float(v) for v in sys.I]
+    n_states = math.prod(2.0 * i + 1.0 for i in I_all)
+    out = []
+    for gn_i, I_i in zip(sys.gn, I_all):
+        pre = float(gn_i) * NMAGN / PLANCK * 1e-9                  # MHz/mT
+        out.append(pre ** 2 / 4.0 * 2.0 * I_i * (I_i + 1.0) / 3.0 * n_states)
+    return out
 
 
 def _same_nuclear_block(sys: SpinSystem, pi: torch.Tensor, pj: torch.Tensor) -> torch.Tensor:
@@ -230,7 +261,6 @@ def _project_powder(
     dx: float,
     n_points: int,
     verbosity: int = 0,
-    const_pos: bool = False,
 ) -> torch.Tensor:
     """Powder average by grid interpolation and triangle/zone projection.
 
@@ -256,11 +286,6 @@ def _project_powder(
         N_final, theta_final = nfKnots, theta_f
         P_f = _interp_slots_t(Pdat, grid_sym, N_coarse, nfKnots, 'pos', False)
         I_f = _interp_slots_t(Idat, grid_sym, N_coarse, nfKnots, 'val', False)
-        if const_pos:
-            # zero field: positions are orientation independent; keep them exact
-            # (interpolation round-off would make near-zero-width triangles that
-            # straddle bin edges, where the projection formulas cancel badly)
-            P_f = Pdat[:, :1].expand(-1, P_f.shape[1])
     else:
         N_final, theta_final = N_coarse, theta_sym
         P_f, I_f = Pdat, Idat
@@ -316,7 +341,11 @@ def salt(
     freq_axis:
         Frequency axis in MHz, shape ``(n_points,)``.
     spec:
-        ENDOR spectrum (a.u.), shape ``(n_points,)``.
+        ENDOR spectrum, shape ``(n_points,)``.  Line intensities are
+        |<i|mu_perp|j>|^2 in (MHz/mT)^2 on every path (first-order perturbation
+        theory for one electron without Q, matrix diagonalization otherwise).
+        In fixed-field mode this is the per-bin, orientation-averaged amplitude,
+        EasySpin's ``salt`` output times ``dx / (8 pi^2)`` (``dx`` = bin width, MHz).
 
     Raises
     ------
@@ -513,7 +542,7 @@ def salt(
             if zero_field:
                 dens = _project_powder(
                     Pdat, Idat, grid_sym, N_coarse, N_interp, theta_sym,
-                    f_lo, df, n_points, verbosity=opt.Verbosity, const_pos=True,
+                    f_lo, df, n_points, verbosity=opt.Verbosity,
                 )
             else:
                 dens = _project_powder(
@@ -558,7 +587,8 @@ def salt(
     # For single-electron systems without quadrupole coupling, use fast
     # first-order perturbation theory (matching MATLAB Opt.Method='perturb1'):
     #   freq = |K_i(mS)| where K_i = mS * A_i@u + nuI_i * h   [vectorized]
-    #   intensity = 1 (uniform over mI manifold)
+    #   intensity = EasySpin perturb1 transition moment summed over the
+    #               mI manifold (_first_order_weights), (MHz/mT)^2
     # This replaces batched eigh on the full Hilbert space.
     _use_perturb_endor = (sys.nElectrons == 1
                           and (sys.Q is None
@@ -567,7 +597,8 @@ def salt(
 
     if _use_perturb_endor:
         # Fully vectorized first-order perturbation theory ENDOR.
-        # Matches MATLAB Opt.Method='perturb1': freq = |K_i(mS)|, intensity=1.
+        # Matches MATLAB Opt.Method='perturb1': freq = |K_i(mS)|, intensity
+        # from _first_order_weights (same scale as the matrix path).
         # No eigh — all ops are O(N_flat × n_nuc × n_mS).
         from torchspin.rotations import erot as _erot
         from torchspin.constants import NMAGN as _NMAGN, PLANCK as _PLANCK
@@ -627,6 +658,7 @@ def salt(
             u_flat = u_all[idx_t]   # (N, 3) — effective g direction
 
             # Per-nucleus vectorized accumulation
+            nuc_w = _first_order_weights(sys)
             for iNuc in range(sys.nNuclei):
                 gn_i = float(sys.gn[iNuc])
                 # Nuclear Larmor (MHz): nuI = -gn * NMAGN * B[T] / PLANCK * 1e-6
@@ -658,7 +690,7 @@ def salt(
                     if mask.any():
                         bins = ((freq_flat[mask] - f_lo) / df
                                 ).round().long().clamp(0, n_points - 1)
-                        spec.scatter_add_(0, bins, w_flat[mask])
+                        spec.scatter_add_(0, bins, nuc_w[iNuc] * w_flat[mask])
 
         if opt.Verbosity >= 2:
             print(f"  salt: {N_flat} (orientation, B) pairs, perturb1 ENDOR")
