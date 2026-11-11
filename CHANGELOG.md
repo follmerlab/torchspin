@@ -25,6 +25,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     DDPOWH/DDPOWJ golden inputs match telser-tools to 1e-10.
   - The package is additive: only `torchspin/__init__.py` gains `lft`. See `docs/lft.md`.
 
+## [0.7.7] — 2026-11-10
+
+### Added
+
+- **`SpinSystem.HStrainL`: Lorentzian strain in `pepper`.** A `[3]` vector
+  (or scalar) of frequency-domain Lorentzian FWHM in MHz along the molecular
+  x, y, z axes. A transition's width is `sqrt(sum_k (HStrainL_k n_k)^2)`,
+  the orientation dependence and dB/dE conversion of `HStrain`, but every line
+  is drawn as a Lorentzian instead of a Gaussian (Telser's DDPOWH/DDPOWJ
+  Lorentzian width). Works on every pepper path (powder facet summation,
+  per-orientation and interpolated fallbacks, isotropic, crystals,
+  `Exp.Orientations`, frequency sweeps, `Method='hybrid'`), with `Exp.mwPhase`
+  (the dispersion admixture is in each line; the remaining `Sys.lw` is then
+  convolved as absorption) and in `pepper_autograd` (gradients w.r.t.
+  `HStrainL`, g and the other spin-system tensors). `esfit` treats it as
+  non-negative and `ml` templates keep it. **Not an EasySpin field**:
+  EasySpin's strains are all Gaussian, so this is a deliberate addition.
+  Validated by: isotropic `HStrainL` equals the EasySpin-validated
+  `Sys.lw(2)` Lorentzian exactly (field and frequency sweeps, harmonics 0–2);
+  single orientations equal the analytic Lorentzian to 1e-12; rhombic S = 1/2
+  powders meet a brute-force reference as closely as the Gaussian `HStrain`
+  does (0.6 % vs 0.7 %); gradients match central differences to 1e-6.
+  Combining it with `HStrain`, `gStrain`, `AStrain` or `DStrain` raises
+  `ValueError` (no per-line Voigt profile). The default (`None`) is unchanged.
+
 ## [0.7.6] — 2026-11-10
 
 ### Added

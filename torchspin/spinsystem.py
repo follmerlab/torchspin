@@ -153,6 +153,17 @@ class SpinSystem:
         theory, hybrid, garlic, chili, fastmotion, cardamom, saffron's fast
         algorithm, nucspinrmv/nucspinkeep/nucspinadd) raise when it is set.
         Default ``None`` (no extra term).
+    HStrainL:
+        Lorentzian counterpart of ``HStrain``: frequency-domain Lorentzian FWHM
+        (MHz) along the molecular x, y, z axes, ``[3]`` (a scalar is expanded).
+        A transition's width is ``sqrt(sum_k (HStrainL_k n_k)^2)`` for a field
+        along ``n``, with the same orientation dependence and dB/dE conversion
+        as ``HStrain``, but every line in ``pepper`` gets a Lorentzian profile
+        instead of a Gaussian one.  Not an EasySpin field (EasySpin's strains are
+        Gaussian).  Cannot be combined with ``HStrain``, ``gStrain``,
+        ``AStrain`` or ``DStrain`` (pepper raises: no Voigt per line).  Used by
+        ``pepper`` and ``pepper_autograd`` only; the other functions ignore it.
+        Default ``None`` (no Lorentzian strain).
     """
 
     S: list[float]
@@ -235,6 +246,9 @@ class SpinSystem:
     # Hermitian matrix in the full spin-system basis (torchspin order, as sop
     # builds it). Default None: no extra term.
     H0Extra: Optional[list] = None
+    # Lorentzian frequency-domain strain width, [3] MHz FWHM, molecular frame
+    # (pepper only; not with the Gaussian strains). Default None.
+    HStrainL: Optional[list | torch.Tensor] = None
 
     def __post_init__(self) -> None:
         from torchspin.constants import GFREE
@@ -656,6 +670,14 @@ class SpinSystem:
                 self.HStrain = self.HStrain.expand(3).clone()
             elif self.HStrain.shape[0] != 3:
                 raise ValueError("HStrain must have shape [3].")
+        if self.HStrainL is not None:
+            self.HStrainL = _to_tensor(self.HStrainL, torch.float64)
+            if self.HStrainL.ndim == 0:
+                self.HStrainL = self.HStrainL.expand(3).clone()
+            elif self.HStrainL.shape[0] != 3 or self.HStrainL.ndim != 1:
+                raise ValueError("HStrainL must have shape [3].")
+            if bool(torch.any(self.HStrainL.detach() < 0)):
+                raise ValueError("HStrainL values must be non-negative.")
 
         # gStrain: [nElectrons, 3] unitless
         if self.gStrain is not None:
@@ -1062,6 +1084,8 @@ class SpinSystem:
         # --- Strain non-negativity ---
         if self.HStrain is not None and torch.any(self.HStrain < 0):
             raise ValueError("HStrain values must be non-negative.")
+        if self.HStrainL is not None and torch.any(self.HStrainL < 0):
+            raise ValueError("HStrainL values must be non-negative.")
         if self.gStrain is not None and torch.any(self.gStrain < 0):
             raise ValueError("gStrain values must be non-negative.")
         if self.AStrain is not None and torch.any(self.AStrain < 0):
@@ -1273,6 +1297,7 @@ def nucspinadd(sys: 'SpinSystem', nuc: str, A=None, Q=None,
         gStrain=sys.gStrain.clone() if sys.gStrain is not None else None,
         AStrain=sys.AStrain.clone() if sys.AStrain is not None else None,
         DStrain=sys.DStrain.clone() if sys.DStrain is not None else None,
+        HStrainL=sys.HStrainL.clone() if sys.HStrainL is not None else None,
         weight=sys.weight,
     )
 
@@ -1392,6 +1417,7 @@ def _filter_nuclei(sys: 'SpinSystem', keep: list[int]) -> 'SpinSystem':
         gStrain=sys.gStrain.clone() if sys.gStrain is not None else None,
         AStrain=sys.AStrain.clone() if sys.AStrain is not None else None,
         DStrain=sys.DStrain.clone() if sys.DStrain is not None else None,
+        HStrainL=sys.HStrainL.clone() if sys.HStrainL is not None else None,
         weight=sys.weight,
     )
 
