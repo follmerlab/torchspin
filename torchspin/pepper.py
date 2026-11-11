@@ -555,6 +555,49 @@ def _lorentzian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np
     return out
 
 
+def _lw_convolve(row: torch.Tensor, dx: float, fwhm_g, fwhm_l, harmonic: int,
+                 phase: float = 0.0, conv=None) -> torch.Tensor:
+    """EasySpin pepper.m's final ``Sys.lw`` convolution (pepper.m:1150-1223).
+
+    * The harmonic and ``Exp.mwPhase`` go to the Lorentzian when
+      ``Sys.lw(2) > 0``, otherwise to the Gaussian (pepper.m:1152-1163); a
+      Voigt width is applied Lorentzian first, then Gaussian.
+    * A component whose FWHM is at most two increments and whose harmonic is
+      0 is not convolved: it is a delta-like line (pepper.m:1195-1223).
+      EasySpin raises for such a component with a harmonic > 0; torchspin
+      convolves it anyway (KNOWN_LIMITATIONS.md).
+
+    ``conv(spec, dx, fwhm_g, fwhm_l, deriv, phase)`` is the convolution
+    (default :func:`convspec`; :mod:`torchspin.pepper_autograd` passes its
+    torch one).  Widths may be tensors; only the skip decision reads their
+    values (a discrete selection), the convolution keeps them in the graph.
+    """
+    if conv is None:
+        def conv(s, d, g, l, deriv, ph):
+            return convspec(s, d, fwhm_g=g, fwhm_l=l, deriv=deriv, phase=ph)
+    g_val = float(fwhm_g.detach()) if torch.is_tensor(fwhm_g) else float(fwhm_g)
+    l_val = float(fwhm_l.detach()) if torch.is_tensor(fwhm_l) else float(fwhm_l)
+    if l_val > 0:
+        harm_l, phase_l, harm_g, phase_g = harmonic, phase, 0, 0.0
+    else:
+        harm_l, phase_l, harm_g, phase_g = 0, 0.0, harmonic, phase
+    use_l = l_val > 0 and not (l_val <= 2 * dx and harm_l == 0)
+    use_g = g_val > 0 and not (g_val <= 2 * dx and harm_g == 0)
+    # A skipped width that requires grad stays in the graph with zero gradient
+    # (the spectrum does not depend on it), so autograd.grad does not fail.
+    for w_, used in ((fwhm_g, use_g), (fwhm_l, use_l)):
+        if not used and torch.is_tensor(w_) and w_.requires_grad:
+            row = row + 0.0 * w_.to(row.dtype)
+    if use_l and use_g:
+        row = conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
+        return conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+    if use_l:
+        return conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
+    if use_g:
+        return conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+    return row
+
+
 def _finish_field_sweep(spec: torch.Tensor, x: torch.Tensor, dx: float, exp,
                         fwhm_g: float, fwhm_l: float, fd_deriv: bool,
                         phase: float = 0.0) -> torch.Tensor:
@@ -576,7 +619,7 @@ def _finish_field_sweep(spec: torch.Tensor, x: torch.Tensor, dx: float, exp,
     out = []
     for row in rows:
         if fwhm_g > 0 or fwhm_l > 0:
-            row = convspec(row, dx, fwhm_g=fwhm_g, fwhm_l=fwhm_l, deriv=conv_harm, phase=phase)
+            row = _lw_convolve(row, dx, fwhm_g, fwhm_l, conv_harm, phase)
         elif conv_harm > 0:
             if fd_deriv:
                 for _h in range(conv_harm):

@@ -135,6 +135,12 @@ def convspec_t(spec: torch.Tensor, dx: float, fwhm_g=0.0, fwhm_l=0.0, deriv: int
     return spec
 
 
+def _conv_t(spec, dx, fwhm_g, fwhm_l, deriv, phase):
+    """:func:`convspec_t` in the ``conv`` signature of ``pepper._lw_convolve``
+    (``Exp.mwPhase`` is rejected up front, so ``phase`` is always 0 here)."""
+    return convspec_t(spec, dx, fwhm_g, fwhm_l, deriv)
+
+
 # =============================================================================
 # SOPHE projection in torch (EasySpin projecttriangles.c / projectzones.c)
 # =============================================================================
@@ -686,6 +692,8 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
     if has_strain and not _pos(fwhm_g) and not _pos(fwhm_l):
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)
+    elif _pos(fwhm_g) or _pos(fwhm_l):
+        spec = _pep._lw_convolve(spec, dx, fwhm_g, fwhm_l, H, conv=_conv_t)
     else:
         spec = convspec_t(spec, dx, fwhm_g, fwhm_l, deriv=H)
     if use_mod:
@@ -792,7 +800,7 @@ def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, stra
         if use_mod:
             raise ValueError("With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.")
     if _pos(g_rem) or _pos(l_rem):
-        spec = convspec_t(spec, dx, g_rem, l_rem, deriv=H)
+        spec = _pep._lw_convolve(spec, dx, g_rem, l_rem, H, conv=_conv_t)
     else:
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)
