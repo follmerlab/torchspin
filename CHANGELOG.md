@@ -30,6 +30,60 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   on the default 512-point axis. A skipped width that requires grad has zero gradient. EasySpin
   references: tests/data/salt_narrowlw_refs.mat. A Lorentzian ENDOR width and `Exp.Harmonic` are
   still not supported in salt (KNOWN_LIMITATIONS.md § ENDOR).
+## [0.8.10] — 2026-11-11
+
+### Fixed
+
+- **`salt` now raises for sets of equivalent nuclei (`Sys.n > 1`), as EasySpin does** (salt.m:135-136,
+  'salt does not support sets of equivalent nuclei (Sys.n>1).'). torchspin had no check on `n`, and
+  every ENDOR path treats each entry of `Nucs` as one nucleus, so `n = [2]` returned the spectrum of
+  `n = [1]` exactly (maximum difference 0 for 1H at 326.5 mT). The check runs before anything else
+  in `salt`, on every path (first-order, matrix, several electrons, field-swept, zero field), and
+  also catches `n` assigned after construction. Results with `n = 1` are bit-identical. Give
+  equivalent nuclei as separate entries of `Nucs` instead.
+## [0.8.9] — 2026-11-11
+
+### Fixed
+
+- **The closed-φ powder grid interpolation now resamples each θ row with zero end slopes, as
+  EasySpin does** (gridinterp.m:184, `esspline1d(y,1,nc)`). To turn the triangular grid (D2h and
+  the other closed-φ symmetries) into the rectangle for the bicubic spline, torchspin fitted each
+  row with scipy's default not-a-knot spline. The rows next to the pole have only 2–5 knots, so
+  the two rules give different resonance fields near g_z, which shows at Harmonic 1: for
+  S = 1/2, g = [2 2.05 2.1] at 9.5 GHz and the default GridSize [19 4], the peak amplitude was
+  1.0058 of EasySpin's with lw = [1 0] and 1.0048 with lw = [0 0.8] (relative residual 3.9e-3 and
+  6.5e-3), independent of nPoints. Both are now 1.0000000 at residual 5e-7, the field-sweep floor
+  without interpolation. Also before → after: GridSize [31 4] amplitude 0.99991 → 1.0000001; a 14N
+  hyperfine spectrum residual 1.5e-2 → 2.4e-8; a frequency sweep 4.4e-3 → 7e-13; HStrain
+  1.5e-4 → 8.0e-5; fixed-field `salt` (rhombic g and A, `Method 'perturb1'`) 7.6e-4 → 1e-12; the
+  0.8.5 Voigt cases at Harmonic 1 1.0020 / 1.0048 → 1.0000000; d spc/d g_z as a central difference
+  (h = 1e-4) 1.9e-2 → 4.2e-5. Every powder spectrum interpolated on a closed-φ grid (interpolation
+  factor > 1) changes, in `pepper`, `pepper_autograd` and `salt` (all through
+  `pepper._d2h_interp_matrix`), the large-grid fallback in `_interp_sph`, and the closed-φ rows of
+  `_interp_grid`. The 2-D step stays not-a-knot, as in EasySpin's `esspline2d`. Gradients stay
+  exact (`pepper_autograd` vs central differences to 1e-6 for d/d g_z). Spectra without
+  interpolation, on axial (Dinfh) grids and on open-φ grids are bit-identical. EasySpin references:
+  tests/data/ref_closedphi_interp.mat.
+## [0.8.8] — 2026-11-11
+
+### Fixed
+
+- **`endorfrq_perturb` intensities, element order and full 3×3 `Q` now match EasySpin's
+  `endorfrq_perturb.m` element by element** (bugs B20, B27). Intensities: torchspin used the
+  matrix element (I+mI)(I−mI+1)/4 with mI the lower level, one level off from EasySpin's
+  k(2I+1−k)/4, k = 1..2I (.m:367), so the lowest transition of every nucleus had intensity 0, and
+  it dropped the factor ∏(2I+1) over all nuclei (.m:385). For 1H+14N at φ = 0.3, θ = 0.7 (340 mT)
+  torchspin gave 0 for all 1H lines and 0 / 1.58e-6 for the 14N lines; EasySpin gives 1.36e-3 and
+  9.47e-6, as torchspin does now. Order: torchspin listed transitions mS-major with mS descending;
+  EasySpin lists them per nucleus by the mI of the lower level, mS ascending within it
+  (.m:303-304, 377-381). torchspin now uses EasySpin's order, so frequencies agree element by
+  element and not only after sorting. Full Q: with `sys.fullQ` torchspin read row i of the 3×3
+  matrix as principal values (14N with a full Q: sorted 12.27/12.33/14.37/14.40 MHz vs EasySpin
+  11.15/13.31/13.42/15.48); it now uses the matrix as EasySpin does (.m:84-85). Agreement over 8
+  systems × 4 orientations × PerturbOrder 1 and 2: frequencies 7.4e-16, intensities 4.9e-16
+  relative. Callers that index the output by position or use its intensities see different
+  values; sorted frequencies are unchanged except with a full Q. `salt` does not call
+  `endorfrq_perturb` and is unaffected. EasySpin references: tests/data/endorfrq_perturb_refs.mat.
 
 ## [0.8.7] — 2026-11-11
 
