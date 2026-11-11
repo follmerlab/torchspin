@@ -92,7 +92,7 @@ def endorfrq(
     transitions:
         Level pairs ``[u, v]``, shape ``(nTrans, 2)``: 1-based level numbers
         in ascending energy at ``B_field``, ``u < v``, as EasySpin's
-        ``Transitions`` output and ``Options.Transitions`` (0.8.15; before,
+        ``Transitions`` output and ``Options.Transitions`` (0.9.2; before,
         0-based: subtract 1 to index the eigenvalues/eigenvectors).  Rows
         follow ``freqs`` (ascending frequency); EasySpin orders them by
         descending transition rate.

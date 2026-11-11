@@ -85,7 +85,7 @@ class TestEndorfrqBasic:
         assert (intens >= 0).all(), "Negative intensities found"
 
     def test_transitions_are_valid_pairs(self):
-        """transition[k] = [u, v] with u < v, 1-based (1..nStates) as EasySpin (0.8.15)."""
+        """transition[k] = [u, v] with u < v, 1-based (1..nStates) as EasySpin (0.9.2)."""
         sys = SpinSystem(S=0.5, g=2.0, Nucs='1H', A=[[10.0, 10.0, 10.0]])
         B = free_electron_resonance_mT(9.5)
         nStates = sys.nStates
