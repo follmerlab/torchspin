@@ -54,11 +54,13 @@ _INTERP_MATRIX_MAX = 8_000_000     # n_coarse × n_fine above which the scipy sp
 @functools.lru_cache(maxsize=16)
 def _d2h_interp_matrix(N_c: int, N_f: int) -> np.ndarray:
     """Dense ``(n_fine, n_coarse)`` matrix of EasySpin's G3 interpolation on the
-    triangular D2h SOPHE grid (row-wise not-a-knot cubic resampling along φ to
-    an N_c × N_c rectangle, then the tensor-product not-a-knot bicubic spline —
-    identical to ``RectBivariateSpline(kx=ky=3, s=0)`` — evaluated at the fine
-    knots).  Both steps are linear in the values, so one matrix product per
-    transition slot replaces ~N_c spline constructions.
+    triangular D2h SOPHE grid (row-wise cubic resampling along φ to an
+    N_c × N_c rectangle with zero end slopes, as EasySpin gridinterp.m:184
+    ``esspline1d(...,1,nc)``; then the tensor-product not-a-knot bicubic
+    spline — identical to ``RectBivariateSpline(kx=ky=3, s=0)`` and EasySpin
+    ``esspline2d`` — evaluated at the fine knots).  Both steps are linear in
+    the values, so one matrix product per transition slot replaces ~N_c spline
+    constructions.
     """
     from scipy.interpolate import CubicSpline
     n_c = N_c * (N_c + 1) // 2
@@ -73,7 +75,10 @@ def _d2h_interp_matrix(N_c: int, N_f: int) -> np.ndarray:
         elif r == N_c:
             R[rows, idx:idx + r] = np.eye(r)
         else:
-            R[rows, idx:idx + r] = CubicSpline(np.linspace(0.0, np.pi / 2, r), np.eye(r), axis=0)(phi_rect)
+            # zero end slopes (EasySpin esspline1d EndCon=1; for r = 2 the cubic
+            # Hermite polynomial with zero slopes, esspline1d.m:55-60)
+            R[rows, idx:idx + r] = CubicSpline(np.linspace(0.0, np.pi / 2, r), np.eye(r), axis=0,
+                                               bc_type='clamped')(phi_rect)
         idx += r
     rows_f = np.arange(1, N_f + 1)
     theta_all = np.repeat((rows_f - 1) / (N_f - 1) * np.pi / 2 if N_f > 1 else np.zeros(1), rows_f)
@@ -158,7 +163,8 @@ def _interp_sph(
             return _d2h_interp_matrix(N_c, N_f) @ np.asarray(values, dtype=float)
 
         # Step 1: Convert triangular coarse grid → rectangular array z_rect[N_c × N_c]
-        # by interpolating each theta row along phi via cubic spline.
+        # by interpolating each theta row along phi via a cubic spline with zero
+        # end slopes (EasySpin gridinterp.m:184, esspline1d(...,1,nc)).
         theta_1d = np.linspace(0.0, np.pi / 2, N_c)
         phi_rect = np.linspace(0.0, np.pi / 2, N_c)  # target phi grid (N_c columns)
 
@@ -173,7 +179,7 @@ def _interp_sph(
                 z_rect[N_c - 1, :] = row_vals   # equator: already has N_c points
             else:
                 phi_row = np.linspace(0.0, np.pi / 2, r)
-                cs = CubicSpline(phi_row, row_vals)
+                cs = CubicSpline(phi_row, row_vals, bc_type='clamped')
                 z_rect[r - 1, :] = cs(phi_rect)
 
         # Step 2: 2-D bicubic spline on the rectangular coarse grid.
@@ -366,8 +372,9 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
 
     The coarse per-knot values are rectified into a (θ-row × φ-column) array
     (each θ slice resampled along φ with a cubic spline, periodic in φ where
-    the grid wraps), then interpolated with a global bicubic spline at the
-    fine grid's (θ, φ) — EasySpin mode ``G3``. When values are missing (NaN,
+    the grid wraps and with zero end slopes where it does not), then
+    interpolated with a global bicubic spline at the fine grid's (θ, φ) —
+    EasySpin mode ``G3``. When values are missing (NaN,
     e.g. a transition without a resonance at some knots) EasySpin switches to
     linear interpolation (``L1``) so the NaNs propagate to the affected fine
     knots only; the same is done here.
@@ -391,7 +398,8 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
         if cubic:
             if is_periodic:
                 return CubicSpline(np.arange(1, n + 1), vals, bc_type='periodic')(xx)
-            return CubicSpline(np.arange(1, n + 1), vals)(xx)
+            # closed φ: zero end slopes (gridinterp.m:184, esspline1d(...,1,nc))
+            return CubicSpline(np.arange(1, n + 1), vals, bc_type='clamped')(xx)
         k = np.minimum(np.maximum(np.floor(xx - 1).astype(int), 0), n - 2)
         return vals[k] + (xx - (k + 1)) * (vals[k + 1] - vals[k])
 
