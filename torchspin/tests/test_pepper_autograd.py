@@ -251,6 +251,41 @@ def test_perturbation_route_forward_and_gradients():
         assert rel < 1e-6, f'perturb2 d/d{name}[{i}]: {rel:.2e}'
 
 
+_CU_AX = dict(S=[0.5], Nucs='63Cu', A=[[30.0, 30.0, 617.3]], lw=[1.0, 0])
+_CU_G0 = [2.05, 2.05, 2.25]
+
+
+@pytest.mark.parametrize('method', ['perturb1', 'perturb2', 'perturb'])
+def test_perturbation_order_follows_method(method):
+    """B17: the powder route of pepper_autograd used second order for Method='perturb1'
+    (1.44 relative max deviation from pepper on this grid before 0.8.3)."""
+    exp = Experiment(mwFreq=9.5, Range=[260, 360], nPoints=512)
+    opt = Options(Verbosity=0, GridSize=[19, 4], Method=method)
+    _, yp = pepper(SpinSystem(g=[_CU_G0], **_CU_AX), exp, opt)
+    g = torch.tensor(_CU_G0, requires_grad=True)
+    _, ya = pepper_autograd(SpinSystem(g=[g], **_CU_AX), exp, opt)
+    rel = float((yp - ya.detach()).abs().max() / yp.abs().max())
+    assert rel < 1e-9, f'{method}: pepper vs pepper_autograd {rel:.2e}'
+
+
+def test_perturb1_gradient_matches_finite_differences():
+    """B17: autograd d/dg and d/dA of the first-order perturbation route vs central differences."""
+    exp = Experiment(mwFreq=9.5, Range=[260, 360], nPoints=512)
+    opt = Options(Verbosity=0, GridSize=[19, 4], Method='perturb1', GridSymmetry='D2h')   # fixed: FD of g[0] would leave the auto-detected Dinfh grid
+    A0 = [30.0, 30.0, 617.3]
+    g = torch.tensor(_CU_G0, requires_grad=True); A = torch.tensor([A0], requires_grad=True)
+    _, y = pepper_autograd(SpinSystem(S=[0.5], g=[g], Nucs='63Cu', A=A, lw=[1.0, 0]), exp, opt)
+    J = _jacobian_rows(y, [A, g], 4)
+    for name, i, col, h in (('A', 2, 2, 1e-3), ('g', 2, 5, 1e-7), ('g', 0, 3, 1e-7)):
+        def f(d):
+            Av, gv = list(A0), list(_CU_G0)
+            {'A': Av, 'g': gv}[name][i] += d
+            return pepper(SpinSystem(S=[0.5], g=[gv], Nucs='63Cu', A=[Av], lw=[1.0, 0]), exp, opt)[1][::4]
+        fd = (f(h) - f(-h)) / (2 * h)
+        rel = float((J[:, col] - fd).norm() / fd.norm())
+        assert rel < 1e-6, f'perturb1 d/d{name}[{i}]: {rel:.2e}'
+
+
 def test_field_modulation_forward_and_gradient():
     """Exp.ModAmp: pseudo-modulation in torch (fieldmod_t) equals pepper; gradient vs FD."""
     sd = dict(S=[0.5], g=[[2.008, 2.006, 2.003]], Nucs='14N', lw=[0.2, 0.1])
