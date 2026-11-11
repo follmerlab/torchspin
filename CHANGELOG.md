@@ -6,6 +6,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.8.5] — 2026-11-11
+
+### Fixed
+
+- **`pepper` no longer convolves line widths of at most two increments when no harmonic is taken,
+  and with a Voigt width the Lorentzian carries the harmonic and `Exp.mwPhase`, as in EasySpin**
+  (pepper.m:1152-1223). torchspin convolved such delta-like lines anyway, which lowered peak
+  amplitudes: the S=1 frequency sweep (D = 3000 MHz, lwpp = 10 MHz at 9.8 MHz increments) was 0.989
+  of EasySpin's amplitude, 0.984 and 0.971 for pairs (1,2) and (2,3); narrow field sweeps at
+  Harmonic 0 were 0.974 (Gaussian) and 0.926 (Lorentzian). All are now 1.0000. Results change only
+  for (a) a width ≤ 2 increments whose harmonic is 0 and (b) spectra with both `lw` components and a
+  harmonic or `mwPhase` (Voigt frequency sweep at Harmonic 1: 1.039 → 1.000). Every other spectrum
+  is bit-identical. Applied to field and frequency sweeps in `pepper` and `pepper_autograd`. A narrow
+  width with a harmonic is still convolved (EasySpin raises); see KNOWN_LIMITATIONS.md. EasySpin
+  references: tests/data/ref_pepper_narrowlw.mat.
+
 ## [0.8.0] — 2026-11-11
 
 The first PyPI release since 0.7.0: it also contains 0.7.1–0.7.7 below, which were merged but not

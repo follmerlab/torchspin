@@ -239,10 +239,35 @@ state label such as mS.
   simulators ignore it. (`SaffronOptions.Transitions` is a separate, unrelated field.)
 - EasySpin agreement (9 cases: S=3/2 central/outer/all transitions in a powder, with
   HStrain and in a crystal; the S=1 half-field line; a frequency sweep): cosine ≥ 0.99997,
-  amplitude within 0.05 % except the frequency sweep (amplitude 0.984 for pair (1,2)).
-  That deviation predates the option: for the same triplet (D = 3000 MHz, 340 mT) the
-  default frequency sweep is 0.989 of EasySpin's amplitude and pair (2,3) alone 0.971,
-  at cosine 0.99997.
+  amplitude within 0.05 %. (Before 0.8.5 the frequency sweep was 1–3 % low, at 0.984;
+  that was the narrow-line convolution fixed in 0.8.5, see § Pepper — final line-width
+  convolution.)
+
+## Pepper — final line-width convolution (0.8.5)
+
+`pepper` and `pepper_autograd` apply `Sys.lw` as EasySpin's pepper.m does (pepper.m:1152-1223),
+for field and frequency sweeps:
+
+- A Gaussian or Lorentzian FWHM of at most two increments whose harmonic is 0 is not convolved:
+  the binned spectrum is kept as it is. Before 0.8.5 torchspin convolved it, which lowered peak
+  amplitudes by 1–7 % (the S=1 frequency sweep with lwpp = 10 MHz at 9.8 MHz increments: 0.989,
+  0.984 for pair (1,2), 0.971 for pair (2,3); now 1.0000).
+- With both widths set, the Lorentzian carries the harmonic and `Exp.mwPhase`, and is applied
+  first; the Gaussian is an absorption convolution. Before 0.8.5 the Gaussian carried them.
+- **Deliberate deviation.** For a width of at most two increments that carries a harmonic > 0,
+  EasySpin raises ("smaller than 2 increments - cannot do convolution"); torchspin convolves it
+  with the sampled line shape, as before.
+- Skipping is a discrete decision on the width: in `pepper_autograd` a skipped width has zero
+  gradient (it stays in the graph), as the spectrum does not depend on it. A fit of `lw` that
+  starts at or below two increments with Harmonic 0 therefore does not move; use more points.
+  `test_autograd.py::TestNSpinFDAccuracy::test_linewidth_fd_agreement` (lw = 1 mT at 0.63 mT
+  increments, Harmonic 0) now compares a zero gradient with a zero finite difference.
+- `salt` still convolves narrow ENDOR line widths (salt.m:884-911 skips them); not changed here.
+- EasySpin agreement (tests/data/ref_pepper_narrowlw.mat, 8 cases): amplitude within 0.002 and
+  cosine ≥ 0.99998, except the three field-sweep Voigt cases at Harmonic 1 (1.002–1.005).
+  Those carry an offset that predates this fix and does not depend on it: field-sweep powder
+  spectra at Harmonic 1 with a single width are already 1.005–1.006 of EasySpin's amplitude
+  (S=1/2, g = [2 2.05 2.1], lw = [1 0] or [0 0.8], at 1024 and 8192 points).
 - **Zero field (`Options.ZeroField`, 0.7.4).** Degenerate levels are merged into clusters, and a
   transition is labelled by the first (lowest-numbered) level of each cluster; a listed pair selects
   a zero-field line only when it names those first levels (`'all'` selects every line).
