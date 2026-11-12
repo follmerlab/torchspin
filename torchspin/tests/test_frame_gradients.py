@@ -31,8 +31,11 @@ def _t(x, rg=True):
 
 def _grad_vs_cd(make, a0, h, tol, label, seed=0, stencil=2):
     """Autograd gradient of sum(w * make(a)) against central differences (all
-    three angles; ``stencil`` 2 or 4 points); ``tol`` bounds the relative norm
-    error."""
+    three angles; ``stencil`` 2 or 4 points, or ``'fit'``: the slope of a
+    least-squares odd polynomial of degree 7 through the antisymmetric
+    differences at 24 steps out to ``h``, which averages down roundoff noise in
+    ``make`` that a 4-point stencil divides by ``h``); ``tol`` bounds the
+    relative norm error."""
     a = _t(a0)
     out = make(a)
     if torch.is_complex(out):
@@ -53,6 +56,10 @@ def _grad_vs_cd(make, a0, h, tol, label, seed=0, stencil=2):
             x = _t(a0, False)
             if stencil == 2:
                 cd[k] = (f(x + e) - f(x - e)) / (2 * h)
+            elif stencil == 'fit':
+                t = np.arange(1, 25) / 24
+                odd = np.array([float(f(x + s * e) - f(x - s * e)) / 2 for s in t])
+                cd[k] = np.linalg.lstsq(np.stack([t ** p for p in (1, 3, 5, 7)], 1), odd, rcond=None)[0][0] / h
             else:
                 cd[k] = (8 * (f(x + e) - f(x - e)) - (f(x + 2 * e) - f(x - 2 * e))) / (12 * h)
     assert cd.norm() > 0, f'{label}: frame has no effect, test is vacuous'
@@ -171,7 +178,15 @@ STRAIN_CASES = {
 @pytest.mark.parametrize('case', list(STRAIN_CASES))
 def test_strain_width_frame_gradient(case):
     """The batched strain widths (pepper's and pepper_autograd's path) are
-    differentiable in the frame, also next to the strains."""
+    differentiable in the frame, also next to the strains.
+
+    The weighted Cu widths carry roundoff noise of 2e-13 to 7e-13 of their
+    value, which a 4-point stencil at h = 1e-3 turns into a rel error of
+    3.3e-9 to 1.0e-8 here (torch 2.10, 2.15) and 1.1-1.2e-8 on Windows CI
+    (torch 2.14.1).  The least-squares fit over steps up to 2e-2 gives rel
+    <= 6.5e-10 for all four cases (torch 2.10 and 2.15, 1 and 14 threads).
+    Steps of 4e-2 are too large: there the ``AFrame+AStrain`` widths are no
+    longer smooth (an 8-point stencil at h = 1e-2 is off by 5e-3)."""
     from torchspin.strainwidth import compute_strain_widths_batch
     frame, kw = STRAIN_CASES[case]
     pair = [0, 3] if kw['S'] == 0.5 else [0, 1]
@@ -186,7 +201,7 @@ def test_strain_width_frame_gradient(case):
         muzL = z[:, 0, None, None] * mux + z[:, 1, None, None] * muy + z[:, 2, None, None] * muz
         return compute_strain_widths_batch(s, H0, muzL, phi, th, torch.tensor([320.0, 330.0], dtype=F64),
                                            None, 9.5, pairs_flat=torch.tensor([pair, pair]))
-    _grad_vs_cd(batch, [0.3, 0.5, -0.4], 1e-3, 1e-8, f'compute_strain_widths_batch {case}', stencil=4)
+    _grad_vs_cd(batch, [0.3, 0.5, -0.4], 2e-2, 1e-8, f'compute_strain_widths_batch {case}', stencil='fit')
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +413,15 @@ def test_frame_on_graph_gives_float_path_values():
 
     Bit-identical except: ``ham_BFrame`` (the torch Wigner D sums in another
     order; 23 of 50 entries differ, at most 7 ulp of the entry and under 1 ulp
-    of max|H|, bound 4 ulp of max|H|) and ``pepper_autograd`` with a grad
-    ``gFrame`` (rel 1.4e-13, bound 1e-11 of the maximum; not ``erot``: a grad
-    ``g`` with no frame differs from a float ``g`` by 2e-14 there too).
+    of max|H|, bound 4 ulp of max|H|) and the ``pepper_autograd`` spectra
+    below, bound 1e-11 of the maximum.  With a grad ``gFrame`` they differ by
+    rel 1.4e-13 single-threaded (not ``erot``: a grad ``g`` with no frame
+    differs from a float ``g`` by 2e-14 there too).  With more than one
+    intra-op thread (as on CI) the summation order changes further:
+    ``gFrame`` 3.2e-13, ``AFrame`` 7e-14 to 8e-14 here (torch 2.10, 2.15) and
+    up to 3.0e-13 on CI (torch 2.14.1, 2.15.0), ``QFrame`` 3.0e-13,
+    ``DFrame`` 1.9e-14, ``AFrame+AStrain`` (matrix and perturb) 1.4e-14;
+    single-threaded these four are bit-identical.
 
     That this PR leaves non-grad results unchanged was checked against main
     0.9.0 when it was written: 466 arrays (150 random systems with every frame
@@ -416,7 +437,8 @@ def test_frame_on_graph_gives_float_path_values():
         if k == 'ham_BFrame':
             np.testing.assert_allclose(out[k], ref[k], rtol=0, atol=4 * np.spacing(scale), err_msg=k)
         elif k in ('pepper_matrix_gFrame', 'pepper_matrix_gFrame+gStrain', 'pepper_perturb_gFrame+gStrain',
-                   'pepper_matrix_DFrame+DStrain'):
+                   'pepper_matrix_DFrame+DStrain', 'pepper_matrix_AFrame', 'pepper_matrix_AFrame+AStrain',
+                   'pepper_perturb_AFrame+AStrain', 'pepper_matrix_DFrame', 'pepper_matrix_QFrame'):
             np.testing.assert_allclose(out[k], ref[k], rtol=0, atol=1e-11 * scale, err_msg=k)
         else:
             assert np.array_equal(out[k], ref[k]), f'{k}: differs by {np.abs(out[k] - ref[k]).max() / scale:.1e} (rel)'
