@@ -1137,6 +1137,28 @@ from earlier development snapshots should pass `seed=` explicitly.
 
 ---
 
+## Single-orientation `resfields` and `compute_strain_widths` (0.9.20)
+
+- **Same solver as pepper.** `resfields` (one orientation) and
+  `strainwidth.compute_strain_widths` are thin wrappers over `resfields_batch` and
+  `compute_strain_widths_batch` with one orientation. Before 0.9.20 they had their own
+  code (Python-float Brent search, `.item()`), which gave no gradient or, for S = 1 with
+  DStrain + HStrain, a wrong one (B76), found at most one resonance per level pair, and
+  gave an infinite width for full g + gStrain (B5).
+- **Differentiable** with respect to the Hamiltonian (g, A, D, J, `Sys.Ham`), the
+  strains (HStrain, gStrain, AStrain), the angles and, for `compute_strain_widths`, B0.
+  DStrain magnitudes are constants, as in pepper. Gradients match central differences
+  to 1e-6 relative above the finite-difference round-off (`test_resfields_single_autograd.py`). Gradients with
+  respect to frame angles (`gFrame`, `AFrame`, `DFrame`) are not covered here.
+- **Behavior as `resfields_batch`:** a looping transition returns all its resonances;
+  `Exp.mwMode` is honored; `Options.Threshold` is relative to the largest `|I|`;
+  gStrain/AStrain with a full g matrix raise `ValueError` (as EasySpin); with strains
+  but no resonance in range the widths are an empty tensor (`None` only without
+  `sys` or without strains). Fields agree with the old Brent search to its 1e-5 mT
+  tolerance (≤ 2e-6 mT on the test systems).
+- `Options.QuadraticZeeman` with lB ≥ 2 terms still raises in `resfields` (single
+  orientation); use `resfields_batch(..., zeeman_ho=...)`.
+
 ## Autograd — differentiable pepper
 
 Since 2026-09-05 `differentiable_spectrum()` builds a `SpinSystem` from the

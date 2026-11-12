@@ -10,7 +10,6 @@ EasySpin ``resfields.m``, ``resfields_perturb.m``, ``getdstrainops.m``
 """
 from __future__ import annotations
 
-import math
 from typing import Optional
 
 import torch
@@ -26,7 +25,7 @@ def compute_strain_widths(
     H0: torch.Tensor,        # field-independent Hamiltonian
     mux: torch.Tensor,       # x magnetic moment operator
     muy: torch.Tensor,       # y magnetic moment operator
-    muz: torch.Tensor,       # z magnetic moment operator  
+    muz: torch.Tensor,       # z magnetic moment operator
     phi: float,              # orientation azimuthal angle (rad)
     theta: float,            # orientation polar angle (rad)
     transitions: torch.Tensor,  # [nTrans, 2] level pairs (u, v) with u < v
@@ -37,10 +36,15 @@ def compute_strain_widths(
     """
     Compute orientation-dependent Gaussian FWHM (mT) for each transition.
 
-    This function implements the strain width algorithm from EasySpin's
-    ``resfields.m`` (lines 1283-1314). Each strain type contributes to the
-    total linewidth-squared, which is then converted from MHz^2 to mT using
-    the ``dBdE`` conversion factor (inverse slope of the Zeeman term).
+    EasySpin's strain widths (``resfields.m`` 1283-1314) for one orientation:
+    a thin wrapper over :func:`compute_strain_widths_batch` with M = 1 (since
+    0.9.20; before, a separate per-orientation code path with ``.item()`` and
+    Python floats that gave no or wrong gradients, B76, and read ``g[0]`` of a
+    full g matrix, B5).  Each strain type contributes to the total
+    linewidth-squared (MHz^2), converted to mT with
+    ``dBdE = 1 / |<v|muzL|v> - <u|muzL|u>|`` at the eigenvectors of
+    ``H0 - B0*muzL``.  Differentiable in H0, the moment operators, B0, the
+    angles and the strain parameters (DStrain magnitudes are constants).
 
     Parameters
     ----------
@@ -50,18 +54,18 @@ def compute_strain_widths(
         Field-independent Hamiltonian (MHz), shape ``[nStates, nStates]``.
     mux, muy, muz:
         Magnetic moment operators (MHz/mT), shape ``[nStates, nStates]``.
-    phi:
-        Azimuthal angle of B0 direction in molecular frame (radians).
-    theta:
-        Polar angle of B0 direction in molecular frame (radians).
+    phi, theta:
+        Azimuthal and polar angle of the B0 direction in the molecular frame
+        (radians), floats or 0-d tensors.
     transitions:
         Transition level pairs ``[u, v]`` where ``u < v``, shape ``[nTrans, 2]``.
     mwFreq:
         Microwave frequency in GHz (used for gStrain conversion).
     B0:
-        Resonance field  value in mT (used for dBdE estimate if needed).
+        Resonance field (mT) at which the eigenvectors are evaluated (float or
+        0-d tensor).
     dtype:
-        Data type for complex  arithmetic.
+        Accepted for backward compatibility; the arithmetic uses H0's dtype.
 
     Returns
     -------
@@ -69,112 +73,26 @@ def compute_strain_widths(
         Gaussian FWHM (mT) for each transition, shape ``[nTrans]``. Returns
         ``None`` if no strain parameters are present.
 
-    Notes
-    -----
-    Total line width squared (MHz^2) is computed as:
-
-    .. code-block:: python
-
-        LineWidth2 = HStrain_contribution
-                   + gStrain_contribution
-                   + AStrain_contribution
-                   + DStrain_contribution
-
-    Then converted to field domain:
-
-    .. code-block:: python
-
-        width_mT = dBdE * sqrt(LineWidth2)
-
-    where ``dBdE = 1 / |<v|muz|v> - <u|muz|u>|`` is the field-to-energy
-    conversion factor for this transition.
+    Raises
+    ------
+    ValueError
+        gStrain/AStrain with a full g matrix, or AStrain with more than one
+        electron (as EasySpin).
     """
-    # Check if any strain is present
-    has_strain = _has_any_strain(sys)
-    if not has_strain:
+    if not _has_any_strain(sys):
         return None
-
     device = H0.device
-    transitions = transitions.to(device=device)
-    nTrans = transitions.shape[0]
-    
-    # Compute orientation vector in molecular frame
-    zLab_M = _orientation_vector(phi, theta, device=device)
-
-    # Compute muzL: projection of total magnetic moment onto lab-z (field direction)
-    sin_th = math.sin(theta)
-    cos_th = math.cos(theta)
-    cos_ph = math.cos(phi)
-    sin_ph = math.sin(phi)
-    muzL = sin_th * cos_ph * mux + sin_th * sin_ph * muy + cos_th * muz
-
-    # Diagonalize Hamiltonian at resonance field to get eigenvectors
-    H_total = H0 - B0 * muzL  # Total Hamiltonian at B0 for this orientation
-    energies, vectors = torch.linalg.eigh(H_total)
-    # Sort by energy (should already be sorted from eigh)
-    idx = torch.argsort(energies.real)
-    energies = energies[idx]
-    vectors = vectors[:, idx]
-
-    # Pre-compute transition matrix elements helper
-    def transition_element(Op: torch.Tensor, iTrans: int) -> torch.complex128:
-        """
-        Compute <v|Op|v> - <u|Op|u> for transition iTrans.
-        
-        Equivalent to MATLAB: m = @(Op) real((V'-U')*Op*(V+U))
-        where U = vectors[:, u], V = vectors[:, v].
-        """
-        u_idx = transitions[iTrans, 0].long()
-        v_idx = transitions[iTrans, 1].long()
-        U = vectors[:, u_idx]
-        V = vectors[:, v_idx]
-        # <v|Op|v> - <u|Op|u> = (V'*Op*V - U'*Op*U)
-        # Simplification: (V'-U')*Op*(V+U) equivalent for real Op
-        # NOTE: Must use manual computation because torch's @ operator
-        # doesn't properly handle complex conjugation for 1D tensors
-        temp = Op @ (V + U)
-        val = torch.sum(torch.conj(V - U) * temp)
-        return val
-
-    # Allocate output
-    widths_squared = torch.zeros(nTrans, dtype=torch.float64, device=device)
-
-    # --- 1. HStrain contribution ---
-    if sys.HStrain is not None:
-        lw2_H = _compute_hstrain_width_squared(sys, zLab_M)
-        widths_squared += lw2_H
-
-    # --- 2. gStrain + AStrain contribution (combined) ---
-    if sys.gStrain is not None or sys.AStrain is not None:
-        lw2_gA = _compute_gstrain_astrain_width_squared(
-            sys, zLab_M, vectors, transitions, mwFreq
-        )
-        widths_squared += lw2_gA
-
-    # --- 3. DStrain contribution ---
-    if sys.DStrain is not None:
-        lw2_D = _compute_dstrain_width_squared(
-            sys, zLab_M, vectors, transitions, transition_element
-        )
-        widths_squared += lw2_D
-
-    # --- 4. Convert from MHz^2 to mT ---
-    # dBdE = 1 / |<v|muzL|v> - <u|muzL|u>| converts frequency -> field
-    # muzL is the Hamiltonian derivative w.r.t. B for this orientation.
-    # Take real part of the diagonal element (cross terms are purely imaginary).
-    dBdE = torch.zeros(nTrans, dtype=torch.float64, device=device)
-    for iTrans in range(nTrans):
-        muzL_diff = transition_element(muzL, iTrans)
-        muzL_diff_abs = abs(torch.real(muzL_diff).item())
-        if muzL_diff_abs > 1e-12:  # Avoid division by zero for forbidden transitions
-            dBdE[iTrans] = 1.0 / muzL_diff_abs
-        else:
-            # Forbidden transition or near-zero slope: set large dBdE (small width)
-            dBdE[iTrans] = 0.0  # Will result in zero width
-
-    widths_mT = dBdE * torch.sqrt(widths_squared)
-
-    return widths_mT
+    pairs = transitions.to(device=device).reshape(-1, 2).long()
+    if pairs.shape[0] == 0:
+        return torch.zeros(0, dtype=torch.float64, device=device)
+    ph = torch.as_tensor(phi, dtype=torch.float64, device=device).reshape(1)
+    th = torch.as_tensor(theta, dtype=torch.float64, device=device).reshape(1)
+    st, ct = torch.sin(th), torch.cos(th)
+    sp, cp = torch.sin(ph), torch.cos(ph)
+    muzL = ((st * cp).view(1, 1, 1) * mux + (st * sp).view(1, 1, 1) * muy
+            + ct.view(1, 1, 1) * muz)
+    B0_t = torch.as_tensor(B0, dtype=torch.float64, device=device).reshape(1)
+    return compute_strain_widths_batch(sys, H0, muzL, ph, th, B0_t, [pairs], mwFreq)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -405,32 +323,6 @@ def lorentzian_strain_system(sys: SpinSystem) -> tuple[SpinSystem, bool]:
     return _replace(sys, HStrain=hl, HStrainL=None), True
 
 
-def _orientation_vector(
-    phi: float,
-    theta: float,
-    device: torch.device | str = "cpu",
-) -> torch.Tensor:
-    """
-    Compute unit vector in molecular frame given (phi, theta).
-    
-    Returns zLab_M: [3] tensor (x, y, z components in molecular frame).
-    """
-    theta_t = torch.as_tensor(theta, dtype=torch.float64, device=device)
-    phi_t = torch.as_tensor(phi, dtype=torch.float64, device=device)
-    sin_theta = torch.sin(theta_t)
-    cos_theta = torch.cos(theta_t)
-    sin_phi = torch.sin(phi_t)
-    cos_phi = torch.cos(phi_t)
-    
-    # Spherical -> Cartesian
-    x = sin_theta * cos_phi
-    y = sin_theta * sin_phi
-    z = cos_theta
-    
-    return torch.stack([x, y, z])
-
-
-
 def _strain_g_values(sys: SpinSystem, e: int, device) -> torch.Tensor:
     """g principal values (g frame) that ``gStrain`` of electron *e* is relative to.
 
@@ -533,202 +425,6 @@ def _dstrain_operators(sys: SpinSystem, device, dtype) -> list:
             dHdE = dE * dHdE_
         ops.append((dHdD, dHdE))
     return ops
-
-
-def _compute_hstrain_width_squared(
-    sys: SpinSystem,
-    zLab_M: torch.Tensor,
-) -> float:
-    """
-    HStrain contribution: sum(HStrain^2 .* zLab_M^2).
-    
-    HStrain is [3] MHz in molecular frame. This is a simple quadratic form.
-    
-    Returns linewidth^2 in MHz^2.
-    """
-    HStrain2 = sys.HStrain.to(
-        device=zLab_M.device, dtype=torch.float64
-    ) ** 2
-    lw2 = torch.sum(HStrain2 * zLab_M ** 2).item()
-    return lw2
-
-
-def _compute_gstrain_astrain_width_squared(
-    sys: SpinSystem,
-    zLab_M: torch.Tensor,
-    vectors: torch.Tensor,
-    transitions: torch.Tensor,
-    mwFreq: float,
-) -> torch.Tensor:
-    """
-    g-strain and A-strain contribution (correlated if AStrain present).
-    
-    For single-electron systems:
-        gStrainMatrix = diag(gStrain ./ g) * mwFreq  (MHz)
-        (rotated to molecular frame if gFrame given)
-        
-        If AStrain present:
-            AStrainMatrix = diag(AStrain) (MHz)
-            (rotated to molecular frame if AFrame given)
-            effective mI for each transition computed
-            StrainMatrix = gStrainMatrix + corr * mI * AStrainMatrix
-        
-        lw2_gA[iTrans] = zLab_M.' * StrainMatrix[iTrans]^2 * zLab_M
-    
-    For multi-electron systems the per-electron matrices are weighted by
-    |<v|kSzL_e|v> - <u|kSzL_e|u>| (EasySpin's non-simple g strain branch).
-    
-    Returns tensor of shape [nTrans] with MHz^2 contribution for each transition.
-    """
-    nTrans = transitions.shape[0]
-    device = vectors.device
-    lw2_gA = torch.zeros(nTrans, dtype=torch.float64, device=device)
-
-    # Multi-electron g strain (EasySpin resfields.m 1299-1309, ~simplegStrain):
-    #   gA2 = sum_e |m(kSzL{e})| * gStrainMatrix{e}.^2 ;  lw2 += z' gA2 z
-    # where kSzL{e} = zLab_M . (Sx_e, Sy_e, Sz_e) and m(Op) = <v|Op|v> - <u|Op|u>.
-    if sys.nElectrons > 1:
-        if sys.AStrain is not None and bool(torch.any(sys.AStrain != 0)):
-            raise ValueError("AStrain is not supported in spin systems with more than one electron spin.")
-        gmats = _gstrain_matrices(sys, mwFreq, device)
-        zc = zLab_M.to(dtype=vectors.dtype)
-        kSzL = []
-        for e in range(sys.nElectrons):
-            Sx, Sy, Sz = _electron_spin_ops(sys, e, device, vectors.dtype)
-            kSzL.append(zc[0] * Sx + zc[1] * Sy + zc[2] * Sz)
-        for iTrans in range(nTrans):
-            u_idx = transitions[iTrans, 0].long()
-            v_idx = transitions[iTrans, 1].long()
-            U = vectors[:, u_idx]
-            V = vectors[:, v_idx]
-            gA2 = torch.zeros(3, 3, dtype=torch.float64, device=device)
-            for e in range(sys.nElectrons):
-                m_e = torch.real(torch.sum(torch.conj(V - U) * (kSzL[e] @ (V + U))))
-                gA2 = gA2 + abs(float(m_e)) * gmats[e] ** 2
-            lw2_gA[iTrans] = (zLab_M @ gA2 @ zLab_M).item()
-        return lw2_gA
-
-    # gStrain contribution.
-    # MATLAB formula (resfields.m line 787-793):
-    #   gStrainMatrix_mol = R_g2M * diag(gStrain/g * mwFreq) * R_g2M'  (in molecular frame)
-    #   gAslw2 = (gStrainMatrix_mol + corr * mI * AStrainMatrix_mol).^2  (element-wise square)
-    #   lw2 += z' * gAslw2 * z
-    # NOTE: element-wise square differs from matrix square (||M@z||^2) for non-diagonal M.
-    # For diagonal matrices (no frame rotation) both are identical; for rotated frames they differ.
-    if sys.gStrain is not None:
-        g_strain = sys.gStrain[0, :].to(device=device, dtype=torch.float64)
-        g_values = _strain_g_values(sys, 0, device)
-        gStrain_freq = (g_strain / g_values) * (mwFreq * 1e3)  # [3] MHz in g-frame
-
-        # Build gStrain matrix in molecular frame (diagonal in g-frame, then rotate)
-        gStrainMatrix = torch.diag(gStrain_freq)  # [3, 3] diagonal in g-frame
-        if torch.any(sys.gFrame[0, :] != 0):
-            R_g2M = erot(sys.gFrame[0, :].tolist(), device=device).T.to(dtype=torch.float64)  # g→mol
-            gStrainMatrix = R_g2M @ gStrainMatrix @ R_g2M.T  # now in molecular frame
-    else:
-        gStrainMatrix = torch.zeros(3, 3, dtype=torch.float64, device=device)
-
-    # AStrain handling
-    if sys.AStrain is not None and sys.nNuclei > 0:
-        # AStrain only for first nucleus
-        if sys.nElectrons > 1:
-            raise ValueError(
-                "AStrain not supported for multi-electron systems (EasySpin limitation)."
-            )
-
-        # AStrainMatrix in molecular frame (diagonal or rotated)
-        AStrainMatrix = torch.diag(
-            sys.AStrain.to(device=device, dtype=torch.float64)
-        )  # [3, 3] in A-frame
-
-        # Rotate to molecular frame if AFrame given
-        if sys.AFrame is not None and torch.any(sys.AFrame[0, :] != 0):
-            R_A2M = erot(sys.AFrame[0, :].tolist(), device=device).T.to(dtype=torch.float64)
-            AStrainMatrix = R_A2M @ AStrainMatrix @ R_A2M.T
-
-        # Compute effective mI for each transition using eigenvectors at B0
-        from torchspin.spinops import sop
-        mIz_op = sop(sys.Spins, [[2, 3]], device=device)  # mIz for nucleus 1 (index 2)
-        mI_eff = torch.real(torch.diag(torch.conj(vectors).T @ mIz_op @ vectors))
-
-        # For each transition, get average mI
-        corr = sys.gAStrainCorr
-        for iTrans in range(nTrans):
-            u_idx = transitions[iTrans, 0].long()
-            v_idx = transitions[iTrans, 1].long()
-            mI_avg = 0.5 * (mI_eff[u_idx] + mI_eff[v_idx])
-
-            # Combined strain matrix for this transition (both in molecular frame)
-            StrainMatrix_iTrans = gStrainMatrix + corr * mI_avg * AStrainMatrix
-
-            # MATLAB formula: z' * (M .^ 2) * z  (element-wise square, NOT matrix square)
-            lw2_gA[iTrans] = (zLab_M @ (StrainMatrix_iTrans ** 2) @ zLab_M).item()
-    else:
-        # No AStrain: just gStrain.
-        # MATLAB formula: z' * (gStrainMatrix_mol .^ 2) * z  (element-wise square)
-        lw2_single = (zLab_M @ (gStrainMatrix ** 2) @ zLab_M).item()
-        lw2_gA[:] = lw2_single
-
-    return lw2_gA
-
-
-def _compute_dstrain_width_squared(
-    sys: SpinSystem,
-    zLab_M: torch.Tensor,
-    vectors: torch.Tensor,
-    transitions: torch.Tensor,
-    transition_element,
-) -> torch.Tensor:
-    """
-    D-strain contribution: sum over electrons of
-    ``|<v|dH/dD|v> - <u|dH/dD|u>|^2 + |<v|dH/dE|v> - <u|dH/dE|u>|^2``
-    with the operators from EasySpin's ``getdstrainops`` (tilted D frames and
-    D/E correlation included; see :func:`_dstrain_operators`).
-
-    Returns tensor of shape [nTrans] with MHz^2 contribution.
-    """
-    nTrans = transitions.shape[0]
-    device = vectors.device
-    lw2_D = torch.zeros(nTrans, dtype=torch.float64, device=device)
-    for op_pair in _dstrain_operators(sys, device, vectors.dtype):
-        if op_pair is None:
-            continue
-        dHdD, dHdE = op_pair
-        for iTrans in range(nTrans):
-            mD = transition_element(dHdD, iTrans)
-            mE = transition_element(dHdE, iTrans)
-            lw2_D[iTrans] += torch.real(mD) ** 2 + torch.real(mE) ** 2
-    return lw2_D
-
-    # Compute dH/dD and dH/dE operators
-    # From getdstrainops.m logic (simplified for diagonal D in molecular frame)
-    from torchspin.spinops import sop
-
-    Sx = sop(sys.Spins, [[1, 1]], device=device)  # Sx for electron 1
-    Sy = sop(sys.Spins, [[1, 2]], device=device)  # Sy
-    Sz = sop(sys.Spins, [[1, 3]], device=device)  # Sz
-
-    # Stevens operator derivatives (assuming D-frame aligned with molecular frame)
-    # dH/dD ~ (3*Sz^2 - S(S+1)*I) / 3
-    # dH/dE ~ (Sx^2 - Sy^2)
-    I_mat = torch.eye(Sx.shape[0], dtype=Sx.dtype, device=device)
-    dHdD = (3.0 * Sz @ Sz - S * (S + 1) * I_mat) / 3.0
-    dHdE = Sx @ Sx - Sy @ Sy
-
-    # Pre-multiply by strain FWHMs
-    DeltaD = sys.DStrain[0].item()  # FWHM_D
-    DeltaE = sys.DStrain[1].item() if sys.DStrain.shape[0] > 1 else 0.0  # FWHM_E
-
-    dHdD = DeltaD * dHdD
-    dHdE = DeltaE * dHdE
-
-    # For each transition, compute |<v|dHdD|v> - <u|dHdD|u>|^2
-    for iTrans in range(nTrans):
-        mD = transition_element(dHdD, iTrans)
-        mE = transition_element(dHdE, iTrans)
-        lw2_D[iTrans] = torch.real(mD) ** 2 + torch.real(mE) ** 2
-
-    return lw2_D
 
 
 def compute_strain_widths_freq_batch(
