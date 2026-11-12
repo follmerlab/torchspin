@@ -422,12 +422,15 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
 
     phi_f, theta_f, _, _ = sphgrid(symmetry, N_f)
     phi_f = phi_f.numpy(); theta_f = theta_f.numpy()
+    # 1-based as in gridinterp.m:121-125, then shifted (exactly) to 0-based:
+    # the ``1 +`` rounds away ulp-level excess at integer knots, which decides
+    # whether a NaN neighbor gets a zero weight.
     if full:
-        iphi = 4 * (N_c - 1) * (phi_f / maxPhi)
-        ithe = 2 * (N_c - 1) * (theta_f / math.pi)
+        iphi = (1 + 4 * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + 2 * (N_c - 1) * (theta_f / math.pi)) - 1
     else:
-        iphi = nOct * (N_c - 1) * (phi_f / maxPhi)
-        ithe = (N_c - 1) * (theta_f / (math.pi / 2))
+        iphi = (1 + nOct * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + (N_c - 1) * (theta_f / (math.pi / 2))) - 1
     iphi = np.clip(iphi, 0, nc - 1); ithe = np.clip(ithe, 0, nr - 1)
     if cubic:
         spl = RectBivariateSpline(np.arange(nr), np.arange(nc), z, kx=3, ky=3, s=0)
@@ -435,8 +438,13 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
     # bilinear with NaN propagation (EasySpin interp2 'linear')
     r0 = np.minimum(np.floor(ithe).astype(int), nr - 2); c0 = np.minimum(np.floor(iphi).astype(int), nc - 2)
     fr = ithe - r0; fc = iphi - c0
-    return ((1 - fr) * (1 - fc) * z[r0, c0] + (1 - fr) * fc * z[r0, c0 + 1]
-            + fr * (1 - fc) * z[r0 + 1, c0] + fr * fc * z[r0 + 1, c0 + 1])
+    # MATLAB interp2 'linear' (gridinterp.m:129) ignores corners with zero
+    # weight, so a NaN neighbor does not propagate to fine knots lying on a
+    # coarse row or column (0*NaN would be NaN here).
+    def _term(w, zz):
+        return np.where(w == 0.0, 0.0, w * zz)
+    return (_term((1 - fr) * (1 - fc), z[r0, c0]) + _term((1 - fr) * fc, z[r0, c0 + 1])
+            + _term(fr * (1 - fc), z[r0 + 1, c0]) + _term(fr * fc, z[r0 + 1, c0 + 1]))
 
 
 def _interp_l3(y: np.ndarray, N_f: int) -> np.ndarray:

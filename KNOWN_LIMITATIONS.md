@@ -217,6 +217,30 @@ reads the same table. Spectra on these grids changed:
 - `Options.GridSymmetry` accepts all 14 EasySpin grid symmetries, `'auto'` and `''` (before
   0.9.3 only Dinfh, D2h, C2h, Ci, C1, O3 and `'auto'`).
 
+## Powder grid interpolation next to knots without a resonance (fixed 0.9.10)
+
+When some orientations have no resonance in the field range, pepper and pepper_autograd
+interpolate the coarse knots linearly (EasySpin gridinterp `L1`, gridinterp.m:129). Up to 0.9.9
+a missing coarse knot also removed the fine knots on the neighboring coarse row or column
+(`0 * NaN` in the bilinear sum; MATLAB's interp2 skips zero-weight corners), and `sphgrid`'s
+φ differed from EasySpin's `linspace(0, maxPhi, nPhi)` by a few ulp, which decided whether a
+fine knot lay exactly on a coarse column.
+
+- Before: S = 1/2, g = [2 2.05 2.1], [325 337] mT, GridSize [31 4]: up to 5.6 % (stick), 2.4 %
+  and 7.1 % (lw 1.5 mT, Harmonic 0/1) of the maximum; S = 5/2 with D and B4 on a D2h grid,
+  [290 390] mT: 0.54 % / 0.96 %. Now 5e-7 / 2e-8 / 1e-7 and 4e-5 (B50's residual is the same
+  without interpolation). tests/data/ref_interp_nan_edges.mat.
+- `sphgrid` φ and θ equal EasySpin's bitwise (12 groups, GridSize 7 and 73). Spectra with a
+  resonance at every knot change by roundoff only (≤ 1.3e-13).
+- **Open-φ grids with missing knots still deviate (B58, not fixed).** For periodic θ rows
+  EasySpin's `L1` rectify samples the wrapped row (len + 1 values) at `linspace(1, len, nc)`
+  (gridinterp.m:188, 217), i.e. it stretches the row over the first len knots and leaves out the
+  segment back to φ = 0; torchspin's `_row` (pepper.py, `xx = np.linspace(1.0, float(n), nc)`
+  with n = len + 1) samples the full period. Affects Ci, C2h, C4h, C6h, S6 and C1 grids only
+  when some knot has no resonance. S = 3/2, g = [2 2.05 2.1], D = [3000 500] MHz, Ci grid,
+  [50 400] mT: cosine 0.9925, amplitude 0.954 with EasySpin (0.9923 / 0.953 before 0.9.10).
+  `test_gridinterp_l1_vs_easyspin` marks the open-φ cases xfail.
+
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
 The edge-bin integrals of `projecttriangles` were written as differences of O(bin index)

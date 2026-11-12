@@ -14,6 +14,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.10] — 2026-11-11
+
+### Fixed
+
+- **Powder spectra whose field range leaves some orientations without a resonance lost or
+  distorted the facets next to the missing knots (B48, B50).** With missing knots pepper
+  interpolates linearly, as EasySpin does (gridinterp `L1`, private/gridinterp.m:129,
+  `interp2(...,'linear')`). torchspin's bilinear interpolation (`pepper._interp_grid`) multiplied
+  every corner by its weight, so a missing coarse knot (NaN) with zero weight still gave
+  `0 * NaN = NaN` and removed the fine knots on the neighboring coarse row or column; MATLAB's
+  interp2 ignores zero-weight corners (`interp2([1 NaN; 2 3], 1, 1.5) = 1.5`). Each corner term
+  is now 0 when its weight is 0. Which fine knots lie exactly on a coarse row or column also
+  depended on ulp-level differences: `sphgrid` built φ as `k * dPhi`, EasySpin as
+  `linspace(0, maxPhi, nPhi)` (sphgrid.m:298,307), and the fractional knot indices were
+  0-based where gridinterp.m:121-125 adds 1 first (which rounds away an excess of a few ulp).
+  `sphgrid`'s φ is now EasySpin's bit for bit (all 12 φ-sweeping groups, GridSize 7 and 73), and
+  the indices are formed 1-based and shifted. S = 1/2, g = [2 2.05 2.1] over [325 337] mT
+  (GridSize [31 4], the range cuts the g = 2.1 edge): the stick spectrum deviated from
+  EasySpin by up to 5.6 % of its maximum, with lw = 1.5 mT 2.4 % (Harmonic 0) and 7.1 %
+  (Harmonic 1); now 5e-7, 2e-8 and 1e-7. S = 5/2, D = 300 MHz, tetragonal B4 on a D2h grid over
+  [290 390] mT: 0.54 % (Harmonic 1) and 0.96 % (stick); now 4e-5, the deviation of the same
+  system without interpolation. `pepper_autograd` takes its NaN pattern from the same numpy
+  interpolation and changes identically; its gradients are unaffected in form and agree with
+  central differences (B48 d/dg ≤ 2e-7, B50 d/dD, d/dE ≤ 6e-7 relative). Spectra with a resonance
+  at every knot change only by roundoff (≤ 1.3e-13 of the maximum, from the φ values). Open-φ
+  grids (Ci, C2h, C4h, C6h, S6, C1) with missing knots keep a separate deviation from EasySpin
+  (B58, see KNOWN_LIMITATIONS.md). EasySpin references: tests/data/ref_interp_nan_edges.mat.
+
 ## [0.9.3] — 2026-11-11
 
 ### Fixed
