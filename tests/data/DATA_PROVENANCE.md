@@ -33,7 +33,9 @@ Tests comparing against these are true cross-validation.
 | `generate_examples_*.m` | `example_*.mat` | Example simulation outputs |
 | `generate_endor_enhancement_refs.m` | `endor_enhancement_refs.mat` | ENDOR hyperfine enhancement (`Opt.Enhancement` off/on): endorfrq per level pair for 1H, 14N+1H, 63Cu+14N at 4 orientations; fixed-field salt for 14N (Q), 1H, 14N+1H |
 | `generate_endor_tps_selection_refs.m` | `endor_tps_selection_refs.mat` | ENDOR transition selection (0.9.14, B57/B41, B40): endorfrq (powder mode) `Transitions`, positions and intensities (`Enhancement` off/on) for 1H at threshold 0, 14N+1H at 1e-4 (no range, `Range [0 20]`), 0 and 1e-2 with `TPSGridSymm 'Ci'`/`TPSGridSize 7`, 63Cu+14N at 1e-4, 3 orientations each (18 cases); fixed-field salt spectra and `info.Transitions` for 14N+1H at GridSize [31 6] and [13 4] and 63Cu (A [60 60 600], Q) on 0-19400 MHz |
+| `generate_endorfrq_perturb_refs.m` | `endorfrq_perturb_refs.mat` | `endorfrq_perturb` element by element (0.8.8, B20/B27): frequencies and intensities, PerturbOrder 2 and 1, 4 orientations (one `SampleFrame` row `[0 -theta -phi]` each), 340 mT; 1H with AFrame, 14N with Q/QFrame, 1H+14N, 55Mn with Q, strongly coupled 1H, 14N with full Q, 1H+14N with full A and full Q, S = 3/2 with D + 14N (8 cases) |
 | `generate_salt_first_order_refs.m` | `salt_first_order_refs.mat` | salt first-order intensity scale (bug B16, 0.8.1): fixed-field salt with `Opt.Method` `'matrix'` and `'perturb1'` for 1H and 1H+14N (no Q) |
+| `generate_salt_narrowlw_refs.m` | `salt_narrowlw_refs.mat` | salt final `Sys.lwEndor` convolution (bug B24, 0.8.11): Gaussian widths of 0, 1.5, 2.0, 2.5 and 10 increments (at most two increments not convolved, salt.m:899-911), fixed-field 1H powder, `Opt.Method` `'perturb1'` (5 cases) |
 | `generate_pepper_cupc_refs.m` | `ref_pepper_cupc.mat` | Cu(II) + ligand nuclei: `matrix`/`perturb`/`hybrid` on the same systems (34 cases), incl. natural-abundance isotopologues, tilted and anisotropic ligand A tensors, quadrupole coupling, enlarged exact core, two components |
 | `generate_nucspin_core_refs.m` | `ref_nucspin_core.mat` | Cores built with `nucspinrmv` (0.8.2, B14): pepper `hybrid` and `matrix` on an anisotropic exchange-coupled Cu dimer, an isotropic dimer and S = 3/2 with `Ham132` |
 | `generate_pepper_orientations_refs.m` | `ref_pepper_orientations.mat` | `Exp.Orientations` (0.7.6): EasySpin crystal spectra (`MolFrame=[0 0 0]`, one `SampleFrame` row per orientation, `SampleRotation={'z',[0 pi/2]}`) as an exact χ average, 5 cases incl. strain, Boltzmann triplet, frequency sweep, 4000-point Fibonacci sphere; plus EasySpin's powder of the axial case on the normal and the half-bin-shifted axis |
@@ -42,6 +44,7 @@ Tests comparing against these are true cross-validation.
 | `generate_closedphi_interp_refs.m` | `ref_closedphi_interp.mat` | Closed-φ grid interpolation (0.8.9, B25): rhombic g = [2 2.05 2.1] field sweeps at Harmonic 0/1 with Gaussian and Lorentzian `lw`, GridSize [19 4] (also default options) and [31 4], HStrain, 14N hyperfine, a frequency sweep (10 pepper cases); fixed-field salt with `Method 'perturb1'` at [19 4] and [31 4]; central difference d spc/d g_z (h = 1e-4) |
 | `generate_pepper_zerofield_refs.m` | `ref_pepper_zerofield.mat` | Zero-field frequency sweeps (`Exp.Field = 0`, torchspin `Options.ZeroField`, 0.7.4): S = 1 with D, E (plain, Boltzmann 0.1 K, HStrain), S = 3/2 Kramers, S = 1/2 + 1H isotropic hyperfine (5 cases) |
 | `generate_pepper_quadzeeman_refs.m` | `ref_pepper_quadzeeman.mat` | Field-quadratic `Sys.Ham220`/`Ham222` terms in pepper (S=1 with lwpp and with HStrain, S=3/2), EasySpin field sweeps, and one frequency sweep (`S1_ham2_freqsweep`, added 2026-11-11; needs EasySpin's `resfreqs_matrix.m` Ham check from StollLab/EasySpin d46e5ef9, applied as a one-line patch to the local Dec-2025 copy; the three field-sweep cases regenerated bit-identical); `Options.QuadraticZeeman` (0.7.1) |
+| `generate_orisel_refs.m` | `ref_orisel.mat` | `orisel` (0.9.0, B26; EasySpin main, R2024b, 2026-11-11): `[Weights,Trans]` and the summed weights for 18 cases: 12 with `Exp.Orientations` (a 400-point Fibonacci sphere; rhombic S=1/2 at the gz/gy/gx fields, Cu(II) 63Cu at 2 fields, g=[1.9 2.0 6.0] at g=6 and g=4, S=1 with D and HStrain incl. `AveragedIntensity` false, S=3/2 with D, two coupled electrons, `ExciteWidth` Inf) and 6 on default grids, stored with the orientations orisel.m builds (hamsymm D2h, rotated D2h, C2h from an AFrame, Dinfh, O3, explicit Ci) |
 
 ### MATLAB-sourced .mat files (by module)
 
@@ -80,6 +83,7 @@ Tests comparing against these are true cross-validation.
 `salt_ref_14N.mat`, `salt_ref_1H.mat` — MATLAB
 `salt_*.mat` (remaining ~12 files) — MATLAB
 `salt_first_order_refs.mat` — MATLAB-gen (`generate_salt_first_order_refs.m`, EasySpin main, R2024b, 2026-11-11): fixed-field salt, `Opt.Method` 'matrix' and 'perturb1', 1H and 1H+14N without Q
+`salt_narrowlw_refs.mat` — MATLAB-gen (`generate_salt_narrowlw_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`): fixed-field salt, 1H, Gaussian `lwEndor` 0–10 increments
 
 **Fitting (esfit):**
 `esfit_test*.mat` — MATLAB-gen
@@ -113,11 +117,13 @@ Tests comparing against these are true cross-validation.
 
 **ENDOR frequencies:**
 `endorfrq_ref_*.mat` — MATLAB
+`endorfrq_perturb_refs.mat` — MATLAB-gen (`generate_endorfrq_perturb_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`, `ori`, `Field`)
 `endor_enhancement_refs.mat` — MATLAB-gen (`generate_endor_enhancement_refs.m`, EasySpin main, R2024b, 2026-11-10): endorfrq (powder mode) and fixed-field salt with `Opt.Enhancement` 'off'/'on'
 `endor_tps_selection_refs.mat` — MATLAB-gen (`generate_endor_tps_selection_refs.m`, EasySpin main (~/Downloads/EasySpin-main), MATLAB R2024b `-batch`, 2026-11-11): EasySpin endorfrq's TPS-grid transition selection in endorfrq and fixed-field salt
 
 **Orientation selection:**
-`orisel_*.mat` — MATLAB
+`orisel_*.mat` — MATLAB (EasySpin's own regression tests `orisel_rhombic.m`, `orisel_onenucleus.m`, 2008; used by `test_orisel.py` since 0.9.0, compared after normalization as in EasySpin)
+`ref_orisel.mat` — MATLAB-gen (`generate_orisel_refs.m`, EasySpin main, R2024b, 2026-11-11)
 
 **Grids:**
 `sphgrid_regression.mat` — MATLAB

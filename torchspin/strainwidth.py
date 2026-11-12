@@ -401,8 +401,8 @@ def lorentzian_strain_system(sys: SpinSystem) -> tuple[SpinSystem, bool]:
                 f"SpinSystem.HStrainL (Lorentzian strain) cannot be combined with {k} "
                 f"(Gaussian strain): pepper has no per-line Voigt profile. Use one kind "
                 f"of strain per system; a global Sys.lw can be added to either.")
-    import dataclasses
-    return dataclasses.replace(sys, HStrain=hl, HStrainL=None), True
+    from torchspin.spinsystem import _replace
+    return _replace(sys, HStrain=hl, HStrainL=None), True
 
 
 def _orientation_vector(

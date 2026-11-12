@@ -23,7 +23,7 @@ Pipeline::
         for each B_res:
             endorfrq(…, _H0=H0, …)  → freqs, intens  (reuses device operators)
             bin freqs into freq_axis
-    convspec(...)       → Gaussian broadening
+    _lw_convolve(...)   → Gaussian broadening (skipped at <= 2 increments)
     return freq_axis, spec
 """
 from __future__ import annotations
@@ -36,7 +36,6 @@ import torch
 from torchspin._linalg import eigh as _eigh
 
 
-from torchspin.convspec import convspec
 from torchspin.endorfrq import endorfrq
 from torchspin.endorfrq import (TPS_GRID_SIZE as _TPS_GRID_SIZE, TPS_GRID_SYMM as _TPS_GRID_SYMM,
                                 _endor_tps_select, _n_electron_states, _tps_keep, _tps_option,
@@ -44,6 +43,7 @@ from torchspin.endorfrq import (TPS_GRID_SIZE as _TPS_GRID_SIZE, TPS_GRID_SYMM a
 from torchspin.experiment import Experiment, Options
 from torchspin.ham import ham
 from torchspin.ham_nz import ham_nz
+from torchspin.orisel import _orisel_weights
 from torchspin.hamsymm import hamsymm
 from torchspin.resfields_perturb import resfields_perturb, resfields_perturb_batch
 from torchspin.sphgrid import sphgrid
@@ -351,6 +351,8 @@ def salt(
         Number of points in the frequency axis.  Default 512.
     lw_mhz:
         Gaussian FWHM (MHz) for the ENDOR lineshape convolution.  Default 0.1.
+        As in EasySpin (salt.m:899-911), a width of at most two frequency
+        increments is not convolved: the spectrum is returned unbroadened.
 
     Returns
     -------
@@ -366,10 +368,16 @@ def salt(
     Raises
     ------
     ValueError
-        If the spin system contains no nuclei.
+        If the spin system contains no nuclei, or a set of equivalent
+        nuclei (``Sys.n > 1``), as in EasySpin.
     """
     if sys.nNuclei == 0:
         raise ValueError("salt: spin system must contain at least one nucleus.")
+    # EasySpin salt.m:135-136 rejects sets of equivalent nuclei; the ENDOR
+    # paths below treat every entry of Nucs as a single nucleus.
+    if any(int(k) > 1 for k in (sys.n or [])):
+        raise ValueError(
+            "salt does not support sets of equivalent nuclei (Sys.n>1).")
     # salt treats single-electron systems without quadrupole coupling by
     # perturbation theory (EPR fields and ENDOR), built from the tensors.
     if (getattr(sys, 'H0Extra', None) is not None and sys.nElectrons == 1):
@@ -465,59 +473,22 @@ def salt(
                                device=device)
         excite_w = getattr(exp, 'ExciteWidth', None)
         if excite_w is not None and exp.mwFreq is not None:
-            # Exact orientation selection (EasySpin orisel.m): diagonalize
-            # H(Field) per orientation, weight each EPR transition by
-            # TransitionRate * exp(-2*xi^2) with
+            # Exact orientation selection, EasySpin orisel.m (shared with
+            # torchspin.orisel): diagonalize H(Field) per orientation, weight
+            # each level pair by TransitionRate * exp(-2*xi^2) with
             # xi = (freq - mwFreq) / GammaWidth,
             # GammaWidth^2 = (HStrain_proj^2 + ExciteWidth^2) / (2 log2).
-            dt64 = torch.float64
-            sin_t = torch.sin(theta_arr)
-            cos_t = torch.cos(theta_arr)
-            sin_p = torch.sin(phi_arr)
-            cos_p = torch.cos(phi_arr)
-            zx, zy, zz = sin_t * cos_p, sin_t * sin_p, cos_t
-            xx, xy, xz = cos_t * cos_p, cos_t * sin_p, -sin_t
-            yx, yy = -sin_p, cos_p  # yLab_z = 0
-
-            muzL = (zx.view(-1, 1, 1) * mux + zy.view(-1, 1, 1) * muy
-                    + zz.view(-1, 1, 1) * muz)
-            muxL = (xx.view(-1, 1, 1) * mux + xy.view(-1, 1, 1) * muy
-                    + xz.view(-1, 1, 1) * muz)
-            muyL = yx.view(-1, 1, 1) * mux + yy.view(-1, 1, 1) * muy
-
-            H_B = H0.unsqueeze(0) - float(exp.Field) * muzL
-            E_b, V_b = _eigh(H_B)          # (M, dim), (M, dim, dim)
-            dim_os = H0.shape[0]
-            iu = torch.triu_indices(dim_os, dim_os, offset=1, device=device)
-            u_idx, v_idx = iu[0], iu[1]
-            freqs_os = (E_b[:, v_idx] - E_b[:, u_idx]).abs()   # (M, P) MHz
-
-            mxe = torch.bmm(V_b.conj().transpose(1, 2), torch.bmm(muxL, V_b))
-            mye = torch.bmm(V_b.conj().transpose(1, 2), torch.bmm(muyL, V_b))
-            rate = (mxe.abs() ** 2 + mye.abs() ** 2) / 2.0
-            rate_uv = rate[:, u_idx, v_idx]                     # (M, P)
+            W_os, E_b, u_idx, v_idx = _orisel_weights(
+                H0, mux, muy, muz, phi_arr, theta_arr, float(exp.Field),
+                exp.mwFreq * 1e3, float(excite_w), HStrain=sys.HStrain)
             if zero_field:
                 # pairs inside a degenerate cluster have no basis-independent
                 # rate (and zero frequency): leave them out; the sum over the
                 # pairs between two clusters is basis invariant
                 from torchspin._zerofield import level_clusters
                 _lab = level_clusters(E_b[0])[0]
-                rate_uv = rate_uv * (_lab[u_idx] != _lab[v_idx]).to(rate_uv.dtype)
-
-            lw2 = torch.full((n_orient,), float(excite_w) ** 2,
-                             dtype=dt64, device=device)
-            if sys.HStrain is not None:
-                hs = sys.HStrain.to(dtype=dt64, device=device)
-                h_os = torch.stack([zx, zy, zz], dim=1)
-                if hs.ndim == 1:
-                    lw2 = lw2 + ((h_os ** 2) * (hs ** 2).unsqueeze(0)).sum(dim=1)
-                else:
-                    lw_vec = h_os @ hs.T
-                    lw2 = lw2 + (lw_vec * lw_vec).sum(dim=1)
-            gamma2 = lw2 / (2.0 * math.log(2.0))                # GammaWidth^2
-            xi2 = ((freqs_os - exp.mwFreq * 1e3) ** 2
-                   / gamma2.unsqueeze(1))
-            orisel_w = (rate_uv * torch.exp(-2.0 * xi2)).sum(dim=1)  # (M,)
+                W_os = W_os * (_lab[u_idx] != _lab[v_idx]).to(W_os.dtype)
+            orisel_w = W_os.sum(dim=1)  # (M,)
         else:
             orisel_w = torch.ones(n_orient, dtype=torch.float64,
                                   device=device)
@@ -577,8 +548,12 @@ def salt(
             # amplitude, the same scale as the stick-binning path.
             spec = dens * (df / (4.0 * math.pi))
             if float(torch.as_tensor(lw_mhz).detach()) > 0.0:
-                from torchspin.pepper_autograd import convspec_t
-                spec = convspec_t(spec, df, lw_mhz, 0.0, deriv=0)
+                # salt.m:899-911: a Gaussian of at most two increments with
+                # harmonic 0 is not convolved (a skipped tensor width stays in
+                # the graph with zero gradient)
+                from torchspin.pepper import _lw_convolve
+                from torchspin.pepper_autograd import _conv_t
+                spec = _lw_convolve(spec, df, lw_mhz, 0.0, 0, conv=_conv_t)
             return freq_axis.cpu(), spec.cpu()
 
         B_res_all  = [B_fixed] * n_orient
@@ -858,6 +833,8 @@ def salt(
 
     # ── Lineshape broadening ───────────────────────────────────────────────
     if lw_mhz > 0.0:
-        spec = convspec(spec, df, fwhm_g=lw_mhz, fwhm_l=0.0, deriv=0)
+        # skip a Gaussian of at most two increments, as in the fixed-field mode
+        from torchspin.pepper import _lw_convolve
+        spec = _lw_convolve(spec, df, lw_mhz, 0.0, 0)
 
     return freq_axis.cpu(), spec.cpu()

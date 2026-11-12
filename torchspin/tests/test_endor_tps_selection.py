@@ -83,7 +83,7 @@ def _range(r):
 
 def test_endorfrq_selection_vs_easyspin():
     """Level pairs equal EasySpin's Transitions at EasySpin's threshold, range and TPS grid, for every
-    orientation; positions and intensities (Enhancement off and on) per pair.  On the 0.8.15 base the
+    orientation; positions and intensities (Enhancement off and on) per pair.  On the 0.9.2 base the
     14N+1H default-threshold set had 14 pairs where EasySpin has 16, 63Cu+14N 34-97 vs 81, and the
     1H set at threshold 0 had 6 pairs vs 2."""
     refs = _refs()["endorfrq"]
@@ -114,7 +114,7 @@ def test_endorfrq_default_threshold_counts():
 
 
 def test_endorfrq_removes_electronic_pairs_at_threshold_zero():
-    """B40: S = 1/2 + 1H at threshold 0 gives EasySpin's 2 nuclear pairs (6 on the 0.8.15 base)."""
+    """B40: S = 1/2 + 1H at threshold 0 gives EasySpin's 2 nuclear pairs (6 on the 0.9.2 base)."""
     s = SpinSystem(S=[0.5], g=[[2.0, 2.0, 2.0]], Nucs='1H', A=[[3.0, 7.0, 12.0]])
     for opt in (None, Options(), Options(Enhancement=True)):
         _, _, t = endorfrq(s, 350.0, 0.3, 0.7, threshold=0.0, opt=opt)
@@ -158,7 +158,7 @@ def _salt_ref_case(r, enh, **opt_kw):
 @pytest.mark.parametrize("k", [0, 1])
 def test_salt_vs_easyspin(k):
     """Fixed-field salt 14N+1H, Enhancement off and on, against EasySpin at GridSize [31 6] and [13 4].
-    Residual of the scaled spectrum relative to the maximum: [31 6] on 4.6e-3 on the 0.8.15 base
+    Residual of the scaled spectrum relative to the maximum: [31 6] on 4.6e-3 on the 0.9.2 base
     (zero-quantum pairs near 0 MHz kept), now ~2e-12."""
     r = _refs()["salt"][k]
     scales = {}
@@ -172,7 +172,7 @@ def test_salt_vs_easyspin(k):
 
 def test_salt_selected_pairs_are_easyspin_info_transitions():
     """B57: salt's level pairs are EasySpin's info.Transitions (16 for 14N+1H at Threshold 1e-4, on
-    the 0.8.15 base 23 with Enhancement: zero-quantum pairs (8,9), (10,11) near 0 MHz) and do not
+    the 0.9.2 base 23 with Enhancement: zero-quantum pairs (8,9), (10,11) near 0 MHz) and do not
     depend on GridSize."""
     for r in _refs()["salt"][:2]:
         assert _pairs(r['Troff']) == _pairs(r['Tron'])
@@ -204,7 +204,7 @@ def test_salt_no_zero_frequency_spike_with_enhancement():
 
 def test_salt_cu_no_electronic_lines():
     """B40: no intensity at the electronic (EPR) pairs near 8.9 GHz on the default rf axis
-    (3e-4 of the maximum, 0.05 % of the integral, on the 0.8.15 base); EasySpin has none, and the
+    (3e-4 of the maximum, 0.05 % of the integral, on the 0.9.2 base); EasySpin has none, and the
     level pairs are EasySpin's info.Transitions.  (The full spectrum is not compared: below
     ~600 MHz this case differs from EasySpin by up to 1e-2 of the maximum with the same level
     pairs, on the base as well; not a selection effect.)"""

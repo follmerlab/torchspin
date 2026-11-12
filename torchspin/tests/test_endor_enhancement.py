@@ -328,7 +328,7 @@ def test_endorfrq_vs_easyspin():
     assert len(refs) == 12
     for r in refs:
         s = _sys_from(r['Sys'])
-        tr = np.atleast_2d(r['Tr'])          # 1-based, as endorfrq (0.8.15)
+        tr = np.atleast_2d(r['Tr'])          # 1-based, as endorfrq (0.9.2)
         for opt, P_ref, I_ref in ((Options(), r['Poff'], r['Ioff']), (ON, r['Pon'], r['Ion'])):
             f, I, t = endorfrq(s, float(r['Field']), float(r['phi']), float(r['theta']), threshold=0.0, opt=opt)
             got = {tuple(x): (fi, ii) for x, fi, ii in zip(t.tolist(), f.tolist(), I.tolist())}
@@ -356,7 +356,7 @@ def test_endorfrq_vs_easyspin_default_threshold():
 
 
 def test_endorfrq_level_pairs_are_easyspin_transitions():
-    """endorfrq level pairs are 1-based [u, v], u < v, as EasySpin's Transitions output (0.8.15; 0-based
+    """endorfrq level pairs are 1-based [u, v], u < v, as EasySpin's Transitions output (0.9.2; 0-based
     before).  With threshold 0 and Enhancement on (electronic pairs excluded, as in EasySpin) every pair
     EasySpin selects is returned under the same numbers with the same frequency; for 1H EasySpin keeps
     all intra-manifold pairs and the sets are equal.  (EasySpin's lists are at threshold 1e-4, so they
