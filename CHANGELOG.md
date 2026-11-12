@@ -14,6 +14,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.18] — 2026-11-11
+
+### Fixed
+
+- **`pepper_autograd` no longer returns an all-zero spectrum for isotropic systems (B66).**
+  On the O3 grid (automatic for isotropic g and A without ZFS, or `GridSymmetry='O3'`) it sent
+  the single orientation to the triangle projection, whose O3 triangulation is empty, and
+  returned zeros with zero gradient. Because `pepper` routes to pepper_autograd when an input
+  requires grad, `pepper` with an isotropic `g` tensor that requires grad returned zeros as
+  well, so a fit of any isotropic system saw no spectrum and no gradient. S = 1/2, g = 2.0,
+  lw [1 0], 9.5 GHz, Range [330 350]: 0.0 before, 738.23 now (pepper 738.23). pepper_autograd
+  now takes pepper's O3 branch: every line gets an exact template at its position (Gaussian
+  for `Sys.lw(1)` or a strain width, Lorentzian for `Sys.lw(2)` alone, the rest convolved),
+  with the same resonance search (matrix or perturbation, `Opt.Transitions`,
+  `QuadraticZeeman`), Temperature, mwMode, HStrain/HStrainL and ModAmp. It equals pepper to
+  ≤ 5e-11 on 55 isotropic cases and EasySpin to cosine > 0.999995 and amplitude 1 ± 1e-5
+  (tests/data/ref_pepper_isotropic.mat); gradients w.r.t. g, A, lw and HStrain match central
+  differences of pepper. A powder grid that yields no usable facets now raises
+  `RuntimeError` instead of returning zeros. pepper itself is unchanged.
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed
