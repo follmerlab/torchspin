@@ -20,7 +20,28 @@ decided whether a fine knot lay exactly on a coarse column. Before the fix:
 Also: EasySpin's ``sphgrid`` phi/theta bitwise for 12 groups (GridSize 7 and
 73), gridinterp 'L1' on synthetic data with missing knots, and pepper_autograd
 gradients vs central differences on B48 and B50.
+
+Since 0.9.28 (B88, B75) the knots of these spectra are no longer missing: the
+level pairs that leave Exp.Range are searched again over a padded window and
+projection clips their out-of-range vertices, while EasySpin keeps the NaNs
+(and drops the triangles that cross the range ends, also without
+interpolation).  The EasySpin comparisons of the seven spectra are therefore
+strict xfails with the measured numbers, and the spectra are checked against
+converged references instead (no interpolation, GridSize [181 1], wide sweep
+cropped; tests/data/ref_missing_knots.npz).  Every case is closer to them
+than the EasySpin-identical 0.9.27 spectra (1 - cosine / max|dev|, interior):
+
+* b48_stick 1.59e-2 / 0.270 -> 7.3e-8 / 7.9e-4; b48_stick_noint (B75)
+  8.71e-3 / 0.270 -> 1.88e-5 / 0.0223; b48_h0 3.0e-7 / 1.96e-3 ->
+  2.4e-10 / 6.1e-5; b48_h1 2.12e-5 / 0.0222 -> 2.8e-8 / 9.2e-4;
+* b50_h1 3.91e-2 / 0.238 -> 7.09e-5 / 0.0144; b50_stick 1.94e-2 / 0.327 ->
+  2.70e-5 / 0.0284; b50_stick_wide 4.83e-3 / 0.261 -> 3.28e-5 / 0.0200.
+
+The interpolation itself (zero-weight NaN corners, gridinterp 'L1') is still
+checked directly by test_zero_weight_nan_corner and
+test_gridinterp_l1_vs_easyspin.
 """
+import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -38,7 +59,13 @@ from torchspin.sphgrid import sphgrid
 
 _pep = _sys.modules['torchspin.pepper']
 
-REF = Path(__file__).resolve().parents[2] / 'tests' / 'data' / 'ref_interp_nan_edges.mat'
+DATA = Path(__file__).resolve().parents[2] / 'tests' / 'data'
+REF = DATA / 'ref_interp_nan_edges.mat'
+CONVERGED = DATA / 'ref_missing_knots.npz'
+
+_spec = importlib.util.spec_from_file_location('_gen_missing_knots', DATA / 'generate_missing_knots_refs.py')
+gen = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gen)
 
 # Max |torchspin - EasySpin| / max|EasySpin| per case, measured with the fix
 # (pepper and pepper_autograd identical to 3 digits) -> tolerance; before the
@@ -53,6 +80,21 @@ REF = Path(__file__).resolve().parents[2] / 'tests' / 'data' / 'ref_interp_nan_e
 MAXD = {
     'b48_stick': 2e-6, 'b48_stick_noint': 2e-6, 'b48_h0': 2e-6, 'b48_h1': 2e-6,
     'b50_h1': 1e-4, 'b50_stick': 1e-4, 'b50_stick_wide': 1e-4,
+}
+# Since 0.9.28 (B88): measured vs EasySpin (max|dev|/max, 1 - cosine), pepper
+# and pepper_autograd alike
+DEVIATION = {
+    'b48_stick': (0.269, 1.59e-2), 'b48_stick_noint': (0.270, 8.68e-3), 'b48_h0': (0.160, 2.99e-3),
+    'b48_h1': (0.463, 3.53e-2), 'b50_h1': (0.230, 4.39e-2), 'b50_stick': (0.278, 1.91e-2),
+    'b50_stick_wide': (0.247, 4.59e-3),
+}
+# converged reference and bounds on (1 - cosine, max|dev|) against it
+# (interior; measured x 1.05, see the module docstring)
+CONV = {
+    'b48_stick': ('b48_stick', 7.7e-8, 8.3e-4), 'b48_stick_noint': ('b48_stick', 1.98e-5, 2.35e-2),
+    'b48_h0': ('b48_h0', 2.51e-10, 6.45e-5), 'b48_h1': ('b48_h1', 2.95e-8, 9.66e-4),
+    'b50_h1': ('b50_h1', 7.45e-5, 1.51e-2), 'b50_stick': ('b50_stick', 2.84e-5, 2.99e-2),
+    'b50_stick_wide': ('b50_stick_wide', 3.44e-5, 2.10e-2),
 }
 
 
@@ -90,8 +132,20 @@ def _inputs(c):
     return SpinSystem(**kw), exp, Options(**okw)
 
 
+def _xfail_cases():
+    out = []
+    for n in _case_names():
+        d, c = DEVIATION[n]
+        reason = (f'B88/B75 (0.9.28): the range cuts transitions; torchspin searches them again over a '
+                  f'padded window and clips them in the projection, EasySpin leaves the knots NaN. '
+                  f'Measured max dev {d:.3g}, 1 - cosine {c:.3g}; torchspin is closer to the converged '
+                  f'reference (test_spectrum_vs_converged)')
+        out.append(pytest.param(n, marks=pytest.mark.xfail(strict=True, reason=reason), id=n))
+    return out
+
+
 @pytest.mark.parametrize('func', ['pepper', 'pepper_autograd'])
-@pytest.mark.parametrize('name', _case_names())
+@pytest.mark.parametrize('name', _xfail_cases())
 def test_spectrum_vs_easyspin(ref, name, func):
     c = {str(c.name): c for c in np.atleast_1d(ref['cases'])}[name]
     sys, exp, opt = _inputs(c)
@@ -108,6 +162,22 @@ def test_spectrum_vs_easyspin(ref, name, func):
         nz_ts = np.nonzero(np.abs(spc) > 1e-12 * np.abs(y).max())[0]
         nz_es = np.nonzero(np.abs(y) > 1e-12 * np.abs(y).max())[0]
         assert (nz_ts.min(), nz_ts.max()) == (nz_es.min(), nz_es.max()), name
+
+
+@pytest.mark.parametrize('func', ['pepper', 'pepper_autograd'])
+@pytest.mark.parametrize('name', list(CONV))
+def test_spectrum_vs_converged(ref, name, func):
+    """The seven EasySpin spectra against converged references."""
+    c = {str(c.name): c for c in np.atleast_1d(ref['cases'])}[name]
+    sys, exp, opt = _inputs(c)
+    rn, cmax, dmax = CONV[name]
+    x, spc = (pepper if func == 'pepper' else pepper_autograd)(sys, exp, opt)
+    x = x.detach().numpy(); spc = spc.detach().numpy()
+    r = np.load(CONVERGED)
+    assert np.allclose(x, r[rn + '_x'], rtol=0, atol=1e-9)
+    cs, d = gen.metrics(spc, r[rn], gen.interior(x, sys))
+    print(f'{name} {func}: 1 - cosine {cs:.3e}, max dev {d:.3e}')
+    assert cs <= cmax and d <= dmax, (name, func, cs, d)
 
 
 def _grid_ids():
@@ -178,10 +248,17 @@ def _b50(D):
 @pytest.mark.parametrize('case', ['b48_g', 'b50_D'])
 def test_autograd_vs_central_differences(case):
     """pepper_autograd gradients of a weighted sum of the spectrum vs central
-    differences of pepper, on the B48 (d/dg) and B50 (d/dD, d/dE) systems with
-    knots without a resonance. Measured (relative): B48 g 3e-9, 6e-9, 1.7e-7
-    (h = 1e-7; h = 1e-6 is truncation-limited, 4e-7), B50 D 1.7e-7, E 6e-7
-    (h = 1e-2 MHz)."""
+    differences of pepper, on the B48 (d/dg) and B50 (d/dD, d/dE) systems whose
+    ranges cut transitions. Measured (relative): B48 g 1.9e-8, 1.6e-8, 7.6e-8
+    (h = 1e-7), B50 D 3.3e-6 (h = 1e-2 MHz, truncation; 1e-3: 2.4e-7).
+
+    d/dE at E = 0: the system is axial and the D2h grid is symmetric under
+    x <-> y, so the loss is even in E and the derivative is 0.  Measured
+    AD -1.8e-14, CD -8.0e-11 (h = 1e-2; OMP 8: -8.9e-15 / -4.0e-9), i.e.
+    <= 3.6e-14 / 1.6e-8 of d/dD.  Up to 0.9.27
+    both were -1.07e-3 (agreeing to 6e-7): the all-linear interpolation of a
+    sweep with missing knots was not x <-> y symmetric; since 0.9.28 (B88) no
+    knot is missing here and the symmetry holds."""
     if case == 'b48_g':
         p0, h, build = [2.0, 2.05, 2.1], 1e-7, (lambda p: _b48(p.reshape(1, 3)))
         rel = [1e-6, 1e-6, 1e-6]
@@ -198,8 +275,17 @@ def test_autograd_vs_central_differences(case):
         return float((pepper(*build(q))[1] * w).sum())
 
     for j in range(len(p0)):
+        if case == 'b50_D' and j == 1:
+            continue
         pp = torch.tensor(p0, dtype=torch.float64); pp[j] += h
         pm = torch.tensor(p0, dtype=torch.float64); pm[j] -= h
         fd = (L(pp) - L(pm)) / (2 * h)
         print(f'{case}[{j}]: autograd {float(grad[j]):.10g}, central difference {fd:.10g}')
         assert float(grad[j]) == pytest.approx(fd, rel=rel[j]), (case, j, float(grad[j]), fd)
+    if case == 'b50_D':
+        fdE = (L(torch.tensor([300.0, h], dtype=torch.float64)) - L(torch.tensor([300.0, -h], dtype=torch.float64))) / (2 * h)
+        print(f'{case}[1]: autograd {float(grad[1]):.4g}, central difference {fdE:.4g} (0 by symmetry)')
+        scale = abs(float(grad[0]))
+        # AD exactly 0 up to roundoff; the central difference is the roundoff of
+        # the loss difference over 2h (OMP 1: 3.2e-10 of d/dD, OMP 8: 1.6e-8)
+        assert abs(float(grad[1])) <= 1e-9 * scale and abs(fdE) <= 1e-7 * scale, (float(grad[1]), fdE)

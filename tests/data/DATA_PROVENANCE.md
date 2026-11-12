@@ -167,6 +167,19 @@ validate correctness against MATLAB.
 These are the genuine independent oracles that
 `test_cardamom_matlab_validation.py` compares against.
 
+**Missing knots (B88, B75, 0.9.28, added 2026-11-12):**
+`ref_missing_knots.npz` — Python (`generate_missing_knots_refs.py`, torchspin 0.9.28, torch 2.10,
+single thread). Converged references for field sweeps whose range cuts transitions: pepper
+without interpolation (GridSize [181 1]) on an aligned sweep wide enough that no transition
+leaves it (the script checks that the re-search finds nothing there), cropped to the test's
+axis. 15 spectra: the three B88 cases (63Cu tilted AFrame, 91Zr, S = 5/2 with B4) and the
+inputs of the EasySpin cases in `ref_pepper_nanlinear.mat`, `ref_interp_nan_edges.mat`,
+`ref_sphgrid_maxphi.mat` and `ref_pepper_parallel.mat` (S52_parallel) whose ranges cut
+transitions. Not an EasySpin oracle, but independent of the code under test
+(no missing knots, no interpolation); without interpolation torchspin and EasySpin agree
+(Cu case, Ci [181 1]: cosine 1.000000, B88 EasySpin check). Used by `test_missing_knots.py`
+and the four validation files above.
+
 **MD analysis:**
 `mdhmm_*.mat` (4 files), `mdload_files_*.mat` (2 files) — Python
 
