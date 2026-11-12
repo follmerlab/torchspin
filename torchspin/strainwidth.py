@@ -431,6 +431,37 @@ def _orientation_vector(
 
 
 
+def _strain_g_values(sys: SpinSystem, e: int, device) -> torch.Tensor:
+    """g principal values (g frame) that ``gStrain`` of electron *e* is relative to.
+
+    This is ``sys.g[e]``, except when the linear Zeeman term is given as
+    ``Ham110``/``Ham112`` (``SpinSystem`` sets g = 0): then it is the diagonal of
+    the g-equivalent matrix of these terms (``ham_ezho.ham_linear_g``) in the
+    g frame (``gFrame``).  Before 0.9.13 the division by g = 0 gave an all-zero
+    spectrum (B56; EasySpin's pepper does the same).  A g-equivalent matrix that
+    is not diagonal in the g frame raises, as gStrain with a full g matrix does.
+    """
+    g_values = sys.g[e].to(device=device, dtype=torch.float64)
+    if bool(torch.any(g_values != 0)):
+        return g_values
+    from torchspin.ham_ezho import ham_linear_g
+    gm = ham_linear_g(sys, e)
+    if gm is None:
+        return g_values
+    gm = gm.to(device=device)
+    if bool(torch.any(sys.gFrame[e] != 0)):
+        R_g2M = erot(sys.gFrame[e].tolist(), device=device).T.to(dtype=torch.float64)
+        gm = R_g2M.T @ gm @ R_g2M
+    off = gm - torch.diag(torch.diagonal(gm))
+    if float(off.detach().abs().max()) > 1e-9 * float(gm.detach().abs().max()):
+        raise ValueError(
+            "gStrain with a linear Zeeman term given as Sys.Ham110/Ham112 needs the "
+            "g-equivalent matrix of these terms to be diagonal in Sys.gFrame (as for "
+            "gStrain with a full g matrix). Give g as Sys.g with gFrame, or set gFrame "
+            "to the principal axes of the Ham112 term.")
+    return torch.diagonal(gm)
+
+
 def _gstrain_matrices(sys: SpinSystem, mwFreq: float, device) -> list:
     """Per-electron g-strain matrices in the molecular frame (EasySpin ``gStrainMatrix{iEl}``, MHz).
 
@@ -445,7 +476,7 @@ def _gstrain_matrices(sys: SpinSystem, mwFreq: float, device) -> list:
             if sys.fullg:
                 raise ValueError("gStrain and AStrain are not supported when full g matrices are given!")
             g_strain = sys.gStrain[e].to(device=device, dtype=torch.float64)
-            g_values = sys.g[e].to(device=device, dtype=torch.float64)
+            g_values = _strain_g_values(sys, e, device)
             M = torch.diag((g_strain / g_values) * (mwFreq * 1e3))
             if bool(torch.any(sys.gFrame[e] != 0)):
                 R_g2M = erot(sys.gFrame[e].tolist(), device=device).T.to(dtype=torch.float64)
@@ -586,7 +617,7 @@ def _compute_gstrain_astrain_width_squared(
     # For diagonal matrices (no frame rotation) both are identical; for rotated frames they differ.
     if sys.gStrain is not None:
         g_strain = sys.gStrain[0, :].to(device=device, dtype=torch.float64)
-        g_values = sys.g[0, :].to(device=device, dtype=torch.float64)
+        g_values = _strain_g_values(sys, 0, device)
         gStrain_freq = (g_strain / g_values) * (mwFreq * 1e3)  # [3] MHz in g-frame
 
         # Build gStrain matrix in molecular frame (diagonal in g-frame, then rotate)
