@@ -97,7 +97,7 @@ def _broadband_spectrum(
     """
     from torchspin.ham import ham
     from torchspin.sphgrid import sphgrid
-    from torchspin.hamsymm import hamsymm, grid_angles_to_molecular
+    from torchspin.hamsymm import grid_symmetry, grid_angles_to_molecular
     from torchspin.constants import BMAGN, PLANCK, BOLTZMANN
 
     _dev = device
@@ -108,7 +108,7 @@ def _broadband_spectrum(
     # pepper (B83); hamsymm errors propagate
     R_sym2mol = torch.eye(3, dtype=torch.float64)
     if GridSymmetry == 'auto':
-        grid_sym, R_sym2mol = hamsymm(sys)
+        grid_sym, R_sym2mol = grid_symmetry(sys)
     else:
         grid_sym = GridSymmetry
 

@@ -73,11 +73,11 @@ def test_broadband_autograd_rotated_grid():
 def test_hamsymm_errors_propagate(monkeypatch):
     """A hamsymm failure is an error, not a silent C1 grid."""
     import sys
-    saffron_mod = sys.modules['torchspin.saffron']     # the module (the package exports the function)
+    hs = sys.modules['torchspin.hamsymm']     # the module (the package exports the function)
 
     def boom(sys, debug=False):
         raise RuntimeError('hamsymm failed')
-    monkeypatch.setattr(saffron_mod, 'hamsymm', boom)
+    monkeypatch.setattr(hs, 'hamsymm', boom)        # grid_symmetry calls it
     exp = PulseExperiment(Sequence='3pESEEM', Field=340.0, mwFreq=9.5, dt=0.02, tau=0.12,
                           T=0.1, nPoints=[8])
     with pytest.raises(RuntimeError, match='hamsymm failed'):

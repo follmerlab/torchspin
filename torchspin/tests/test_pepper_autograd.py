@@ -260,7 +260,9 @@ def test_perturbation_order_follows_method(method):
     """B17: the powder route of pepper_autograd used second order for Method='perturb1'
     (1.44 relative max deviation from pepper on this grid before 0.8.3)."""
     exp = Experiment(mwFreq=9.5, Range=[260, 360], nPoints=512)
-    opt = Options(Verbosity=0, GridSize=[19, 4], Method=method)
+    # g is three independent numbers that require grad: pepper_autograd's automatic
+    # grid would be D2h (B1, 0.9.26), pepper's Dinfh, so the grid is named
+    opt = Options(Verbosity=0, GridSize=[19, 4], Method=method, GridSymmetry='D2h')
     _, yp = pepper(SpinSystem(g=[_CU_G0], **_CU_AX), exp, opt)
     g = torch.tensor(_CU_G0, requires_grad=True)
     _, ya = pepper_autograd(SpinSystem(g=[g], **_CU_AX), exp, opt)
@@ -347,7 +349,15 @@ def test_pepper_autograd_expands_natural_abundance_and_weight():
     from torchspin.pepper_autograd import pepper_autograd
     exp, opt = _zr_case()
     kw = dict(S=[0.5], Nucs=['Zr'], A=[[780.0] * 3], lw=[1.0, 0.0], weight=0.3)
-    g = torch.tensor([[2.0, 1.9, 1.9]], dtype=torch.float64, requires_grad=True)
+    # g = [g_x, g_perp, g_perp] from two leaves: an axial parameterization, so the
+    # gradient run keeps pepper's automatic grid (Dinfh about x; B1, 0.9.26).  With g
+    # as three independent numbers it would be D2h, and no explicit GridSymmetry
+    # reproduces the x-axis Dinfh grid; on D2h/Ci pepper_autograd and pepper differ
+    # for this 91Zr hyperfine (A = 780 MHz) by 1.6 % at GridSize [7, 2], with or
+    # without grad -- a separate defect.
+    gx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)
+    gp = torch.tensor(1.9, dtype=torch.float64, requires_grad=True)
+    g = torch.stack([gx, gp, gp]).unsqueeze(0)
     _, y = pepper_autograd(SpinSystem(g=g, **kw), exp, opt)
     with torch.no_grad():
         _, y_ref = pepper(SpinSystem(g=g.detach(), **kw), exp, opt)

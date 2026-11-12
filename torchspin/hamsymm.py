@@ -21,6 +21,9 @@ torchspin additions (deviations from EasySpin, 0.9.24):
 * The strain tensors (HStrain/HStrainL, gStrain, AStrain, DStrain) are symmetry
   inputs too, since the strain widths depend on the field direction (B82);
   strain-free systems get EasySpin's group and frame exactly.
+* :func:`grid_symmetry` is the automatic grid symmetry used by the simulators: it is
+  :func:`hamsymm` unless a symmetry input requires grad, and then the symmetry of the
+  differentiated parameterization (B1, 0.9.26).
 * :func:`grid_angles_to_molecular` rotates a symmetry-frame grid into the molecular
   frame (B83).
 """
@@ -35,7 +38,7 @@ import torch
 from torchspin.spinsystem import SpinSystem
 from torchspin.rotations import erot
 
-__all__ = ['hamsymm', 'grid_angles_to_molecular']
+__all__ = ['hamsymm', 'grid_symmetry', 'grid_angles_to_molecular']
 
 # Point groups in EasySpin's ranking order (index = symmetry rank, 1-based).
 _EIG_GROUP_NAMES = [
@@ -888,6 +891,201 @@ def _strain_tensors(sys: SpinSystem) -> list:
 
 def _full_tensors_given_g(sys: SpinSystem) -> bool:
     return _is_full(sys.g, sys.nElectrons)
+
+
+# ---------------------------------------------------------------------------
+# Grid symmetry for differentiated parameters (B1)
+# ---------------------------------------------------------------------------
+
+#: SpinSystem fields that determine the symmetry: hamsymm's Hamiltonian
+#: inputs and the strains (B82).
+_SYMMETRY_FIELDS = (
+    'g', 'gFrame', 'D', 'DFrame', 'A', 'AFrame', 'ee', 'eeFrame', 'sigma',
+    'sigmaFrame', 'Q', 'QFrame', 'nn', 'nnFrame', 'B', 'BFrame', 'Ham',
+    'H0Extra', *(f'CF{k}' for k in range(1, 13)),
+    'HStrain', 'HStrainL', 'gStrain', 'AStrain', 'DStrain',
+)
+_FRAME_FIELDS = frozenset(f for f in _SYMMETRY_FIELDS if f.endswith('Frame'))
+
+#: Size of the generic perturbation of a differentiated field, relative to the
+#: field's largest entry (at least 1): far above hamsymm's equality tolerances
+#: (1e-10 principal values, 1e-12 eigenvalues), far below any anisotropy.
+_REL_PERTURBATION = 1e-6
+#: Largest Euler-angle change (rad) of a differentiated frame: above the 0.2 deg
+#: (3.5e-3 rad) collinearity tolerance of the geometric analysis, or a frame
+#: that moves would still be read as aligned.
+_ANGLE_PERTURBATION = 1e-2
+
+
+def _grad_tensors(v, path=()):
+    """``(path, tensor)`` for every tensor in a nested field value that requires grad."""
+    if torch.is_tensor(v):
+        return [(path, v)] if v.requires_grad else []
+    if isinstance(v, dict):
+        return [x for k, u in v.items() for x in _grad_tensors(u, path + (k,))]
+    if isinstance(v, (list, tuple)):
+        return [x for i, u in enumerate(v) for x in _grad_tensors(u, path + (i,))]
+    return []
+
+
+def _replaced(v, path, new):
+    """Copy of the nested value ``v`` with the item at ``path`` replaced by ``new``."""
+    if not path:
+        return new
+    k, rest = path[0], path[1:]
+    if isinstance(v, dict):
+        out = dict(v)
+        out[k] = _replaced(v[k], rest, new)
+        return out
+    items = list(v)
+    items[k] = _replaced(v[k], rest, new)
+    return type(v)(items) if isinstance(v, tuple) else items
+
+
+def _leaves(tensors):
+    """Leaf tensors (autograd ``AccumulateGrad`` variables) behind ``tensors``,
+    in a deterministic order (first reached, depth-first)."""
+    leaves, seen_leaf, seen_fn = [], set(), set()
+    for t in tensors:
+        if t.grad_fn is None:
+            if id(t) not in seen_leaf:
+                seen_leaf.add(id(t)); leaves.append(t)
+            continue
+        stack = [t.grad_fn]
+        while stack:
+            fn = stack.pop()
+            if fn is None or fn in seen_fn:
+                continue
+            seen_fn.add(fn)
+            var = getattr(fn, 'variable', None)
+            if var is not None:
+                if id(var) not in seen_leaf:
+                    seen_leaf.add(id(var)); leaves.append(var)
+                continue
+            stack.extend(nf for nf, _ in reversed(fn.next_functions))
+    return leaves
+
+
+def _field_directions(items, gen):
+    """Change of each grad-requiring field tensor under a generic perturbation
+    of the parameters (the autograd leaves), ``J @ dp``.
+
+    Leaf fields (a tensor the user passed directly) are their own
+    parameterization: ``J = I``.  Fields with a graph get ``J @ dp`` from the
+    double-backward Jacobian-vector product on the existing graph (the graph is
+    retained, nothing is accumulated into ``.grad``).  Raises if the graph does
+    not support double backward.
+    """
+    tensors = [t for _, _, t in items]
+    leaves = _leaves(tensors)
+    dp = {id(l): torch.rand(l.shape, generator=gen, dtype=torch.float64) + 0.5 for l in leaves}
+    out = [None] * len(items)
+    graph_idx = []
+    for i, t in enumerate(tensors):
+        if t.grad_fn is None:
+            out[i] = dp[id(t)].to(t.dtype)
+        else:
+            graph_idx.append(i)
+    if graph_idx:
+        outs = [tensors[i] for i in graph_idx]
+        graph_leaves = leaves
+        us = [torch.zeros_like(o, requires_grad=True) for o in outs]
+        vjps = torch.autograd.grad(outs, graph_leaves, grad_outputs=us, create_graph=True,
+                                   allow_unused=True)
+        used = [(g, dp[id(l)].to(g.dtype)) for g, l in zip(vjps, graph_leaves)
+                if g is not None and g.requires_grad]
+        if used:
+            jvps = torch.autograd.grad([g for g, _ in used], us, grad_outputs=[v for _, v in used],
+                                       allow_unused=True)
+        else:
+            jvps = [None] * len(us)
+        for i, d in zip(graph_idx, jvps):
+            out[i] = torch.zeros_like(tensors[i]).detach() if d is None else d.detach()
+    return out
+
+
+def _perturbed_system(sys, items, directions):
+    """Copy of ``sys`` with each grad-requiring field tensor moved along its direction,
+    scaled to the generic perturbation size."""
+    import copy
+    p = copy.copy(sys)
+    new_fields = {}
+    for (field, path, t), d in zip(items, directions):
+        t0 = t.detach()
+        d = d.to(t0.dtype)
+        dmax = float(d.abs().max()) if d.numel() else 0.0
+        if dmax == 0.0:
+            new = t0
+        elif field in _FRAME_FIELDS:
+            new = t0 + (_ANGLE_PERTURBATION / dmax) * d
+        else:
+            scale = max(float(t0.abs().max()) if t0.numel() else 0.0, 1.0)
+            new = t0 + (_REL_PERTURBATION * scale / dmax) * d
+        base = new_fields.get(field, getattr(sys, field))
+        new_fields[field] = _replaced(base, path, new)
+    for field, v in new_fields.items():
+        object.__setattr__(p, field, v)
+    return p
+
+
+def _signed_permutation_equivalent(R1: torch.Tensor, R2: torch.Tensor, tol: float = 1e-9) -> bool:
+    """True if the rows (axes) of ``R2`` are the rows of ``R1`` up to order and sign."""
+    M = (R1.to(torch.float64) @ R2.to(torch.float64).T).abs()
+    ones = torch.ones(3, dtype=M.dtype)
+    return bool(((M - M.round()).abs() < tol).all()
+                and torch.allclose(M.sum(0), ones) and torch.allclose(M.sum(1), ones))
+
+
+def grid_symmetry(sys: SpinSystem) -> tuple[str, torch.Tensor]:
+    """Automatic powder-grid symmetry, valid for the differentiated parameters (B1).
+
+    The grid is chosen outside the autograd graph, so it must hold not only at
+    the current values but along every direction the gradient measures.  A
+    symmetry that holds by accident at the current values (axial g given as
+    three independent numbers, collinear frames) is broken by that perturbation,
+    and a grid of that symmetry gives a wrong gradient.
+
+    * No symmetry input (:data:`_SYMMETRY_FIELDS`: tensors, frames, high-order
+      terms, strains) requires grad: exactly :func:`hamsymm` (bit-identical
+      results, no extra cost).
+    * Otherwise the symmetry of the *parameterization*: the autograd leaves
+      behind the grad-requiring fields get a deterministic generic perturbation
+      ``dp``, each field moves along ``J @ dp`` (double-backward
+      Jacobian-vector product on the existing graph; a field that is itself a
+      leaf moves along its own ``dp``), scaled to 1e-6 relative (Euler angles:
+      1e-2 rad, above the 0.2 deg collinearity tolerance), and :func:`hamsymm`
+      runs on that copy.  So a scalar g keeps O3, ``[g_perp, g_perp, g_par]``
+      from two leaves keeps Dinfh, and three independent components give D2h.
+    * The frame is checked with two independent perturbations: if their groups
+      differ, or their frames are not the same axes up to order and sign (the
+      symmetry frame moves with the parameters, e.g. differentiated Euler
+      angles), the grid is ``'Ci'``, exact for any Hamiltonian.
+    * If the graph does not support double backward, every grad-requiring
+      field is perturbed independently (its own parameterization), which is
+      never less safe.
+
+    Returns ``(pgroup, R)`` with :func:`hamsymm`'s convention.
+    """
+    items = [(f, path, t) for f in _SYMMETRY_FIELDS
+             for path, t in _grad_tensors(getattr(sys, f, None))]
+    if not items:
+        return hamsymm(sys)
+    results = []
+    for seed in (20261112, 20261113):
+        gen = torch.Generator().manual_seed(seed)
+        try:
+            directions = _field_directions(items, gen)
+        except RuntimeError:
+            gen = torch.Generator().manual_seed(seed)
+            directions = [torch.rand(t.shape, generator=gen, dtype=torch.float64) + 0.5
+                          for _, _, t in items]
+        results.append(hamsymm(_perturbed_system(sys, items, directions)))
+    (pg1, R1), (pg2, R2) = results
+    if pg1 != pg2:
+        return 'Ci', torch.eye(3, dtype=torch.float64)
+    if pg1 not in ('O3', 'Ci', 'C1') and not _signed_permutation_equivalent(R1, R2):
+        return 'Ci', torch.eye(3, dtype=torch.float64)
+    return pg1, R1
 
 
 def grid_angles_to_molecular(phi, theta, R: torch.Tensor):

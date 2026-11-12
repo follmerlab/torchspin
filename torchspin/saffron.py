@@ -19,7 +19,7 @@ import torch
 
 from torchspin.constants import BMAGN, NMAGN, PLANCK, GFREE
 from torchspin.ham import ham as _ham_full
-from torchspin.hamsymm import hamsymm, grid_angles_to_molecular
+from torchspin.hamsymm import grid_symmetry, grid_angles_to_molecular
 from torchspin.lineshape import apowin
 from torchspin.nucdata import nucgval
 from torchspin.rotations import erot
@@ -943,7 +943,7 @@ def saffron(
         if opt.GridSymmetry == 'auto':
             # grid in hamsymm's symmetry frame, rotated into the molecular
             # frame as in pepper (B83); hamsymm errors propagate
-            grid_sym, R_sym2mol = hamsymm(sys)
+            grid_sym, R_sym2mol = grid_symmetry(sys)
         else:
             grid_sym = opt.GridSymmetry
         phi_arr, theta_arr, weights_arr, _ = sphgrid(grid_sym, opt.GridSize)

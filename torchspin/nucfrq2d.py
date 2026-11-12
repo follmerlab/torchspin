@@ -26,7 +26,7 @@ import numpy as np
 import torch
 
 from torchspin.ham import ham
-from torchspin.hamsymm import hamsymm
+from torchspin.hamsymm import grid_symmetry
 from torchspin.sphgrid import sphgrid
 from torchspin.nucdata import nucgval
 from torchspin.constants import NMAGN, PLANCK
@@ -93,7 +93,7 @@ def nucfrq2d(
     nfreq = np.sum(beta_mask)
 
     # Orientational grid
-    symm_str, R_sym2mol = hamsymm(sys)
+    symm_str, R_sym2mol = grid_symmetry(sys)
     phi_grid, theta_grid, weights, vecs = sphgrid(symm_str, GridSize)
 
     # vecs is (3, nOri) — unit vectors on the sphere, in hamsymm's symmetry

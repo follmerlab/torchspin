@@ -40,7 +40,7 @@ import scipy.linalg as la
 from torchspin.spinsystem import SpinSystem
 from torchspin.saffron import PulseExperiment, SaffronOptions
 from torchspin.ham import ham
-from torchspin.hamsymm import hamsymm, grid_angles_to_molecular
+from torchspin.hamsymm import grid_symmetry, grid_angles_to_molecular
 from torchspin.sphgrid import sphgrid
 from torchspin.rotations import erot
 from torchspin.spinops import sop
@@ -175,7 +175,7 @@ def saffron_thyme(
         if opt.GridSymmetry == 'auto':
             # grid in hamsymm's symmetry frame, rotated into the molecular
             # frame as in pepper (B83); hamsymm errors propagate
-            grid_sym, R_sym2mol = hamsymm(sys)
+            grid_sym, R_sym2mol = grid_symmetry(sys)
         else:
             grid_sym = opt.GridSymmetry
         phi_arr, theta_arr, weights_arr, _ = sphgrid(grid_sym, opt.GridSize)
