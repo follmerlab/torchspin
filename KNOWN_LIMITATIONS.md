@@ -270,7 +270,8 @@ up to 0.9.20 (B74). Since 0.9.21 torchspin reverses each lower row before resamp
   `idx+len-1` in place of `idx` (`y([idx+len-1:-1:idx idx+len-1])`).
 - EasySpin-reference cases on interpolated C1 grids (`photosel_*` in ref_pepper_features2.mat
   and ref_pepper_round3.mat, `fullsphere_C1` in ref_pepper_ext2.mat) moved by up to 9e-3 of the
-  maximum (cosine ≥ 0.999989, amplitude within 0.85 %) and keep their tolerances.
+  maximum (cosine ≥ 0.999989, amplitude within 0.85 %). Their EasySpin comparison is replaced
+  by torchspin on the same fine knots without interpolation (`*_c1_vs_no_interpolation`).
   `test_gridinterp_l1_vs_easyspin[C1-*]` remains xfail (B58 and this deviation).
 
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)

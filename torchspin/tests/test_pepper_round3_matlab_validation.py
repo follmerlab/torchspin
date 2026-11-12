@@ -9,7 +9,7 @@ import pytest
 from scipy.io import loadmat
 
 from torchspin.tests.test_pepper_matlab_validation_ext2 import (
-    sys_from_mat, exp_from_mat, opt_from_mat, cosine, _get)
+    sys_from_mat, exp_from_mat, opt_from_mat, cosine, _get, fine_grid_options, max_rel_dev)
 from torchspin.pepper import pepper
 
 REF = Path(__file__).resolve().parents[2] / 'tests' / 'data' / 'ref_pepper_round3.mat'
@@ -31,10 +31,21 @@ def _case_names():
     return list(_load().keys()) if REF.exists() else []
 
 
-# photosel_mx_* and photosel_pt_* run on a C1 grid with interpolation, where
-# torchspin deliberately deviates from EasySpin since 0.9.21 (B74: EasySpin mirrors
-# the interpolated lower hemisphere). Measured 0.9.10 -> 0.9.21: cosine >= 0.9999999
-# unchanged, amplitude 1.0001-1.0003 -> 1.0002-1.0008, max deviation 5.4e-4 -> 9.3e-4.
+# photosel_mx_* and photosel_pt_* run on an interpolated C1 grid (default for
+# Sys.tdm with low symmetry, [19 4]). EasySpin's C1 interpolation mirrors the lower
+# hemisphere (gridinterp.m:211-219, B74), torchspin's does not since 0.9.21, so
+# EasySpin is a known-wrong reference there and the EasySpin comparison is removed
+# (0.9.10 agreed with it at cosine >= 0.9999999). Reference: torchspin on the same
+# fine knots without interpolation ([73 1]); name -> bound on max |dev| / max,
+# measured x ~1.05. Measured 0.9.21 (0.9.10), mx and pt identical: parallel
+# 1.634e-3 (1.485e-3), perpendicular 5.137e-4 (1.084e-3), unpolarized 3.678e-4
+# (7.252e-4); parallel is 10 % larger after the fix, the others halve.
+C1_INTERP = {
+    'photosel_mx_parallel': 1.72e-3, 'photosel_pt_parallel': 1.72e-3,
+    'photosel_mx_perpendicular': 5.4e-4, 'photosel_pt_perpendicular': 5.4e-4,
+    'photosel_mx_unpolarized': 3.9e-4, 'photosel_pt_unpolarized': 3.9e-4,
+}
+
 LOOSE = {
     # EasySpin's matrix path interpolates eigenvectors linearly across the field segment;
     # for 63Cu+14N its intensities differ from exact diagonalization (and from its own
@@ -51,16 +62,17 @@ XFAIL = {
 }
 
 
-def _run(c):
+def _run(c, fine=False):
     auto = _get(c.Exp, 'Range') is None and _get(c.Exp, 'CenterSweep') is None and _get(c.Exp, 'mwRange') is None
     exp = exp_from_mat(c.Exp, c.Sys, x_axis=None if auto else np.asarray(c.x, dtype=float))
     systems = [sys_from_mat(c.Sys)]
     if _get(c, 'Sys2') is not None:
         systems.append(sys_from_mat(c.Sys2))
-    return pepper(systems if len(systems) > 1 else systems[0], exp, opt_from_mat(c.Opt))
+    opt = opt_from_mat(c.Opt)
+    return pepper(systems if len(systems) > 1 else systems[0], exp, fine_grid_options(opt) if fine else opt)
 
 
-@pytest.mark.parametrize('name', _case_names())
+@pytest.mark.parametrize('name', [n for n in _case_names() if n not in C1_INTERP])
 def test_pepper_round3_vs_matlab(cases, name):
     if name in XFAIL:
         pytest.xfail(XFAIL[name])
@@ -98,3 +110,14 @@ def test_pepper_round3_vs_matlab(cases, name):
         assert cosine(a, b) > cos_thr, (name, k, cosine(a, b))
         amp = abs(a).max() / abs(b).max()
         assert abs(amp - 1) < amp_tol, (name, k, amp)
+
+
+@pytest.mark.parametrize('name', sorted(C1_INTERP))
+def test_pepper_round3_c1_vs_no_interpolation(cases, name):
+    """Interpolated C1 grid vs the same fine knots without interpolation (B74)."""
+    c = cases[name]
+    assert opt_from_mat(c.Opt).grid_size_interp > 1
+    y = _run(c)[1].detach().cpu().numpy()
+    ref = _run(c, fine=True)[1].detach().cpu().numpy()
+    dev = max_rel_dev(y, ref)
+    assert dev < C1_INTERP[name], (name, dev)

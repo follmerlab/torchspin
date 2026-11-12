@@ -14,6 +14,7 @@ ratio. Thresholds are the observed accuracy; anything below the default
 (cosine 0.999, amplitude within 2 %) is listed in ``LOOSE`` with the reason.
 """
 
+import dataclasses
 import re
 from pathlib import Path
 
@@ -227,11 +228,29 @@ def cosine(a, b):
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
-# fullsphere_C1 (C1 [10 2]) moved with 0.9.21, where torchspin deliberately deviates
-# from EasySpin's C1 interpolation (B74, EasySpin mirrors the lower hemisphere):
-# cosine 1.0000000 -> 0.9999897, amplitude 1.0004 -> 1.0023 vs EasySpin; vs the same
-# fine grid without interpolation (C1 [19 1]) 9.0e-3 -> 6.0e-4 of the maximum
-# (test_c1_lower_rows.py::test_easyspin_fullsphere_c1_vs_no_interpolation).
+def fine_grid_options(o: Options) -> Options:
+    """The same options on the fine knots without interpolation: GridSize
+    [N_c N_i] -> [(N_c - 1) N_i + 1, 1]."""
+    nc, ni = o.grid_size_coarse, o.grid_size_interp
+    return dataclasses.replace(o, GridSize=[(nc - 1) * ni + 1, 1])
+
+
+def max_rel_dev(a, ref):
+    """max |a - ref| / max |ref|."""
+    a = np.asarray(a, dtype=float); ref = np.asarray(ref, dtype=float)
+    return float(np.abs(a - ref).max() / np.abs(ref).max())
+
+
+# Cases on an interpolated C1 grid. EasySpin's C1 interpolation mirrors the lower
+# hemisphere (gridinterp.m:211-219, B74), torchspin's does not since 0.9.21, so
+# EasySpin's spectrum is a known-wrong reference here and the EasySpin comparison
+# is removed. The objective reference is torchspin on the same fine knots without
+# interpolation (fine_grid_options): name -> bound on max_rel_dev, measured x ~1.05.
+# fullsphere_C1 (C1 [10 2] vs [19 1]): 5.961e-4 (0.9.10: 9.023e-3; vs EasySpin it
+# was cosine 1.0000000, amplitude 1.0004, i.e. EasySpin shares the 9e-3 error).
+C1_INTERP = {'fullsphere_C1': 6.3e-4}
+
+
 # Cases below the default thresholds (cosine 0.999, amplitude within 2 %):
 # name -> (cosine threshold, amplitude tolerance, reason)
 LOOSE = {
@@ -262,7 +281,7 @@ def _case_names():
     return [str(c.name) for c in np.atleast_1d(refs['cases'])]
 
 
-@pytest.mark.parametrize("name", _case_names())
+@pytest.mark.parametrize("name", [n for n in _case_names() if n not in C1_INTERP])
 def test_pepper_ext2_vs_matlab(cases, name):
     if name in XFAIL:
         pytest.xfail(XFAIL[name])
@@ -277,3 +296,15 @@ def test_pepper_ext2_vs_matlab(cases, name):
     cs_min, amp_tol, _ = LOOSE.get(name, (0.999, 0.02, ''))
     assert cs > cs_min, f"{name}: cosine {cs:.5f}"
     assert abs(ratio - 1) < amp_tol, f"{name}: amplitude ratio {ratio:.4f}"
+
+
+@pytest.mark.parametrize("name", sorted(C1_INTERP))
+def test_pepper_ext2_c1_vs_no_interpolation(cases, name):
+    """Interpolated C1 grid vs the same fine knots without interpolation (B74)."""
+    c = cases[name]
+    sys, exp, opt = sys_from_mat(c.Sys), exp_from_mat(c.Exp, c.Sys), opt_from_mat(c.Opt)
+    assert opt.grid_size_interp > 1
+    y = pepper(sys, exp, opt)[1].numpy()
+    ref = pepper(sys, exp, fine_grid_options(opt))[1].numpy()
+    dev = max_rel_dev(y, ref)
+    assert dev < C1_INTERP[name], f"{name}: {dev:.4g}"

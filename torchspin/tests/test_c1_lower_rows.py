@@ -23,7 +23,6 @@ Measured (before -> after the fix):
   pepper_autograd), photoselection triplet (default grid C1) 6.9e-2 -> 1.8e-3,
   salt 1H 2.1e-2 -> 5.4e-4.
 """
-import hashlib
 import sys
 
 import numpy as np
@@ -101,32 +100,66 @@ def test_c1_interpolation_with_missing_knots():
 
 
 # ---------------------------------------------------------------------------
-# Other open-φ grids: unchanged bit for bit
+# Other open-φ grids: unchanged (the fix touches only the C1 lower rows)
 # ---------------------------------------------------------------------------
-# sha256 of the float64 (little-endian) output of _interp_grid(y, sym, 19, 73)
-# for y = default_rng(74).standard_normal(n_knots) (L1nan: every 7th knot NaN),
-# computed with 0.9.10 (before the fix) and identical after it.
-_HASHES = {
-    ('Ci', 'G3'): 'd4898b8ddf0c04afff38d9c7dcdf1fb2ce23ae8c8f2e43d76c6961bb841211e0',
-    ('Ci', 'L1'): '1c9b0fe11e1850c3a85a6baec6b7090663f2b0fb3b0846d94d17f6608ac87666',
-    ('Ci', 'L1nan'): '5d0dfceb7463a8a291900b2ef88b9410a2ecee63dbb41c64aa54f0c08832ad5f',
-    ('C2h', 'G3'): '0c2b30d920102483e8a29c6d160c59a8c3e5dbc201358463457799d68f2a2fb5',
-    ('C2h', 'L1'): '3cd56071e797533f23b202a9bb1eb0eeeb159025dd8f053be595ca8f542ffe5d',
-    ('C2h', 'L1nan'): '62dbb2f41d43ba2f38faf6f7950db6dc6e6b315a01005c252e60a349aacc51fa',
-    ('C4h', 'G3'): '7766bd0aa9998143a121419704aecaaeab7459b18755a4908856a5d3525c97c6',
-    ('C4h', 'L1'): 'eac73888bd7d5a5d4371fc8b67735ddd476b8dae0f7ea432ba236c6ce8bef867',
-    ('C4h', 'L1nan'): '835785452855d680773e5ee920190264ca3890563e29c85f287dde8a71d8bdf0',
+# Smooth test functions (mT) with each group's symmetry, so the interpolant is
+# continuous across the φ wrap and the equator of the grid.
+def _f_ci(x, y, z):          # inversion
+    return 10 * x * x + 14 * y * y + 6 * z * z + 4 * x * y - 3 * y * z + 2 * x * z + 5 * x ** 3 * z
+
+
+def _f_c2h(x, y, z):         # C2(z) and inversion
+    return 10 * x * x + 14 * y * y + 6 * z * z + 4 * x * y + 3 * x ** 3 * y + 2 * x * y * z * z
+
+
+def _f_c4h(x, y, z):         # C4(z) and inversion
+    return 10 * (x * x + y * y) + 6 * z * z + 4 * x * y * (x * x - y * y) + 3 * (x ** 4 + y ** 4)
+
+
+_F_SYM = {'Ci': _f_ci, 'C2h': _f_c2h, 'C4h': _f_c4h}
+
+# (sym, mode) -> max |error| bound (mT) for [19] -> [73] knots against the exact
+# function; bound = measured x 1.05. Measured with 0.9.10 (#56, before the fix)
+# and 0.9.21 (after it), identical to all printed digits:
+#   Ci  G3 0.0228329, L1 0.104619;  C2h G3 0.0232269, L1 0.0397958;
+#   C4h G3 0.000927026, L1 0.0540596 (function ranges 9.9, 9.1, 7.5 mT).
+# L1nan (every 7th coarse knot NaN): the error on the finite fine knots equals
+# the L1 error above.
+_OPEN_BOUND = {
+    ('Ci', 'G3'): 0.02398, ('Ci', 'L1'): 0.10985,
+    ('C2h', 'G3'): 0.02439, ('C2h', 'L1'): 0.04179,
+    ('C4h', 'G3'): 0.000974, ('C4h', 'L1'): 0.05677,
 }
+# L1nan: (number of NaN fine knots, sum of their indices), 0.9.10 and 0.9.21.
+_OPEN_NAN = {'Ci': (5391, 28617790), 'C2h': (2693, 7175667), 'C4h': (1322, 1776177)}
 
 
-@pytest.mark.parametrize('sym,mode', list(_HASHES), ids=lambda v: str(v))
+def _open_case(sym):
+    nc, _ = _knots(sym, 19)
+    nf, _ = _knots(sym, 73)
+    f = _F_SYM[sym]
+    return f(*nc.T), f(*nf.T)
+
+
+@pytest.mark.parametrize('sym,mode', [(s, m) for s in _F_SYM for m in ('G3', 'L1', 'L1nan')],
+                         ids=lambda v: str(v))
 def test_other_open_phi_grids_unchanged(sym, mode):
-    n = sphgrid(sym, 19)[0].numel()
-    y = np.random.default_rng(74).standard_normal(n)
-    if mode == 'L1nan':
-        y[::7] = np.nan
-    out = np.ascontiguousarray(_pep._interp_grid(y, sym, 19, 73, linear=(mode != 'G3')), dtype='<f8')
-    assert hashlib.sha256(out.tobytes()).hexdigest() == _HASHES[(sym, mode)]
+    yc, yf = _open_case(sym)
+    if mode != 'L1nan':
+        out = _pep._interp_grid(yc, sym, 19, 73, linear=(mode == 'L1'))
+        err = np.abs(out - yf).max()
+        assert err < _OPEN_BOUND[(sym, mode)], err
+        return
+    y = yc.copy()
+    y[::7] = np.nan
+    out = _pep._interp_grid(y, sym, 19, 73, linear=True)
+    nan = np.isnan(out)
+    idx = np.nonzero(nan)[0]
+    assert (int(nan.sum()), int(idx.sum())) == _OPEN_NAN[sym]
+    # the finite fine knots are the NaN-free L1 result, exactly
+    np.testing.assert_array_equal(out[~nan], _pep._interp_grid(yc, sym, 19, 73, linear=True)[~nan])
+    err = np.abs(out[~nan] - yf[~nan]).max()
+    assert err < _OPEN_BOUND[(sym, 'L1')], err
 
 
 # ---------------------------------------------------------------------------

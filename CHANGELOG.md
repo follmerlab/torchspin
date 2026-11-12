@@ -39,9 +39,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   has the same defect (gridinterp.m:211/213/217/219 read `y(idx:idx+len-1)`); torchspin now
   follows the exact, uninterpolated result (KNOWN_LIMITATIONS.md). The EasySpin-reference cases
   on interpolated C1 grids (9 photoselection cases, `fullsphere_C1`) therefore move away from
-  EasySpin by up to 9e-3 of the maximum (cosine ≥ 0.999989, amplitude within 0.85 %) and stay
-  within their unchanged tolerances; against the same fine grid without interpolation
-  `fullsphere_C1` goes from 9.0e-3 to 6.0e-4. Tests: `torchspin/tests/test_c1_lower_rows.py`.
+  EasySpin by up to 9e-3 of the maximum (cosine ≥ 0.999989, amplitude within 0.85 %); against
+  the same fine grid without interpolation `fullsphere_C1` goes from 9.0e-3 to 6.0e-4. Tests:
+  `torchspin/tests/test_c1_lower_rows.py`.
+
+### Tests
+
+- Those 10 EasySpin-reference cases on interpolated C1 grids are no longer compared with
+  EasySpin (a known-wrong reference there) but with torchspin on the same fine knots without
+  interpolation, at bounds just above the measured deviations (3.7e-4 to 4.3e-3 of the
+  maximum). The check that the other open-φ grids (Ci, C2h, C4h) are unchanged uses error
+  bounds against exact symmetric test functions and the NaN pattern instead of output hashes.
 
 ## [0.9.10] — 2026-11-11
 
