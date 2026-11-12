@@ -78,8 +78,10 @@ def test_ham_equals_g_field_swept():
     """Field-swept mode: resfields_batch (Ham) vs resfields_perturb_batch (g).
 
     Before the fix the Ham spectrum was all zero. Amplitudes are not compared
-    with the default g spectrum: the two resonance-field searches differ in
-    scale (separate defect).
+    with the default g spectrum: on this version the two resonance-field
+    searches differ in scale (B44: 1.99x). B44 is fixed in 0.9.9 (1/prod(2I+1)
+    nuclear polarization in the matrix path); with it the amplitude is 0.994
+    and an amplitude check (|max ratio - 1| < 0.02) can be added.
     """
     y_ham = _run(_sys(Ham=HAM_LIN), SWEPT).numpy()
     y_gm = _run(_sys(g=[G], Ham=ZERO_HAM), SWEPT).numpy()
@@ -116,7 +118,8 @@ def test_explicit_perturbation_method_without_ham_unchanged():
 def test_gradient_on_ham_routed_path():
     """d spec / dA on the matrix path chosen for Ham, vs central differences.
 
-    (Sys.Ham coefficients themselves are constants: ham_ezho detaches them.)
+    (On this version Sys.Ham coefficients themselves are constants: ham_ezho
+    detaches them. B53 makes them differentiable.)
     """
     exp = ORISEL
 
@@ -135,6 +138,18 @@ def test_gradient_on_ham_routed_path():
         Am[0][i] -= h
         fd = float(((run(Ap) - run(Am)) * w).sum()) / (2 * h)
         assert abs(float(gA[0, i]) - fd) <= 1e-5 * abs(fd), (i, float(gA[0, i]), fd)
+
+
+def test_field_swept_rejects_ham_requiring_grad():
+    """The field-swept mode is not differentiable; a Ham coefficient that
+    requires grad raises like g/A/D/Q/ee, instead of a silently partial gradient
+    (only through the stick intensities). The fixed-field mode still works."""
+    h110 = torch.tensor(HAM_LIN['110'], dtype=torch.float64, requires_grad=True)
+    ham = dict(HAM_LIN, **{'110': h110})
+    with pytest.raises(NotImplementedError, match='not differentiable'):
+        _run(_sys(Ham=ham), SWEPT)
+    y = _run(_sys(Ham=ham), FIXED)
+    assert torch.isfinite(y).all() and float(y.max()) > 0
 
 
 L_MSG = r"salt does not support Sys\.L\."

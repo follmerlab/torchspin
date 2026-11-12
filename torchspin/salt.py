@@ -567,7 +567,10 @@ def salt(
         B_res_all  = [B_fixed] * n_orient
         intens_all = [orisel_w[k:k + 1] for k in range(n_orient)]
     elif any(t is not None and torch.is_tensor(t) and t.requires_grad
-             for t in (sys.g, sys.A, sys.D, sys.Q, getattr(sys, 'ee', None))):
+             for t in (sys.g, sys.A, sys.D, sys.Q, getattr(sys, 'ee', None),
+                       *(sys.Ham or {}).values())):
+        # Sys.Ham coefficients count too: a Ham system takes this path (B35)
+        # and would otherwise return a silently partial gradient.
         raise NotImplementedError('salt: the field-swept (Experiment.Range) ENDOR mode bins sticks and is not '
                                   'differentiable; use the fixed-field mode (Experiment.Field) for gradients.')
     elif sys.nElectrons == 1 and not ham_present:

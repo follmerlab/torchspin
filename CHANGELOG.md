@@ -33,8 +33,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Field-quadratic and cubic terms (lB >= 2) are dropped, as in pepper with the default
   `Options.QuadraticZeeman=False` (True raises). An explicit `Options.Method='perturb'`,
   `'perturb1'` or `'perturb2'` with `Sys.Ham` now raises `ValueError` (salt still ignores
-  `Method` otherwise). Results change only for systems with `Sys.Ham`; nothing else is routed
-  differently.
+  `Method` otherwise). The field-swept mode, which is not differentiable, now also raises
+  `NotImplementedError` when a `Sys.Ham` coefficient requires grad (as for g, A, D, Q, ee),
+  instead of returning a partial gradient once Ham coefficients are differentiable (B53).
+  Results change only for systems with `Sys.Ham`; nothing else is routed differently.
 - **`salt` raises for `Sys.L`, as EasySpin does** (B45; salt.m:133, 'salt does not support
   Sys.L.'). The first-order path ignored orbital angular momenta (S = 1/2, L = 1, soc = 100 MHz
   gave the spectrum without L exactly); the matrix path included them through `ham()` but was

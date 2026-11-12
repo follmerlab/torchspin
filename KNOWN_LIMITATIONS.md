@@ -655,12 +655,17 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
   spectrum (B35). Now Ham110/112 equal to g gives the g spectrum of the matrix path to 2e-12
   (test_salt_ham.py). Field-quadratic and cubic terms (lB >= 2) are dropped, as in pepper with
   `Options.QuadraticZeeman=False`; `QuadraticZeeman=True` raises. An explicit
-  `Options.Method='perturb*'` with `Sys.Ham` raises `ValueError`. Ham coefficients carry no
-  gradient (`ham_ezho` detaches them; § Higher-order Zeeman terms). In the field-swept mode
-  the Ham spectrum inherits `resfields_batch`'s scale, which differs from the
-  `resfields_perturb_batch` scale used for the same system given with `g` (factor 1.99 for
-  the 1H case above, 6.0 with an added 14N; a separate, open defect); fixed-field spectra are
-  not affected.
+  `Options.Method='perturb*'` with `Sys.Ham` raises `ValueError`. In 0.9.5 Ham coefficients
+  carry no gradient (`ham_ezho` detaches them; § Higher-order Zeeman terms); B53 keeps them on
+  the graph, after which fixed-field `salt` gives d spc/d Ham110 equal to a central difference
+  (-1.46337e-9 vs -1.46399e-9 for the 1H case above). The field-swept mode is not
+  differentiable: a Ham coefficient that requires grad raises `NotImplementedError` there, as
+  for g, A, D, Q and ee. In the field-swept mode the Ham spectrum comes from
+  `resfields_batch` and the same system given with `g` from `resfields_perturb_batch`; in
+  0.9.5 their scales differ (Ham 1.99x the g spectrum for the 1H case above, 6.0x with an
+  added 14N; B44). With the B44 fix (0.9.9, 1/prod(2I+1) nuclear-sublevel polarization) they
+  agree to the first-order error: amplitude 0.994, cosine 0.99989 (1H); 0.992, 0.99997 (1H +
+  14N). Fixed-field spectra are not affected.
 - **Orbital angular momentum.** `salt` raises for `Sys.L`, as EasySpin does (salt.m:133).
   Before 0.9.5 the first-order path ignored it (B45).
 - **Line width (0.8.11).** `lw_mhz` is a Gaussian FWHM, applied as EasySpin's salt.m applies
