@@ -14,6 +14,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.2] — 2026-11-11
+
+### Changed
+
+- **API: `endorfrq` returns 1-based level pairs, as EasySpin and `Options.Transitions`.** The third
+  output `transitions` was 0-based (`[i, j]` indexing the eigenvalues), unlike every other level
+  pair in torchspin (`Options.Transitions`, experiment.py; pepper's `_user_transitions`) and
+  EasySpin's `endorfrq` (`[u,v] = find(keepidx)`, endorfrq.m:331-332). It is now `[u, v]`, 1-based
+  levels in ascending energy, `u < v`; for S = 1/2 + 1H at high field the pairs are `[1, 2]` and
+  `[3, 4]` as in EasySpin. Rows still follow the returned frequencies (ascending); EasySpin orders
+  them by descending selection rate (endorfrq.m:339-341). Frequencies and intensities are unchanged,
+  and `salt` does not use the indices. **Migration:** subtract 1 (`transitions - 1`) where the pairs
+  index eigenvalues or eigenvectors. Tests: the EasySpin comparison in
+  `test_endor_enhancement.py` now uses `endor_enhancement_refs.mat`'s `Tr` without the `- 1`
+  offset; one new test checks the pairs against EasySpin's (fails on main).
+
 ## [0.9.1] — 2026-11-11
 
 ### Tests
@@ -84,6 +100,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - **Results that change:** every `orisel` result. No other torchspin function called `orisel`;
     `salt` spectra are bit-identical (checked with and without HStrain, S = 1, two electron
     spins, 14N with Q, and zero field), and saffron keeps its own selection.
+
 ## [0.8.13] — 2026-11-11
 
 ### Fixed
@@ -97,6 +114,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (torchspin extension; Ham-given g reproduces g to 1e-11 on both); the error message points to
   them. No other result changes. Supporting `Ham` on the S = 1/2 fast path is left open (see
   KNOWN_LIMITATIONS.md).
+
 ## [0.8.12] — 2026-11-11
 
 ### Fixed
@@ -115,6 +133,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Spectra with `D_` now equal those with the same `D` (1e-10); no other result changes. The
   constructor is unchanged: calling `dataclasses.replace` directly on such a system still raises
   (see KNOWN_LIMITATIONS.md for the workaround).
+
 ## [0.8.11] — 2026-11-11
 
 ### Fixed
@@ -131,6 +150,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   on the default 512-point axis. A skipped width that requires grad has zero gradient. EasySpin
   references: tests/data/salt_narrowlw_refs.mat. A Lorentzian ENDOR width and `Exp.Harmonic` are
   still not supported in salt (KNOWN_LIMITATIONS.md § ENDOR).
+
 ## [0.8.10] — 2026-11-11
 
 ### Fixed
@@ -142,6 +162,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   in `salt`, on every path (first-order, matrix, several electrons, field-swept, zero field), and
   also catches `n` assigned after construction. Results with `n = 1` are bit-identical. Give
   equivalent nuclei as separate entries of `Nucs` instead.
+
 ## [0.8.9] — 2026-11-11
 
 ### Fixed
@@ -165,6 +186,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   exact (`pepper_autograd` vs central differences to 1e-6 for d/d g_z). Spectra without
   interpolation, on axial (Dinfh) grids and on open-φ grids are bit-identical. EasySpin references:
   tests/data/ref_closedphi_interp.mat.
+
 ## [0.8.8] — 2026-11-11
 
 ### Fixed
@@ -399,6 +421,7 @@ published separately.
   ignored. EasySpin has no counterpart; validated against EasySpin crystal
   spectra summed over two rotations about B0 (an exact χ average). The
   default (`None`) is unchanged.
+
 ## [0.7.5] — 2026-11-10
 
 ### Added
@@ -423,6 +446,7 @@ published separately.
   `Method='perturb*'` raises when `Transitions` is set (EasySpin ignores the
   option there). Validated against EasySpin on 9 cases
   (`tests/data/ref_pepper_transitions.mat`).
+
 ## [0.7.4] — 2026-11-10
 
 ### Added
@@ -445,6 +469,7 @@ published separately.
   (mT).")` is raised when `pepper`, `salt`, `garlic`, `chili` or
   `resfreqs_perturb` is called. A negative field still raises in the
   constructor.
+
 ## [0.7.3] — 2026-11-10
 
 ### Added
@@ -464,6 +489,7 @@ published separately.
   against EasySpin `endorfrq`/`salt` with `Opt.Enhancement='on'`
   (`tests/data/endor_enhancement_refs.mat`), a NumPy brute force, the
   first-order factor (ν_ENDOR/ν_I)² and gradients (reverse and forward mode).
+
 ## [0.7.2] — 2026-11-10
 
 ### Added
