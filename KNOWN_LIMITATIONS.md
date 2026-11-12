@@ -146,6 +146,27 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## `SpinSystem` input shapes follow EasySpin (0.9.15)
+
+The constructor accepts the short forms EasySpin's `validatespinsys.m` expands and expands
+them the same way, and raises `ValueError` for the shapes EasySpin rejects (up to 0.9.14 many
+of these failed later in `pepper` with an `IndexError`, or were silently ignored). A 1-D
+list is read as a MATLAB row vector. Deliberate differences from EasySpin:
+
+- **torchspin shorthands are kept**, although EasySpin rejects them: a scalar `g`, `A`
+  (every nucleus and electron), `gStrain`, `DStrain` or `ee`; `[x, y, z]` for every electron
+  (`g`, `gStrain`), every nucleus (`A`, `AFrame` with one electron spin) or every pair (`ee`,
+  `eeFrame`); one `DStrain` row for every electron; `D_`, `Q` as flat lists of
+  `nNuclei`/`nElectrons` pairs or triples.
+- **Flat lists for two or three spins.** A 1-D `ee` of three values for three electron
+  spins is read as principal values for every pair (EasySpin: one isotropic value per pair);
+  give `[[J12], [J13], [J23]]` for the latter. A flat `D` for two or three electron spins is
+  likewise read as one shared `[D, E]` / principal-value set (EasySpin: one D per
+  electron); under review (B61).
+- **Missing `A` with `Nucs`** gives zero hyperfine (EasySpin raises).
+- **Not checked:** `sigma`, `sigmaFrame`, `nn`, `nnFrame` (wrong shapes still fail late) and
+  negative widths (`lw`, strains), which EasySpin rejects.
+
 ## `SpinSystem` field assignment normalizes (0.8.7)
 
 Since 0.8.7 `sys.<field> = value` rebuilds the spin system with the new value, so the

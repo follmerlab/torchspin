@@ -14,6 +14,40 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.15] — 2026-11-11
+
+### Fixed
+
+- **SpinSystem input shapes follow EasySpin's validatespinsys.m** (B62, B63). Many shapes were
+  kept unnormalized by the constructor and failed later in `pepper` with an `IndexError` or
+  `RuntimeError` (some ran silently with the wrong tensor), and a 1-D `gStrain`, `HStrain` or
+  `AStrain` of one or two values raised although EasySpin expands them. A 1-D list is read as a
+  MATLAB row vector. Now:
+  - **Expanded as in EasySpin** (were late errors or `ValueError`): `g = [g_perp, g_par]` for one
+    electron spin and `(nElectrons, 2)` axial rows; one `g` per electron in any shape; `A` as
+    `(nNuclei, nElectrons)` isotropic (e.g. `[[10.]]` for one nucleus, `[A1, A2]` for one nucleus
+    and two electrons), `(nNuclei, 2*nElectrons)` axial (e.g. `[A_perp, A_par]`) and a 1-D
+    `3*nElectrons` row for one nucleus; a scalar `A_`; a 1x6 `AFrame` row; empty `gFrame`,
+    `DFrame`, `AFrame` (zeros); `ee` as an `(nPairs, 1)` column of isotropic values; `lw`/`lwpp` as
+    `[[G, L]]`; `gStrain` rows of 1 or 2 values (`[x]` -> `[x x x]`, `[x y]` -> `[x x y]`,
+    validatespinsys.m:822-823); `HStrain`/`AStrain` with 1, 2 or 3 values in any shape; empty
+    `gStrain`, `HStrain`, `AStrain`, `DStrain` (no strain). Each gives the same tensor and a
+    bit-identical spectrum as the explicit form, and against EasySpin (`ref_spinsystem_shapes.mat`,
+    5 cases in the short form) cosine >= 0.9999990, amplitude within 0.0009.
+  - **`ValueError` at construction, as EasySpin errors**: `g` that is not one of those forms (e.g.
+    `[2.0]` or `[[2.0]]` for two electrons, a 6-vector, `(3, 3)` for two electrons); `gFrame`,
+    `DFrame`, `QFrame`, `eeFrame`, `AFrame` that are not one row per tensor (e.g. `[0.1]`);
+    `D_` without one `[D, E/D]` pair per electron (e.g. `[300.]`, was a `RuntimeError`); `A`
+    inconsistent with the numbers of nuclei and electrons (e.g. `[10.]` for two nuclei, `[10.]`
+    or `[Ax, Ay, Az]` for two electrons); `Q` that does not give `(nNuclei, 3)`; `ee` that does
+    not give `(nPairs, 3)` or `(3*nPairs, 3)`; `lw`/`lwpp` with 0 or 3+ values (a third value was
+    ignored); `gStrain` without one row per electron; `HStrain`/`AStrain` with 4+ values; and
+    `A`, `AFrame`, `Q` or a nonzero `QFrame` without `Nucs` (were silently ignored).
+  - **Unchanged:** every input that worked before, including torchspin's own shorthands (scalar
+    `g`, `A`, `gStrain`, `DStrain`; `[x, y, z]` for every electron, nucleus or pair). The
+    reading of a flat `D` for two or three electrons is not changed (see B61).
+  Gradients flow through the expanded forms.
+
 ## [0.9.12] — 2026-11-11
 
 ### Fixed

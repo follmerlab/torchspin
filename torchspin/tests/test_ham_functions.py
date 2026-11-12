@@ -284,7 +284,10 @@ class TestHamComplete:
             S=[1/2, 1/2],
             g=[[2.0, 2.0, 2.0], [2.1, 2.1, 2.1]],
             Nucs='1H',
-            A=[[10, 10, 10], [8, 8, 8]],
+            # one nucleus, two electrons: (nNuclei, 3*nElectrons).  The (2, 3)
+            # form used up to 0.9.14 silently dropped electron 2's coupling;
+            # it now raises, as in EasySpin.
+            A=[[10, 10, 10, 8, 8, 8]],
             ee=[[5, 5, 5]]
         )
 

@@ -44,6 +44,7 @@ Tests comparing against these are true cross-validation.
 | `generate_pepper_zerofield_refs.m` | `ref_pepper_zerofield.mat` | Zero-field frequency sweeps (`Exp.Field = 0`, torchspin `Options.ZeroField`, 0.7.4): S = 1 with D, E (plain, Boltzmann 0.1 K, HStrain), S = 3/2 Kramers, S = 1/2 + 1H isotropic hyperfine (5 cases) |
 | `generate_pepper_quadzeeman_refs.m` | `ref_pepper_quadzeeman.mat` | Field-quadratic `Sys.Ham220`/`Ham222` terms in pepper (S=1 with lwpp and with HStrain, S=3/2), EasySpin field sweeps, and one frequency sweep (`S1_ham2_freqsweep`, added 2026-11-11; needs EasySpin's `resfreqs_matrix.m` Ham check from StollLab/EasySpin d46e5ef9, applied as a one-line patch to the local Dec-2025 copy; the three field-sweep cases regenerated bit-identical); `Options.QuadraticZeeman` (0.7.1) |
 | `generate_orisel_refs.m` | `ref_orisel.mat` | `orisel` (0.9.0, B26; EasySpin main, R2024b, 2026-11-11): `[Weights,Trans]` and the summed weights for 18 cases: 12 with `Exp.Orientations` (a 400-point Fibonacci sphere; rhombic S=1/2 at the gz/gy/gx fields, Cu(II) 63Cu at 2 fields, g=[1.9 2.0 6.0] at g=6 and g=4, S=1 with D and HStrain incl. `AveragedIntensity` false, S=3/2 with D, two coupled electrons, `ExciteWidth` Inf) and 6 on default grids, stored with the orientations orisel.m builds (hamsymm D2h, rotated D2h, C2h from an AFrame, Dinfh, O3, explicit Ci) |
+| `generate_spinsystem_shapes_refs.m` | `ref_spinsystem_shapes.mat` | SpinSystem input shorthands expanded by validatespinsys.m (0.9.15, B62/B63), each pepper case given in the short form: `g = [gperp gpar]` axial, `gStrain = [x y]`, `HStrain = [x y]`, `A = [Aperp Apar]` (14N), `A = [A1 A2]` for one 1H and two electron spins (5 cases) |
 
 ### MATLAB-sourced .mat files (by module)
 
@@ -68,6 +69,7 @@ Tests comparing against these are true cross-validation.
 `ref_pepper_transitions.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-10; stores each case's `Sys`/`Exp`/`Opt`)
 `ref_pepper_narrowlw.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
 `ref_closedphi_interp.mat` — MATLAB-gen (`generate_closedphi_interp_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
+`ref_spinsystem_shapes.mat` — MATLAB-gen (`generate_spinsystem_shapes_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
 
 `ref_nucspin_core.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; spectra only, the systems are written out in `test_nucspin_keep_fields.py`)
 
