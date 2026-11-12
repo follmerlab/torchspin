@@ -14,6 +14,70 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.28] — 2026-11-12
+
+### Fixed
+
+- **Field sweeps whose range cuts transitions at some orientations were far from converged
+  (B88, B75, B91).** The matrix resonance search covers `Exp.Range` only, so such transitions
+  have knots without a resonance (NaN). pepper and pepper_autograd then interpolated the
+  positions of every transition linearly, as EasySpin does (pepper.m:701, 763-772; 0.9.4, B31),
+  which reproduces the coarse-grid facets, and dropped every triangle with a NaN vertex, so
+  triangles crossing the range ends were lost even without interpolation (B75; EasySpin too).
+  Now the level pairs whose resonance count differs between orientations are searched again
+  over Range ± 0.5 W (W = sweep width, lower edge clamped at 0; all orientations, so looping
+  transitions keep consistent occurrence indices) and replaced wholesale
+  (`pepper._research_missing_knots`); a pair's new resonances are kept only if fewer are
+  missing and no orientation loses one, and pairs that improved but are still incomplete are
+  searched again over a doubled window, up to ± 4 W; projection stays on `Exp.Range` and
+  clips their out-of-range vertices. Only slots that still miss knots are interpolated linearly
+  (`L1`; `L3` on axial grids), all others keep the global cubic `G3`; the global switch in
+  `pepper._interp_slot` and `pepper_autograd._interp_slots_t` is gone. Against converged
+  references (no interpolation, GridSize [181 1], wide sweep cropped;
+  tests/data/ref_missing_knots.npz), 1 − cosine / max|dev| relative to the maximum on the
+  interior of the range (ends ± 5 FWHM dropped), pepper and pepper_autograd alike:
+  - 63Cu with A = [50 50 500] MHz tilted by AFrame [0 0.4 0], lw 0.3 mT, [290 350] mT, auto C2h
+    [19 4]: 0.201 / 0.62 → 0.0525 / 0.33 (cosine 0.7987 → 0.9475; the rest is the C2h grid
+    at [19 4], a wide sweep gives the same spectrum to 3e-11);
+  - 91Zr, A = 780 MHz, D2h [19 4], [300 400] mT: 6.7e-4 / 0.050 → 4.4e-6 / 0.0049;
+  - S = 5/2 with D and B4, D2h [19 4], [200 480] mT: 0.0434 / 0.236 → 9.6e-5 / 0.0135;
+  - B75: a narrow sweep without interpolation (Cu, [31 1]) vs the crop of a wide one at the
+    same grid 0.044 → 2.6e-11 (stick spectrum, whole range but the first bin: 0.059 → 1.6e-11).
+
+  With the range-edge padding of 0.9.6 (`Options.PaddingMultiplier`) the full-range numbers
+  equal the interior ones: Cu [19 4] cosine 0.7987 → 0.9475, Cu [181 1] 0.99569 → 1.000000
+  (max dev 0.18 → 3e-4), 91Zr 0.94289 → 0.99987, S = 5/2 0.95664 → 0.99990. pepper and
+  pepper_autograd agree to 1.3e-11 (B91); gradients through the re-searched slots (d/dA, d/dg,
+  d/dlw) agree with converged central differences to 1e-6 / 4e-8 / 1e-8. Spectra in which every
+  level pair resonates equally often at every orientation take the old path unchanged
+  (29-spectrum sweep over 9 grid symmetries, strain, perturbation theory, frequency sweeps,
+  pepper and pepper_autograd: bit-identical). Frequency sweeps are not affected
+  (`resfreqs_batch` has no window). Cost: one extra search of the partly missing pairs per
+  doubling (S = 5/2 [19 4] 0.04 → 0.2 s). **Deliberate deviation from EasySpin**, which keeps
+  the NaNs, interpolates every slot linearly and drops range-edge triangles: on its references
+  whose ranges cut transitions 1 − cosine up to 0.06 (Oh grid 0.54), each farther from the
+  converged reference than torchspin (Oh 0.579 → 2.0e-3; S = 5/2 parallel mode, whose looping
+  pairs still miss knots, 5.1e-3 → 7.0e-4). See KNOWN_LIMITATIONS § Field sweeps
+  whose range cuts transitions.
+
+### Tests
+
+- `test_missing_knots.py` (new): the three cases against converged references (interior bounds
+  at measured × 1.05), narrow vs wide-crop at the same grid (B75 with and without
+  interpolation, stick and HStrain), pepper vs pepper_autograd, gradients vs central
+  differences, the re-search window and per-slot interpolation, and that a range holding every
+  resonance never re-searches. References `tests/data/ref_missing_knots.npz` from
+  `tests/data/generate_missing_knots_refs.py` (torchspin, no interpolation, wide sweep;
+  checked to need no re-search).
+- `test_pepper_nanlinear_matlab_validation.py` (4 cases), `test_interp_nan_edges_matlab_validation.py`
+  (7 spectra), `test_sphgrid_maxphi_matlab_validation.py` (4 cases) and
+  `test_pepper_parallel_matlab_validation.py` (S52_parallel): the EasySpin
+  comparisons of spectra whose ranges cut transitions are strict xfails with the measured
+  deviation; each case is now checked against a converged reference (bounds measured × 1.05),
+  which it is closer to than the EasySpin-identical 0.9.27 spectrum.
+  `test_interp_nan_edges_...::test_autograd_vs_central_differences[b50_D]`: d/dE at E = 0 is
+  0 by x ↔ y symmetry (AD −1.8e-14, CD −8e-11, ≤ 3.3e-10 of d/dD) and is now asserted to be 0;
+  0.9.27 gave −1.07e-3 in both because its missing-knot interpolation broke the symmetry.
 ## [0.9.21] — 2026-11-12
 
 ### Fixed
