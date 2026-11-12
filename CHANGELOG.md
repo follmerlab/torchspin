@@ -14,6 +14,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.16] — 2026-11-11
+
+### Fixed
+
+- **`pepper_autograd` with `Exp.Orientations` now honors `Options.QuadraticZeeman` and
+  `Options.Transitions`, as `pepper` does (B64).** Its orientation branch called
+  `resfields_batch` without the higher-order Zeeman operators and without the user's level
+  pairs, so the spectrum silently equaled the one without the option: for S = 1,
+  D = [300 30] MHz with `Sys.Ham220`/`Ham222` and `QuadraticZeeman=True` it differed from pepper
+  by 1.04 (one orientation) and 1.03 (five) of the maximum, and with `Transitions=[[1,2]]` by
+  1.00 and 0.39. Both now equal pepper to ≤ 5e-14. `Method='perturb'` with either option now
+  raises on this path too, as in pepper and on the powder path. The powder path, and every
+  spectrum without these options, is unchanged. EasySpin references:
+  tests/data/ref_pepper_orientations_qz.mat (crystal sums as the exact χ average; 2.5e-3 with
+  Ham2xx, which is EasySpin's linear-moment dB/dE, and 1.9e-4 for the level-pair selection).
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed
