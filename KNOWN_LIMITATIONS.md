@@ -631,6 +631,12 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
   scale (|⟨i|μ⊥|j⟩|² in (MHz/mT)²); the first-order path matches EasySpin `perturb1` to
   round-off and EasySpin's default to the first-order error (0.3 % in area for 1H and
   1H+14N with |A| ≤ 7 MHz at 326.5 mT, about 1 % for 1H with |A| up to 16 MHz).
+- **Field-swept mode (`Experiment.Range`).** EasySpin's salt has no such mode (salt.m:199);
+  torchspin weights each ENDOR spectrum by the EPR intensity at its resonance field. Since 0.9.9
+  the perturbation (one electron) and matrix EPR solvers share the infinite-temperature 1/prod(2I+1)
+  nuclear-sublevel polarization, as EasySpin's resfields and resfields_perturb do; before, the
+  matrix path was prod(2I+1) times too large (6x for 1H + 14N). The ENDOR step sums the nuclear
+  transitions of all levels, so a spectator electron spin doubles them.
 - **Absolute scale vs EasySpin.** The fixed-field spectrum is the per-bin,
   orientation-averaged amplitude: EasySpin's `salt` output times Δx/(8π²) (Δx = rf bin width
   in MHz; EasySpin integrates over χ with 2π and returns a density), for every path.
