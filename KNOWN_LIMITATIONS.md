@@ -423,7 +423,7 @@ and `resfreqs_perturb` always). A negative field still raises in the constructor
 
 - `salt` with `Options.ZeroField` and `Options.Enhancement` (0.7.3) together raises `NotImplementedError`: the zero-field cluster path sums nuclear-only rates.
 
-## Higher-order Zeeman terms (`Sys.Ham*`): deliberate deviation from EasySpin (0.6.7, 0.9.8)
+## Higher-order Zeeman terms (`Sys.Ham*`): deliberate deviation from EasySpin (0.6.7, 0.9.8, 0.9.13)
 
 `ham(Sys)` returns `(H0, mux, muy, muz)` with H(B) = H0 − μ·B. The simulators that
 work from this decomposition (pepper's resonance search, `levels`, `endorfrq`, `salt`,
@@ -461,6 +461,28 @@ work from this decomposition (pepper's resonance search, `levels`, `endorfrq`, `
   all-zero spectrum for a Ham-only Zeeman term, as torchspin did. torchspin raises
   deliberately. The default `Method='matrix'` (and `'hybrid'`) include `Ham` and
   reproduce the same g to 1e-9 or better.
+- **Slow-motion and fast-motion codes raise for `Ham` (0.9.13).** `chili` (and
+  `chili_sle`), `cardamom` and `fastmotion`/`fastmotion_t` build the Zeeman term from
+  `Sys.g` only and ignored `Sys.Ham` without an error; with g given as
+  `Ham110`/`Ham112` they ran with g = 0. They now raise `ValueError` for any `Sys.Ham`
+  entry, as EasySpin's chili (chili.m:160) and torchspin's garlic do. EasySpin's
+  cardamom and fastmotion do not check: cardamom runs with g = 0 and fastmotion fails
+  because `Sys.g` is missing.
+- **pepper's automatic field range (0.9.13).** Without `Exp.Range`/`Exp.CenterSweep`
+  the range comes from the principal values of `Sys.g` (EasySpin pepper.m:241-272). For
+  a `Ham110`/`Ham112` Zeeman term g is zero; up to 0.9.12 this raised
+  `ZeroDivisionError`, and EasySpin fails with an index error (pepper.m:324). torchspin
+  now raises a `ValueError` asking for `Exp.Range` or `Exp.CenterSweep`.
+- **`gStrain` with a `Ham110`/`Ham112` Zeeman term (0.9.13): deliberate deviation.**
+  The g-strain widths are gStrain/g; with g = 0 they were infinite and `pepper`
+  returned an all-zero spectrum without an error, as EasySpin's pepper does (with a
+  `gFrame` EasySpin returns a nonzero but wrong spectrum). torchspin now takes g from
+  the g-equivalent matrix of the `Ham110`/`Ham112` terms (`ham_ezho.ham_linear_g`),
+  in the g frame given by `Sys.gFrame`. The result equals the same system with that g
+  as `Sys.g` (to 1e-13) and EasySpin's spectrum of that system (cosine > 0.9999999;
+  `ref_ham_gstrain.mat`). If the g-equivalent matrix is not diagonal in `Sys.gFrame`,
+  torchspin raises `ValueError`, as for gStrain with a full g matrix. Other lB = 1
+  terms (`Ham13x`, …) are not part of this g.
 
 ## Simulator — field-quadratic Zeeman terms, `Options.QuadraticZeeman` (0.7.1)
 
@@ -494,8 +516,11 @@ terms are included as H(B) = H0 − B n·μ + B² n·G2·n + B³ G3[n,n,n], whic
   four outputs, which errors. With that fix, torchspin's frequency sweep matches
   EasySpin (`S1_ham2_freqsweep` in `ref_pepper_quadzeeman.mat`: cosine 1.0000000,
   amplitude 0.99988; without the Ham terms the cosine to that reference is 0.976).
-- `Sys.Ham` coefficients are constants (`ham_ezho` detaches them): gradients
-  flow to g, D, A, … but not to the Ham terms themselves.
+- `Sys.Ham` coefficients are differentiable since 0.9.13 (before, `ham_ezho` detached
+  them). Gradients flow through `ham`, `levels`, `pepper_autograd` (including the
+  quadratic terms with `QuadraticZeeman` on powder grids) and `pepper`, which sends a system with a
+  `Ham` coefficient that requires grad to its differentiable path. Values are
+  bit-identical to 0.9.12.
 - In the McGavin–Tennant–Weil formalism the field enters as a rank-lB spherical
   tensor, so a pure B²·identity term cannot be written (`Ham200` is ignored by
   `ham_ezho`, as in EasySpin). This does not change transition energies.

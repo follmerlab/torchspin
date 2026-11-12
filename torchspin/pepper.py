@@ -1405,7 +1405,18 @@ def _pepper_single(
         g = sys.g.detach().cpu().numpy()
         gvals = np.linalg.eigvalsh(g) if sys.fullg else g.reshape(-1)
         gmax, gmin = float(np.max(gvals)), float(np.min(gvals))
-        minB = PLANCK * (float(exp.mwFreq) * 1e9 - hf) / BMAGN / gmax / 1e-3
+        if gmin == 0.0 or gmax == 0.0:
+            # B55: g = 0 when the linear Zeeman term is given as Ham110/Ham112.
+            # EasySpin's pepper.m (241-272) takes the range from Sys.g alone
+            # too and then fails with an index error (pepper.m:324).
+            from torchspin.spinsystem import _ham_linear_orders
+            _keys = _ham_linear_orders(sys)
+            why = (f"the linear Zeeman term is given as Sys.Ham* ({', '.join(_keys)}) "
+                   f"and Sys.g is zero" if _keys else 'a principal g value is zero')
+            raise ValueError(
+                f'Cannot automatically determine field range: it is computed from '
+                f'Sys.g, and {why}. Please provide Exp.CenterSweep or Exp.Range.')
+        minB =PLANCK * (float(exp.mwFreq) * 1e9 - hf) / BMAGN / gmax / 1e-3
         maxB = PLANCK * (float(exp.mwFreq) * 1e9 + hf) / BMAGN / gmin / 1e-3
         lw_max = float(max(sys.get_lw()))
         center = (maxB + minB) / 2

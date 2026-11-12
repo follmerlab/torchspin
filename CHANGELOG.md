@@ -14,6 +14,45 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.13] — 2026-11-11
+
+### Added
+
+- **Gradients with respect to `Sys.Ham` coefficients (B53).** `ham_ezho` detached the `Ham`
+  coefficients, so `ham`, `levels`, `pepper_autograd` and `pepper` gave no gradient for them
+  (`Ham110`, `Ham112`, and with `Options.QuadraticZeeman` `Ham2xx`/`Ham3xx`). The coefficients
+  now stay on the autograd graph; a coefficient that is zero also gets its gradient. `pepper`
+  sends a system whose `Ham` coefficient requires grad to its differentiable path
+  (`autograd.inputs_require_grad` now looks into `Sys.Ham`). Values are bit-identical (1188
+  matrices compared against 0.9.12 for S = 1/2 to 5/2 and two electrons); `ham(Sys)` and
+  `pepper` take the same time. Gradients match central differences to 1e-8 (crystal
+  orientations, all six `Ham110`/`Ham112` coefficients) and the chain rule through the
+  g-equivalent matrix to 1e-9 (powder).
+- `ham_ezho.ham_linear_g(Sys, e)`: the g matrix equivalent to the `Ham110`/`Ham112` terms of
+  electron e.
+
+### Fixed
+
+- **`chili`, `cardamom` and `fastmotion` now raise for `Sys.Ham` (B54).** They build the
+  Zeeman term from `Sys.g` only and ignored `Sys.Ham` without an error; for g given as
+  `Ham110`/`Ham112` they ran with g = 0. They now raise `ValueError` for any `Sys.Ham`
+  entry, as EasySpin's chili does (chili.m:160) and torchspin's garlic already did.
+  EasySpin's cardamom and fastmotion do not check.
+- **pepper's automatic field range raises a clear error for g = 0 (B55).** With no
+  `Exp.Range`/`Exp.CenterSweep` and the linear Zeeman term given as `Ham110`/`Ham112`, the
+  range computation divided by g = 0 and raised `ZeroDivisionError`. EasySpin takes the
+  range from `Sys.g` too and fails with an index error (pepper.m:324). torchspin now raises
+  `ValueError` and asks for `Exp.Range` or `Exp.CenterSweep`.
+- **`gStrain` with a `Ham110`/`Ham112` Zeeman term no longer gives an all-zero spectrum
+  (B56).** The strain widths divided gStrain by g = 0, and `pepper` (matrix) returned zero
+  without an error (S = 1/2, g ≡ [2.01 2.005 1.998], gStrain [0.01 0.005 0.002]: max 0 against
+  327.7 for the same g as `Sys.g`). EasySpin's pepper does the same. gStrain is now taken
+  relative to the g-equivalent of the `Ham` terms in `Sys.gFrame` (in `pepper`,
+  `pepper_autograd` and `resfields`); the spectrum equals the `Sys.g` one to 1e-13 and
+  EasySpin's spectrum of that g system at cosine > 0.9999999 (`ref_ham_gstrain.mat`, three
+  cases incl. a `gFrame` and a 1H). A g-equivalent matrix that is not diagonal in
+  `Sys.gFrame` raises `ValueError`, as gStrain with a full g matrix does.
+
 ## [0.9.8] — 2026-11-11
 
 ### Fixed
