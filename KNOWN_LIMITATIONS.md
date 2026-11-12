@@ -194,6 +194,26 @@ amplitude (S = 1/2, g = [2 2.05 2.1], GridSize [19 4]).
 - Grids without interpolation, axial (Dinfh) grids and open-φ grids (Ci, C2h, C4h, C6h, S6, C1)
   are not affected.
 
+## Powder grid interpolation when resonances are missing (fixed 0.9.4)
+
+When any transition has no resonance at some knot of the coarse grid (it leaves the sweep range,
+or the level pair does not resonate there), EasySpin interpolates the positions of every
+transition linearly (`L1`, 2-D grids) or with the local cubic `L3` (axial grids)
+(pepper.m:701, 763-772). Up to 0.9.3 `pepper` switched only the slots that carried NaNs and
+splined the rest with `G3`; `pepper_autograd` and `salt` were already right. S = 5/2 with
+D = 300 MHz and a B4 term on an explicit D2h grid (Range [200 480] mT) was cosine 0.9587 at
+Harmonic 1.
+
+- EasySpin agreement (tests/data/ref_pepper_nanlinear.mat), closed-φ grids (D2h explicit and
+  from hamsymm): cosine ≥ 1 − 3e-8, amplitude within 4e-5, pepper and pepper_autograd.
+- **Open-φ grids with missing resonances are not exact.** The same S = 5/2 system on an explicit
+  C2h grid is cosine 0.9964 and amplitude 1.053 of EasySpin (Ci: 0.9986, 1.017), in `pepper`
+  and `pepper_autograd` alike (before 0.9.4 `pepper` was 0.9395 / 0.9478). Without
+  interpolation (GridSize [19 1]) or without missing resonances (Range [0 800] mT) the same
+  grid agrees to 2e-8 / 2e-6, so the residual is in the linear interpolation or projection of
+  open-φ grids with NaN knots. Not traced; the C2h case is an `xfail(strict=True)` in
+  `test_pepper_nanlinear_matlab_validation.py`.
+
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
 The edge-bin integrals of `projecttriangles` were written as differences of O(bin index)
@@ -931,8 +951,11 @@ segment; for 63Cu+14N its intensities are 3–4 % off the exact value and its
 spectrum disagrees with its own perturb2 (cosine 0.951), while torchspin's exact
 intensities agree with EasySpin perturb2 at 0.988 (`septrans_CuN_matrix` xfail).
 (2) For S=5/2 in parallel mode torchspin and EasySpin agree exactly on the coarse
-grid; with the default [19 4] interpolation EasySpin sits farther from its own
-converged spectrum (0.9947) than torchspin (0.9983); the test threshold is 0.995.
+grid. With the default [19 4] interpolation they differed (cosine 0.9959) because
+torchspin splined the positions of transitions that resonate everywhere while EasySpin
+interpolates all of them linearly once any transition misses a knot; fixed in 0.9.4
+(cosine 0.99989, see § Powder grid interpolation when resonances are missing). The test
+threshold is 0.9998 (was 0.995).
 
 Internals aligned with EasySpin in the process: global transition pre-/post-
 selection (`Opt.Threshold`) instead of per-orientation thresholds, a

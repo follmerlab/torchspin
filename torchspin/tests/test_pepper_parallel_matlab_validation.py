@@ -48,9 +48,10 @@ def test_parallel_mode_vs_matlab(cases, name):
     # Cu_parallel is a purely forbidden-transition spectrum (S=1/2 + 63Cu); its
     # weak lines depend on transition pre-selection (EasySpin: global maximum
     # transition rate over orientations; torchspin: per-orientation threshold).
-    # S52_parallel: looping transitions — torchspin and EasySpin agree exactly without
-    # interpolation (cosine 1.0000 at GridSize [19 1] and [73 1]); with the default [19 4]
-    # interpolation EasySpin is 0.9947 from its own converged spectrum, torchspin 0.9983.
-    cs_min = {'Cu_parallel': 0.98, 'S52_parallel': 0.995}.get(name, 0.999)
+    # S52_parallel: some transitions have no resonance at some knots, so EasySpin
+    # interpolates every position linearly (pepper.m:763-772).  Up to 0.9.3 pepper splined
+    # the slots without NaNs (B31) and was cosine 0.99587, amplitude 1.0112; since 0.9.4
+    # cosine 0.99989, amplitude 0.99984 (threshold raised from 0.995).
+    cs_min = {'Cu_parallel': 0.98, 'S52_parallel': 0.9998}.get(name, 0.999)
     assert cs > cs_min, f"{name}: cosine {cs:.5f}"
     assert abs(ratio - 1) < 0.03, f"{name}: amplitude ratio {ratio:.4f}"
