@@ -163,12 +163,6 @@ These are the genuine independent oracles that
 **MD analysis:**
 `mdhmm_*.mat` (4 files), `mdload_files_*.mat` (2 files) — Python
 
-**Frame gradients (0.9.17):**
-`ref_frame_nograd.npz` — Python (torchspin main 0.9.0 via
-`generate_frame_nograd_refs.py`): non-grad outputs with tilted frames, a
-regression check that the differentiable `erot` path left them unchanged; the
-platform and torch version that wrote it are stored with the arrays.
-
 ---
 
 ## Notes

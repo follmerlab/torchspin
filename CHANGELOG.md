@@ -38,9 +38,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **`hamsymm` with a frame that requires grad.** The eigenvalue path (full tensors, Stevens
   terms) called `.numpy()` on the frame and raised `RuntimeError`. `hamsymm` now runs without
   a graph: the point group and grid frame are a discrete decision on the detached values.
-- Values without grad are unchanged: 30 outputs of `ham`, `pepper` (matrix and perturb),
-  strain widths, `salt` and `saffron` with tilted frames are bit-identical to 0.9.0
-  (`tests/data/ref_frame_nograd.npz`, `generate_frame_nograd_refs.py`).
+- Values without grad are unchanged: 466 arrays (`ham`, `H0`, `muz` for 150 random systems
+  with every frame type, 16 `pepper` spectra with strains) and 30 outputs of `ham`, `pepper`
+  (matrix and perturb), strain widths, `salt` and `saffron` with tilted frames were
+  bit-identical to 0.9.0. The test suite checks the property within the build: with a frame
+  that requires grad the same 30 configurations give the float path's values (bit-identical;
+  `ham` with `BFrame` within 4 ulp, `pepper_autograd` with a grad `gFrame` within 1e-11),
+  and a tensor frame without grad is bit-identical to a list.
 
 ## [0.9.0] — 2026-11-11
 
