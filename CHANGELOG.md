@@ -31,6 +31,73 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   tests/data/ref_pepper_nanlinear.mat. On open-φ grids (C2h, Ci) a residual remains in both
   implementations; see KNOWN_LIMITATIONS.md.
 
+## [0.9.3] — 2026-11-11
+
+### Fixed
+
+- **Wrong φ range of the D3d, D4h, D6h, Oh, C6h and S6 powder grids (B36), and `Options`
+  rejected these grid symmetries (B51).** `sphgrid` covered φ = 0..π/2 for D6h, D4h, Oh, D3d
+  and C6h and 0..π for S6. EasySpin (private/gridparam.m) and torchspin's own `gridparam`, used
+  by pepper's grid interpolation and by `grid_triangulation`, use π/6, π/4, π/4, π/3, π/3 and
+  2π/3. With orientations without resonances, pepper interpolated the coarse knots in
+  gridparam's layout although they came from the other grid: S = 5/2 with D and a tetragonal
+  B4 (hamsymm D4h) over [200 480] mT had cosine 0.673 with EasySpin, a cubic B4 (Oh) over
+  [250 430] mT 0.491. Even with resonances at all knots, the D3d, C6h and S6 grids held a
+  non-integer number of symmetry wedges, which affected every `sphgrid` caller: a trigonal B4
+  (D3d) over [0 800] mT had cosine 0.964; the same system on an explicit S6 grid 0.901, a
+  hexagonal B6 (D6h) on a C6h grid 0.735 (amplitude 1.83). The sphere average of a D3d-, S6- or
+  C6h-invariant function was 2-4 % off. `sphgrid` now takes all grid parameters from one table
+  (`sphgrid._GRIDPARAM`, EasySpin's values; `_SYM_PARAMS` is gone), and all nine EasySpin
+  cases agree to cosine ≥ 0.99993 and amplitude within 5e-4, for `pepper` and
+  `pepper_autograd`. The knot counts do not change. With missing knots, pepper now also
+  interpolates the positions of transitions that resonate at every knot linearly, as EasySpin
+  does once any transition misses a knot (its `L1` mode); before, those were bicubic (Oh case
+  with only the grid fixed: cosine 0.463). This part applies to every grid: the D4h system
+  above on an explicit D2h grid goes from cosine 0.959 to 1.0000000 with EasySpin. `Options`
+  accepted only Dinfh, D2h, C2h, Ci, C1, O3 and `'auto'`; it now accepts EasySpin's 14 grid
+  symmetries, `'auto'` and `''` (same as `'auto'`, as in pepper and EasySpin). The D2h, Th,
+  C4h, C2h, Ci, C1, Dinfh and O3 grids are unchanged, and so are their spectra unless some
+  orientations have no resonance.
+
+## [0.9.2] — 2026-11-11
+
+### Changed
+
+- **API: `endorfrq` returns 1-based level pairs, as EasySpin and `Options.Transitions`.** The third
+  output `transitions` was 0-based (`[i, j]` indexing the eigenvalues), unlike every other level
+  pair in torchspin (`Options.Transitions`, experiment.py; pepper's `_user_transitions`) and
+  EasySpin's `endorfrq` (`[u,v] = find(keepidx)`, endorfrq.m:331-332). It is now `[u, v]`, 1-based
+  levels in ascending energy, `u < v`; for S = 1/2 + 1H at high field the pairs are `[1, 2]` and
+  `[3, 4]` as in EasySpin. Rows still follow the returned frequencies (ascending); EasySpin orders
+  them by descending selection rate (endorfrq.m:339-341). Frequencies and intensities are unchanged,
+  and `salt` does not use the indices. **Migration:** subtract 1 (`transitions - 1`) where the pairs
+  index eigenvalues or eigenvectors. Tests: the EasySpin comparison in
+  `test_endor_enhancement.py` now uses `endor_enhancement_refs.mat`'s `Tr` without the `- 1`
+  offset; one new test checks the pairs against EasySpin's (fails on main).
+
+## [0.9.1] — 2026-11-11
+
+### Tests
+
+- **EasySpin reference for zero-field lines exactly on bin edges with an interpolated grid.**
+  S = 1, D = [-700 -1300 2000] MHz puts its lines (0.6, 2.7, 3.3 GHz) on points of a 10 MHz
+  axis, i.e. on bin edges. With GridSize [19 4] or [10 8] the positions are interpolated, and
+  `pepper._zf_const_pos` gives every fine-grid vertex the coarse position, so each line goes into
+  one bin as in EasySpin. Without it, interpolation round-off moves 5-39 % of each line into the
+  lower bin (sticks: 1 - cosine 0.069-0.079; Gaussian 30 MHz: 1.0e-2-1.2e-2; Gaussian 300 MHz:
+  max difference 1.9e-2). With it, torchspin matches EasySpin to max |difference| / max
+  6.9e-15 for sticks and both widths (`ref_pepper_zerofield_edge.mat`, 8 new tests; all 8 fail
+  with `_zf_const_pos` replaced by the identity). Which of the two bins a line on an edge lands
+  in depends on the last bit of the eigenvalues (B19), so the tests accept bin k or k - 1 and
+  rebuild the reference from EasySpin's single-pair spectra (`Opt.Transitions`) at torchspin's
+  bins; the tolerance (1e-12) holds either way. No code change.
+
+### Changed
+
+- `pepper._zf_const_pos` docstring and call-site comments give its current purpose (single-bin
+  deposit of a zero-field line on a bin edge). The near-zero-width triangle cancellation it was
+  written for was fixed in the projection in 0.8.4 (B18).
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed
@@ -78,6 +145,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - **Results that change:** every `orisel` result. No other torchspin function called `orisel`;
     `salt` spectra are bit-identical (checked with and without HStrain, S = 1, two electron
     spins, 14N with Q, and zero field), and saffron keeps its own selection.
+
 ## [0.8.13] — 2026-11-11
 
 ### Fixed
@@ -91,6 +159,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (torchspin extension; Ham-given g reproduces g to 1e-11 on both); the error message points to
   them. No other result changes. Supporting `Ham` on the S = 1/2 fast path is left open (see
   KNOWN_LIMITATIONS.md).
+
 ## [0.8.12] — 2026-11-11
 
 ### Fixed
@@ -109,6 +178,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Spectra with `D_` now equal those with the same `D` (1e-10); no other result changes. The
   constructor is unchanged: calling `dataclasses.replace` directly on such a system still raises
   (see KNOWN_LIMITATIONS.md for the workaround).
+
 ## [0.8.11] — 2026-11-11
 
 ### Fixed
@@ -125,6 +195,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   on the default 512-point axis. A skipped width that requires grad has zero gradient. EasySpin
   references: tests/data/salt_narrowlw_refs.mat. A Lorentzian ENDOR width and `Exp.Harmonic` are
   still not supported in salt (KNOWN_LIMITATIONS.md § ENDOR).
+
 ## [0.8.10] — 2026-11-11
 
 ### Fixed
@@ -136,6 +207,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   in `salt`, on every path (first-order, matrix, several electrons, field-swept, zero field), and
   also catches `n` assigned after construction. Results with `n = 1` are bit-identical. Give
   equivalent nuclei as separate entries of `Nucs` instead.
+
 ## [0.8.9] — 2026-11-11
 
 ### Fixed
@@ -159,6 +231,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   exact (`pepper_autograd` vs central differences to 1e-6 for d/d g_z). Spectra without
   interpolation, on axial (Dinfh) grids and on open-φ grids are bit-identical. EasySpin references:
   tests/data/ref_closedphi_interp.mat.
+
 ## [0.8.8] — 2026-11-11
 
 ### Fixed
@@ -393,6 +466,7 @@ published separately.
   ignored. EasySpin has no counterpart; validated against EasySpin crystal
   spectra summed over two rotations about B0 (an exact χ average). The
   default (`None`) is unchanged.
+
 ## [0.7.5] — 2026-11-10
 
 ### Added
@@ -417,6 +491,7 @@ published separately.
   `Method='perturb*'` raises when `Transitions` is set (EasySpin ignores the
   option there). Validated against EasySpin on 9 cases
   (`tests/data/ref_pepper_transitions.mat`).
+
 ## [0.7.4] — 2026-11-10
 
 ### Added
@@ -439,6 +514,7 @@ published separately.
   (mT).")` is raised when `pepper`, `salt`, `garlic`, `chili` or
   `resfreqs_perturb` is called. A negative field still raises in the
   constructor.
+
 ## [0.7.3] — 2026-11-10
 
 ### Added
@@ -458,6 +534,7 @@ published separately.
   against EasySpin `endorfrq`/`salt` with `Opt.Enhancement='on'`
   (`tests/data/endor_enhancement_refs.mat`), a NumPy brute force, the
   first-order factor (ν_ENDOR/ν_I)² and gradients (reverse and forward mode).
+
 ## [0.7.2] — 2026-11-10
 
 ### Added
