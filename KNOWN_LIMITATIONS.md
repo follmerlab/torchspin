@@ -146,6 +146,16 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## `levelsplot` resonances (fixed 0.9.19)
+
+Before 0.9.19 `levelsplot(..., mwFreq=...)` drew no transitions: the resonance call raised a
+`TypeError` that was swallowed (B78). It now follows EasySpin levelsplot.m:244-272 and errors
+propagate. Differences from EasySpin, both from torchspin diagonalizing exactly at every resonance
+field: fields differ by up to 2.9e-5 mT (EasySpin's are roots of its spline level model) and
+relative intensities (line colors, stick heights) by up to 1.9e-4 (EasySpin interpolates
+eigenvectors between knots, `RediagLimit` 0.95; see § Pepper — round 3). Field-quadratic and higher
+`Sys.Ham*` terms are dropped, as for the level diagram (§ Simulator — field-quadratic Zeeman terms).
+
 ## `SpinSystem` field assignment normalizes (0.8.7)
 
 Since 0.8.7 `sys.<field> = value` rebuilds the spin system with the new value, so the

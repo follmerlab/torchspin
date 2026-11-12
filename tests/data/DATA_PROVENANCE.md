@@ -44,6 +44,7 @@ Tests comparing against these are true cross-validation.
 | `generate_pepper_zerofield_refs.m` | `ref_pepper_zerofield.mat` | Zero-field frequency sweeps (`Exp.Field = 0`, torchspin `Options.ZeroField`, 0.7.4): S = 1 with D, E (plain, Boltzmann 0.1 K, HStrain), S = 3/2 Kramers, S = 1/2 + 1H isotropic hyperfine (5 cases) |
 | `generate_pepper_quadzeeman_refs.m` | `ref_pepper_quadzeeman.mat` | Field-quadratic `Sys.Ham220`/`Ham222` terms in pepper (S=1 with lwpp and with HStrain, S=3/2), EasySpin field sweeps, and one frequency sweep (`S1_ham2_freqsweep`, added 2026-11-11; needs EasySpin's `resfreqs_matrix.m` Ham check from StollLab/EasySpin d46e5ef9, applied as a one-line patch to the local Dec-2025 copy; the three field-sweep cases regenerated bit-identical); `Options.QuadraticZeeman` (0.7.1) |
 | `generate_orisel_refs.m` | `ref_orisel.mat` | `orisel` (0.9.0, B26; EasySpin main, R2024b, 2026-11-11): `[Weights,Trans]` and the summed weights for 18 cases: 12 with `Exp.Orientations` (a 400-point Fibonacci sphere; rhombic S=1/2 at the gz/gy/gx fields, Cu(II) 63Cu at 2 fields, g=[1.9 2.0 6.0] at g=6 and g=4, S=1 with D and HStrain incl. `AveragedIntensity` false, S=3/2 with D, two coupled electrons, `ExciteWidth` Inf) and 6 on default grids, stored with the orientations orisel.m builds (hamsymm D2h, rotated D2h, C2h from an AFrame, Dinfh, O3, explicit Ci) |
+| `generate_levelsplot_refs.m` | `ref_levelsplot.mat` | `levelsplot` resonance transitions (0.9.19, B78; EasySpin main, R2024b, 2026-11-12): per case `resfields` with `Threshold` 0, `Freq2Field` 0 and `Exp.SampleFrame = [-chi -theta -phi]` (default and `RediagLimit` 2), and the `transition` lines of EasySpin's levelsplot figure (`UserData`, `XData`, `YData`, `Color`); S = 1 axial and rhombic at `[phi theta chi]` and `'xy'`, S = 3/2 with D, S = 1/2 + 14N with two lines below `PlotThreshold` (5 cases) |
 
 ### MATLAB-sourced .mat files (by module)
 
@@ -122,6 +123,9 @@ Tests comparing against these are true cross-validation.
 **Orientation selection:**
 `orisel_*.mat` — MATLAB (EasySpin's own regression tests `orisel_rhombic.m`, `orisel_onenucleus.m`, 2008; used by `test_orisel.py` since 0.9.0, compared after normalization as in EasySpin)
 `ref_orisel.mat` — MATLAB-gen (`generate_orisel_refs.m`, EasySpin main, R2024b, 2026-11-11)
+
+**Energy level diagrams:**
+`ref_levelsplot.mat` — MATLAB-gen (`generate_levelsplot_refs.m`, EasySpin main, R2024b, 2026-11-12; stores each case's `Sys`, orientation, field range and `mwFreq`)
 
 **Grids:**
 `sphgrid_regression.mat` — MATLAB

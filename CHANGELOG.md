@@ -14,6 +14,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.19] — 2026-11-12
+
+### Fixed
+
+- **`levelsplot(..., mwFreq=...)` draws the resonance transitions again; errors in the resonance
+  computation propagate (B78).** levelsplot.py:167-176 called `resfields(sys, exp, dict)`, but
+  `resfields` takes `(H0, mux, muy, muz, phi, theta, exp, opt)`; the `TypeError` was swallowed by
+  a bare `except Exception: pass` (levelsplot.py:244), so no transition line, stick spectrum or
+  "no EPR resonances" note was ever drawn. Now as EasySpin levelsplot.m:244-272: the resonances
+  of the one orientation (`resfields_batch`, `Threshold` 0, lab axes `erot([phi, theta, chi])` as
+  EasySpin's `Exp.SampleFrame = [-chi -theta -phi]`, B1 along lab x), intensities without the
+  dB/dE factor (`Freq2Field` 0), relative to the largest, lines below `PlotThreshold` skipped,
+  each drawn between its two levels at the resonance field and colored between the allowed and
+  forbidden colors by relative intensity. Against EasySpin's own levelsplot figure (5 cases,
+  S = 1/2 with 14N, S = 1, S = 3/2): same lines, fields within 2.9e-5 mT (torchspin's are exact
+  roots; EasySpin's are spline-model roots), relative intensities within 1.9e-4 (EasySpin
+  interpolates eigenvectors between knots; against its resfields with `RediagLimit` 2 the
+  difference is 6e-9). The `try`/`except` is gone. The level diagram itself is unchanged. EasySpin
+  references: tests/data/ref_levelsplot.mat.
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed
