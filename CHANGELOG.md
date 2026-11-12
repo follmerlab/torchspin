@@ -14,6 +14,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.4] — 2026-11-11
+
+### Fixed
+
+- **`pepper` interpolates the positions of every transition linearly once any transition lacks
+  a resonance somewhere, as EasySpin does** (pepper.m:701, 763-772: one global `NaN_in_Pdat`
+  flag switches `InterpMode` to `L1` on 2-D grids). torchspin switched only the slots that
+  carried NaNs and kept the global cubic spline for the others, so the two kinds of slot were
+  interpolated differently. S = 5/2 with D = 300 MHz and a B4 term on an explicit D2h grid,
+  Range [200 480] mT, was cosine 0.9587 (Harmonic 1) and 0.9988 (Harmonic 0); a rhombic
+  S = 5/2 (D = 400, E = 100 MHz) with a truncated range 0.99971. All are now ≥ 1 − 3e-8 with
+  amplitude within 4e-5. `pepper_autograd` and `salt` already did this; `pepper` now gives the
+  same spectra. Only non-axial field and frequency sweeps with interpolation in which some
+  transition leaves the range (or has no resonance) at some knots change. EasySpin references:
+  tests/data/ref_pepper_nanlinear.mat. On open-φ grids (C2h, Ci) a residual remains in both
+  implementations; see KNOWN_LIMITATIONS.md.
+
 ## [0.9.3] — 2026-11-11
 
 ### Fixed
