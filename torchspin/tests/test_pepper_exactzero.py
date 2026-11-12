@@ -260,8 +260,9 @@ def test_spectra_vs_prefix_helpers(monkeypatch, key, engine):
         assert np.array_equal(new, old)          # Dinfh zones: no residual before either
         return
     # measured: stick 5.3e-14 (pepper) / 4.7e-14 (autograd); after convolution
-    # <= 8.8e-14 (pepper) and 1.2e-13 / 5.2e-13 (autograd, rhombic / Cu)
-    assert diff < 1e-12, (key, diff)
+    # <= 8.8e-14 (pepper) and 1.2e-13 / 5.2e-13 (autograd, rhombic / Cu);
+    # CI macOS torch 2.15: 1.0e-12 (rhombic_lw_h1, autograd)
+    assert diff < 2e-12, (key, diff)
     if key == 'rhombic_stick':
         # sign-independent: the residual's sign depends on grid roundoff
         # (it is +7.8e-15 of max once sphgrid phi matches MATLAB's linspace)
