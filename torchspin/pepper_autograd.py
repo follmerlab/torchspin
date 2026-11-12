@@ -479,6 +479,12 @@ def _check_supported(sys: SpinSystem, exp: Experiment, opt: Options) -> None:
             raise NotImplementedError(f'pepper_autograd: Experiment.{name} is not supported.')
     if getattr(sys, 'initState', None) is not None:
         raise NotImplementedError('pepper_autograd: Sys.initState is not supported.')
+    # As in pepper: perturbation theory reads Sys.g only and drops Sys.Ham.
+    _method = str(getattr(opt, 'Method', 'matrix'))
+    if _method.startswith('perturb'):
+        from torchspin.spinsystem import _reject_ham
+        _reject_ham(sys, f"pepper_autograd with Options.Method='{_method}'",
+                    "Options(Method='matrix')")
     # Without this the matrix branch would silently run below, giving the exact
     # spectrum of the whole system instead of the hybrid one — a different
     # forward model from pepper(Method='hybrid'), not just a missing gradient.
