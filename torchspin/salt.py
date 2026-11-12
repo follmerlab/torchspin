@@ -544,7 +544,6 @@ def salt(
         )
     else:
         from torchspin.resfields_batch import resfields_batch
-        from torchspin.resfields import _nuc_states
         from torchspin.experiment import auto_batch_size
         batch_size = auto_batch_size(opt.BatchSize, H0.shape[0], n_orient)
         B_res_all  = [None] * n_orient
@@ -558,7 +557,9 @@ def salt(
         if exp.Temperature is not None and exp.Temperature > 0:
             nuc_pol = 1.0
         else:
-            nuc_pol = 1.0 / _nuc_states(sys)
+            nuc_pol = 1.0
+            for I in getattr(sys, 'I', []):
+                nuc_pol /= (2 * I + 1)  # 1/prod(2I+1)
         for batch_idx in range((n_orient + batch_size - 1) // batch_size):
             s = batch_idx * batch_size
             e = min(s + batch_size, n_orient)
