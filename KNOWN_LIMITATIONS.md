@@ -1015,7 +1015,13 @@ derivative), against 0.9998–1.0000 / 0.999 for `pepper`; the ripple only falls
 below 1 % of the signal around GridSize 91. Do not train models on their output.
 
 Strains are differentiable (HStrain, gStrain, AStrain; DStrain magnitudes
-are constants). Not yet differentiable (`pepper_autograd` raises
+are constants). Euler frame angles of the spin system (`gFrame`, `AFrame`,
+`DFrame`, `QFrame`, `eeFrame`, `nnFrame`, `sigmaFrame`, `BFrame`) are
+differentiable since 0.9.17 (before, they were detached silently); the
+automatic grid symmetry, which a frame can change, is chosen on the detached
+values, so a finite-difference check at a symmetric point must fix
+`GridSymmetry`. The crystal frames `Exp.SampleFrame` and `Exp.MolFrame` are
+not differentiable (crystals raise, below). Not yet differentiable (`pepper_autograd` raises
 `NotImplementedError`, `pepper()` itself is unchanged): `Exp.mwPhase`,
 partial ordering, photoselection, crystals, frequency sweeps, `Sys.initState`.
 `salt` (fixed-field mode) and `garlic` (all modes) are

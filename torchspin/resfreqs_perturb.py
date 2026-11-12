@@ -92,7 +92,7 @@ def resfreqs_perturb(
         g = sys.g[:3, :].to(dt)
     else:
         g_diag = torch.diag(sys.g[0, :].to(dt))
-        R_g2M = erot(sys.gFrame[0, :].tolist()).T
+        R_g2M = erot(sys.gFrame[0, :]).T
         Rg = torch.as_tensor(R_g2M, dtype=dt, device=device)
         g = Rg @ g_diag @ Rg.T
 
@@ -107,7 +107,7 @@ def resfreqs_perturb(
             D_mat = sys.D[:3, :].to(dt)
         else:
             D_diag = torch.diag(sys.D[0, :].to(dt))
-            R_D2M = erot(sys.DFrame[0, :].tolist()).T
+            R_D2M = erot(sys.DFrame[0, :]).T
             RD = torch.as_tensor(R_D2M, dtype=dt, device=device)
             D_mat = RD @ D_diag @ RD.T
         # Make traceless (Iwasaki requirement)
@@ -130,7 +130,7 @@ def resfreqs_perturb(
                 A_mat = sys.A[3 * iNuc : 3 * iNuc + 3, :].to(dt)
             else:
                 A_diag = torch.diag(sys.A[iNuc, :].to(dt))
-                R_A2M = erot(sys.AFrame[iNuc, :].tolist()).T
+                R_A2M = erot(sys.AFrame[iNuc, :]).T
                 RA = torch.as_tensor(R_A2M, dtype=dt, device=device)
                 A_mat = RA @ A_diag @ RA.T
             A_list.append(A_mat)

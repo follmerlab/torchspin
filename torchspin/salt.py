@@ -46,6 +46,10 @@ from torchspin.resfields_perturb import resfields_perturb, resfields_perturb_bat
 from torchspin.sphgrid import sphgrid
 from torchspin.spinsystem import SpinSystem
 
+# Euler-angle fields of SpinSystem; the field-swept mode is not differentiable
+# in them either.
+_FRAME_FIELDS = ('gFrame', 'AFrame', 'DFrame', 'QFrame', 'eeFrame', 'nnFrame', 'sigmaFrame')
+
 
 def _fixed_field_transitions(
     sys: SpinSystem,
@@ -102,7 +106,7 @@ def _fixed_field_transitions(
             g_mat = sys.g[:3, :].to(dtype=dt64, device=device)
         else:
             g_diag = torch.diag(sys.g[0, :].to(dtype=dt64, device=device))
-            Rg = torch.as_tensor(_erot(sys.gFrame[0, :].tolist()).T,
+            Rg = torch.as_tensor(_erot(sys.gFrame[0, :]).T,
                                  dtype=dt64, device=device)
             g_mat = Rg @ g_diag @ Rg.T
         gn_all = h_all @ g_mat
@@ -118,7 +122,7 @@ def _fixed_field_transitions(
                 A_i = sys.A[3 * iNuc: 3 * iNuc + 3, :].to(dtype=dt64, device=device)
             else:
                 A_diag = torch.diag(sys.A[iNuc, :].to(dtype=dt64, device=device))
-                R_A = torch.as_tensor(_erot(sys.AFrame[iNuc, :].tolist()).T,
+                R_A = torch.as_tensor(_erot(sys.AFrame[iNuc, :]).T,
                                       dtype=dt64, device=device)
                 A_i = R_A @ A_diag @ R_A.T
             Ah = u_all @ A_i.T                                     # (M, 3)
@@ -535,7 +539,8 @@ def salt(
         B_res_all  = [B_fixed] * n_orient
         intens_all = [orisel_w[k:k + 1] for k in range(n_orient)]
     elif any(t is not None and torch.is_tensor(t) and t.requires_grad
-             for t in (sys.g, sys.A, sys.D, sys.Q, getattr(sys, 'ee', None))):
+             for t in (sys.g, sys.A, sys.D, sys.Q, getattr(sys, 'ee', None),
+                       *(getattr(sys, f, None) for f in _FRAME_FIELDS))):
         raise NotImplementedError('salt: the field-swept (Experiment.Range) ENDOR mode bins sticks and is not '
                                   'differentiable; use the fixed-field mode (Experiment.Field) for gradients.')
     elif sys.nElectrons == 1:
@@ -586,7 +591,7 @@ def salt(
         else:
             g_diag = torch.diag(sys.g[0, :].to(dtype=dt64, device=dev))
             Rg = torch.as_tensor(
-                _erot(sys.gFrame[0, :].tolist()).T, dtype=dt64, device=dev
+                _erot(sys.gFrame[0, :]).T, dtype=dt64, device=dev
             )
             g_mat = Rg @ g_diag @ Rg.T
 
@@ -645,7 +650,7 @@ def salt(
                 else:
                     A_diag = torch.diag(sys.A[iNuc, :].to(dtype=dt64, device=dev))
                     R_A = torch.as_tensor(
-                        _erot(sys.AFrame[iNuc, :].tolist()).T,
+                        _erot(sys.AFrame[iNuc, :]).T,
                         dtype=dt64,
                         device=dev,
                     )

@@ -288,8 +288,8 @@ def compute_strain_widths_batch(
         AStrainMatrix = torch.diag(
             sys.AStrain.to(device=device, dtype=torch.float64)
         )
-        if sys.AFrame is not None and torch.any(sys.AFrame[0] != 0):
-            R_A2M = erot(sys.AFrame[0].tolist(), device=device).T.to(dtype=torch.float64)
+        if sys.AFrame is not None and (sys.AFrame.requires_grad or bool(torch.any(sys.AFrame[0] != 0))):
+            R_A2M = erot(sys.AFrame[0], device=device).T.to(dtype=torch.float64)
             AStrainMatrix = R_A2M @ AStrainMatrix @ R_A2M.T
         mIz_op = sop(sys.Spins, [[2, 3]], device=device).to(dtype=H0.dtype)
         tmp_mi = mIz_op.unsqueeze(0) @ V_b              # (M, n, n)
@@ -447,8 +447,8 @@ def _gstrain_matrices(sys: SpinSystem, mwFreq: float, device) -> list:
             g_strain = sys.gStrain[e].to(device=device, dtype=torch.float64)
             g_values = sys.g[e].to(device=device, dtype=torch.float64)
             M = torch.diag((g_strain / g_values) * (mwFreq * 1e3))
-            if bool(torch.any(sys.gFrame[e] != 0)):
-                R_g2M = erot(sys.gFrame[e].tolist(), device=device).T.to(dtype=torch.float64)
+            if sys.gFrame.requires_grad or bool(torch.any(sys.gFrame[e] != 0)):
+                R_g2M = erot(sys.gFrame[e], device=device).T.to(dtype=torch.float64)
                 M = R_g2M @ M @ R_g2M.T
         mats.append(M)
     return mats
@@ -479,8 +479,8 @@ def _dstrain_operators(sys: SpinSystem, device, dtype) -> list:
             ops.append(None)
             continue
         Sx, Sy, Sz = _electron_spin_ops(sys, e, device, dtype)
-        if sys.DFrame is not None and bool(torch.any(sys.DFrame[e] != 0)):
-            R = erot(sys.DFrame[e].tolist(), device=device).to(dtype=dtype)  # molecular -> D frame
+        if sys.DFrame is not None and (sys.DFrame.requires_grad or bool(torch.any(sys.DFrame[e] != 0))):
+            R = erot(sys.DFrame[e], device=device).to(dtype=dtype)  # molecular -> D frame
             SxD = R[0, 0] * Sx + R[0, 1] * Sy + R[0, 2] * Sz
             SyD = R[1, 0] * Sx + R[1, 1] * Sy + R[1, 2] * Sz
             SzD = R[2, 0] * Sx + R[2, 1] * Sy + R[2, 2] * Sz
@@ -591,8 +591,8 @@ def _compute_gstrain_astrain_width_squared(
 
         # Build gStrain matrix in molecular frame (diagonal in g-frame, then rotate)
         gStrainMatrix = torch.diag(gStrain_freq)  # [3, 3] diagonal in g-frame
-        if torch.any(sys.gFrame[0, :] != 0):
-            R_g2M = erot(sys.gFrame[0, :].tolist(), device=device).T.to(dtype=torch.float64)  # g→mol
+        if sys.gFrame.requires_grad or bool(torch.any(sys.gFrame[0, :] != 0)):
+            R_g2M = erot(sys.gFrame[0, :], device=device).T.to(dtype=torch.float64)  # g→mol
             gStrainMatrix = R_g2M @ gStrainMatrix @ R_g2M.T  # now in molecular frame
     else:
         gStrainMatrix = torch.zeros(3, 3, dtype=torch.float64, device=device)
@@ -611,8 +611,8 @@ def _compute_gstrain_astrain_width_squared(
         )  # [3, 3] in A-frame
 
         # Rotate to molecular frame if AFrame given
-        if sys.AFrame is not None and torch.any(sys.AFrame[0, :] != 0):
-            R_A2M = erot(sys.AFrame[0, :].tolist(), device=device).T.to(dtype=torch.float64)
+        if sys.AFrame is not None and (sys.AFrame.requires_grad or bool(torch.any(sys.AFrame[0, :] != 0))):
+            R_A2M = erot(sys.AFrame[0, :], device=device).T.to(dtype=torch.float64)
             AStrainMatrix = R_A2M @ AStrainMatrix @ R_A2M.T
 
         # Compute effective mI for each transition using eigenvectors at B0
