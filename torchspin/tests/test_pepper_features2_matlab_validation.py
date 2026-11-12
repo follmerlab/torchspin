@@ -35,6 +35,13 @@ def _case_names():
     return list(_load().keys()) if REF.exists() else []
 
 
+# photosel_custom_beam and photosel_tdmangles_* run on a C1 grid with interpolation,
+# where torchspin deliberately deviates from EasySpin since 0.9.21 (B74: EasySpin
+# mirrors the interpolated lower hemisphere). Measured cosine / amplitude 0.9.10 ->
+# 0.9.21: custom_beam 0.9999983/1.0073 -> 0.9999981/1.0085, tdmangles_parallel
+# 0.9999889/1.0057 -> 0.9999890/1.0043, _perpendicular 0.9999973/0.9980 ->
+# 0.9999966/0.9995; vs the same fine grid without interpolation (torchspin [73 1])
+# 1.9e-3 -> 7.8e-4, 3.6e-3 -> 3.1e-3, 6.1e-3 -> 4.3e-3 of the maximum.
 # name -> (cosine threshold, amplitude tolerance, reason)
 LOOSE = {}
 

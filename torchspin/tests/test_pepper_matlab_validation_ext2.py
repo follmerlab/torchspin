@@ -227,6 +227,11 @@ def cosine(a, b):
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
+# fullsphere_C1 (C1 [10 2]) moved with 0.9.21, where torchspin deliberately deviates
+# from EasySpin's C1 interpolation (B74, EasySpin mirrors the lower hemisphere):
+# cosine 1.0000000 -> 0.9999897, amplitude 1.0004 -> 1.0023 vs EasySpin; vs the same
+# fine grid without interpolation (C1 [19 1]) 9.0e-3 -> 6.0e-4 of the maximum
+# (test_c1_lower_rows.py::test_easyspin_fullsphere_c1_vs_no_interpolation).
 # Cases below the default thresholds (cosine 0.999, amplitude within 2 %):
 # name -> (cosine threshold, amplitude tolerance, reason)
 LOOSE = {

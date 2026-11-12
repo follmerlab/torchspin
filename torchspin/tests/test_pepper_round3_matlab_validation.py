@@ -31,6 +31,10 @@ def _case_names():
     return list(_load().keys()) if REF.exists() else []
 
 
+# photosel_mx_* and photosel_pt_* run on a C1 grid with interpolation, where
+# torchspin deliberately deviates from EasySpin since 0.9.21 (B74: EasySpin mirrors
+# the interpolated lower hemisphere). Measured 0.9.10 -> 0.9.21: cosine >= 0.9999999
+# unchanged, amplitude 1.0001-1.0003 -> 1.0002-1.0008, max deviation 5.4e-4 -> 9.3e-4.
 LOOSE = {
     # EasySpin's matrix path interpolates eigenvectors linearly across the field segment;
     # for 63Cu+14N its intensities differ from exact diagonalization (and from its own

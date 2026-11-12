@@ -412,10 +412,15 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
         ln += dlen
     z[N_c - 1, :] = np.concatenate([y[idx:idx + ln], y[idx:idx + 1]]) if periodic else y[idx:idx + ln]
     if full:
+        # C1 lower hemisphere: sphgrid stores each of these rows as a reversed
+        # upper row (sphgrid.m:320-325), i.e. with phi decreasing; put it back
+        # in phi-increasing order before resampling it on the common phi
+        # columns (B74). EasySpin's gridinterp.m:211-219 reads the rows as
+        # increasing: a lower knot at phi gets the value from -phi - dphi.
         idx += ln
         ln -= dlen
         for ir in range(N_c, 2 * N_c - 2):
-            z[ir, :] = _row(y[idx:idx + ln], periodic)
+            z[ir, :] = _row(y[idx:idx + ln][::-1], periodic)
             idx += ln
             ln += -dlen
         z[2 * N_c - 2, :] = y[idx]

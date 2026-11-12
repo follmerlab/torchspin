@@ -193,7 +193,8 @@ amplitude (S = 1/2, g = [2 2.05 2.1], GridSize [19 4]).
   0.999996 (not traced; widths are interpolated linearly in both codes).
 - Grids without interpolation, axial (Dinfh) grids and open-φ grids (Ci, C2h, C4h, C6h, S6, C1)
   are not affected. (The D3d/D4h/D6h/Oh/C6h/S6 grids had a separate defect, fixed in 0.9.3; see
-  § Powder grid φ range.)
+  § Powder grid φ range. C1 had another one, fixed in 0.9.21; see § C1 grid interpolation of
+  the lower hemisphere.)
 
 ## Powder grid φ range of the D3d/D4h/D6h/Oh/C6h/S6 grids (fixed 0.9.3)
 
@@ -240,6 +241,37 @@ fine knot lay exactly on a coarse column.
   when some knot has no resonance. S = 3/2, g = [2 2.05 2.1], D = [3000 500] MHz, Ci grid,
   [50 400] mT: cosine 0.9925, amplitude 0.954 with EasySpin (0.9923 / 0.953 before 0.9.10).
   `test_gridinterp_l1_vs_easyspin` marks the open-φ cases xfail.
+
+## C1 grid interpolation of the lower hemisphere: deliberate deviation from EasySpin (fixed 0.9.21)
+
+The C1 grid's lower hemisphere is built from the upper knots in reverse order (EasySpin
+sphgrid.m:320-325; torchspin's `sphgrid` does the same and keeps that order, which
+`grid_triangulation` relies on), so each lower θ row is stored with φ decreasing. EasySpin's
+rectify step (private/gridinterp.m:204-224) reads these rows as φ increasing, so a lower knot at φ
+takes the value from −φ − Δφ (mirrored and shifted by one coarse φ step Δφ of that row);
+torchspin's port (`pepper._interp_grid`) did the same
+up to 0.9.20 (B74). Since 0.9.21 torchspin reverses each lower row before resampling it and so
+**deliberately deviates from EasySpin**, toward the exact (uninterpolated) result.
+
+- Affected: `pepper`, `pepper_autograd` and `salt` on a C1 grid with interpolation
+  (`GridSize(2) > 1`). C1 is chosen by default for low-symmetry systems with `Sys.tdm`
+  (photoselection), otherwise only with `Options.GridSymmetry='C1'`. Because of the shift by
+  Δφ, also systems with coaxial tensors move (rhombic g on C1 [20 4] vs D2h: 2.4e-3 → 3.6e-4 of
+  the maximum); only φ-independent (axial about z) data are unaffected. All other grids are
+  unchanged bit for bit.
+- Size (C1 [19 4] vs the same fine knots without interpolation, C1 [73 1]; max deviation of
+  the maximum, EasySpin's error before → torchspin now): Cu(II) with non-coaxial g and A
+  0.342 → 0.0075 (Ci grid of the same size: 0.0078); photoselection triplet with non-coaxial
+  g, D and tdm, default grid 0.069 → 0.0018; `salt` 1H ENDOR 0.021 → 0.00054. Interpolating
+  f = 12x + 15y + 8z + 4xy − 3yz + 2xz (mT) from C1 [19 4] to 73: max error 32.5 → 0.52 mT
+  (`L1`), 35.7 → 0.064 mT (`G3`).
+- Proposed upstream fix: read the rows reversed at gridinterp.m:211/213/217/219, i.e.
+  `y(idx+len-1:-1:idx)` in place of `y(idx:idx+len-1)`, with the periodic wrap element
+  `idx+len-1` in place of `idx` (`y([idx+len-1:-1:idx idx+len-1])`).
+- EasySpin-reference cases on interpolated C1 grids (`photosel_*` in ref_pepper_features2.mat
+  and ref_pepper_round3.mat, `fullsphere_C1` in ref_pepper_ext2.mat) moved by up to 9e-3 of the
+  maximum (cosine ≥ 0.999989, amplitude within 0.85 %) and keep their tolerances.
+  `test_gridinterp_l1_vs_easyspin[C1-*]` remains xfail (B58 and this deviation).
 
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
