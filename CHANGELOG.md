@@ -14,6 +14,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.11] — 2026-11-11
+
+### Fixed
+
+- **Bins that no SOPHE triangle or zone reaches are exactly 0 in `pepper` and `pepper_autograd`,
+  as in EasySpin** (projecttriangles.c:98-100, 123-125; projectzones.c). The vectorised
+  projections fill the interior bins of wide ramps and zones through running sums `c1·k + c0`;
+  past the last ramp the `+s`/`−s` pairs did not cancel exactly and the residual was multiplied by
+  the bin index. Empty bins therefore held a roundoff floor: for the rhombic stick spectrum
+  g = [2 2.05 2.1], 9.5 GHz, Range [325 337] mT, 601 points, the minimum was −5.3e-14 of the maximum
+  at GridSize [31 1] (pepper; −4.7e-14 in pepper_autograd) and −1.6e-14 at [31 4], −3.9e-14 for the
+  corresponding frequency sweep, and positive residuals up to 2.9e-13 appeared in a Cu hyperfine
+  stick spectrum. An integer coverage count built with the same scatter now leaves those bins at
+  exactly 0; it carries no graph, so pepper_autograd stays differentiable. Bins inside an interior
+  are bit-identical; a whole spectrum changes by less than 1e-12 of its maximum (the residual
+  removed, also from bins another pass fills, then convolved), and spectra without a residual
+  (the Dinfh zone cases checked) are bit-identical. Applies to field, frequency and zero-field
+  sweeps and to salt, which uses the same torch projections. EasySpin references:
+  tests/data/ref_pepper_exactzero.mat.
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed

@@ -1066,7 +1066,16 @@ def _ramp_bins(spec: np.ndarray, f0: np.ndarray, a: np.ndarray, b: np.ndarray, r
         np.add.at(S1, lo_w, s1); np.add.at(S1, hi_w, -s1)
         np.add.at(S0, lo_w, s0); np.add.at(S0, hi_w, -s0)
         c1 = np.cumsum(S1)[:nPoints]; c0 = np.cumsum(S0)[:nPoints]
-        spec += c1 * np.arange(nPoints, dtype=np.float64) + c0
+        # Past the last wide ramp the running sums leave a roundoff residual
+        # (the +s/−s pairs do not cancel exactly, and c1 is multiplied by k), so
+        # bins that no interior covers would get a roundoff floor (~1e-13 of the
+        # maximum) where projecttriangles.c adds nothing.  An integer coverage
+        # count built with the same lo/hi scatter keeps those bins exactly 0;
+        # covered bins are unchanged.
+        cnt = np.zeros(nPoints + 1, dtype=np.int64)
+        np.add.at(cnt, lo_w, 1); np.add.at(cnt, hi_w, -1)
+        cov = np.cumsum(cnt)[:nPoints] > 0
+        spec += np.where(cov, c1 * np.arange(nPoints, dtype=np.float64) + c0, 0.0)
 
 
 def _projectzones(
@@ -1112,7 +1121,10 @@ def _projectzones(
     if has_int.any():
         S0 = np.zeros(nPoints + 1)
         np.add.at(S0, lo[has_int], Height[has_int]); np.add.at(S0, hi[has_int], -Height[has_int])
-        spec += np.cumsum(S0)[:nPoints]
+        # bins no interior covers stay exactly 0 (see _ramp_bins)
+        cnt = np.zeros(nPoints + 1, dtype=np.int64)
+        np.add.at(cnt, lo[has_int], 1); np.add.at(cnt, hi[has_int], -1)
+        spec += np.where(np.cumsum(cnt)[:nPoints] > 0, np.cumsum(S0)[:nPoints], 0.0)
     return spec
 
 
