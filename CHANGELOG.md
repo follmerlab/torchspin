@@ -14,6 +14,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.5] — 2026-11-11
+
+### Fixed
+
+- **`salt` simulates `Sys.Ham` systems on the matrix paths** (B35). A linear Zeeman term given
+  as `Ham110`/`Ham112` sets `g = 0`, but salt's first-order ENDOR path (fixed field, one
+  electron without Q) and the field-swept mode's perturbation resonance search build the
+  Zeeman term from `Sys.g` alone. For S = 1/2 + 1H, A = [3 5 12] MHz at 338 mT with Ham110/112
+  equal to g = [2.01 2.005 1.998], the fixed-field spectrum was 12.77x the amplitude of the g
+  spectrum with lines at the bare 1H Larmor frequency (cosine 0.00); 8.90x with orientation
+  selection (`ExciteWidth` 30 MHz); the field-swept spectrum was all zero. Any system with a
+  `Sys.Ham` entry (EasySpin's `MO_present`) now always takes the matrix paths (resonance fields
+  by `resfields_batch`, ENDOR by diagonalizing `ham()`), and the Ham spectrum equals the g
+  spectrum on that path to 2e-12 (fixed field, with and without orientation selection) and
+  2e-14 (field swept); against the default first-order g spectrum: cosine 0.99999, amplitude
+  0.994. **Deliberate deviation:** EasySpin's salt rejects every `Sys.Ham*` (salt.m:132).
+  Field-quadratic and cubic terms (lB >= 2) are dropped, as in pepper with the default
+  `Options.QuadraticZeeman=False` (True raises). An explicit `Options.Method='perturb'`,
+  `'perturb1'` or `'perturb2'` with `Sys.Ham` now raises `ValueError` (salt still ignores
+  `Method` otherwise). Results change only for systems with `Sys.Ham`; nothing else is routed
+  differently.
+- **`salt` raises for `Sys.L`, as EasySpin does** (B45; salt.m:133, 'salt does not support
+  Sys.L.'). The first-order path ignored orbital angular momenta (S = 1/2, L = 1, soc = 100 MHz
+  gave the spectrum without L exactly); the matrix path included them through `ham()` but was
+  never validated (EasySpin has no reference).
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed

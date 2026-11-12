@@ -443,6 +443,8 @@ work from this decomposition (pepper's resonance search, `levels`, `endorfrq`, `
 - **Quadratic and cubic terms (`Ham2xx`, `Ham3xx`)** cannot be written as H0 − μ·B. As in
   EasySpin, they enter only `ham(Sys, B0)`. Simulators that use the decomposition ignore
   them unless `Options.QuadraticZeeman=True` (0.7.1, next section).
+- **`salt` (0.9.5).** EasySpin's salt rejects every `Sys.Ham*` (salt.m:132); torchspin
+  simulates them on its matrix paths (§ ENDOR (`salt`)).
 
 ## Simulator — field-quadratic Zeeman terms, `Options.QuadraticZeeman` (0.7.1)
 
@@ -625,9 +627,9 @@ projection / convolution shared with `pepper_autograd`; gradients vs finite
 differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swept
 (multi-field) mode is not and raises for grad tensors.
 
-- **Method choice.** `salt` ignores `Options.Method`. For one electron without Q it uses
-  first-order perturbation theory (EasySpin `Opt.Method='perturb1'`), otherwise the matrix
-  path; EasySpin's default is always `'matrix'`. Since 0.8.1 both give the same intensity
+- **Method choice.** `salt` ignores `Options.Method`. For one electron without Q and without
+  `Sys.Ham` it uses first-order perturbation theory (EasySpin `Opt.Method='perturb1'`),
+  otherwise the matrix path; EasySpin's default is always `'matrix'`. Since 0.8.1 both give the same intensity
   scale (|⟨i|μ⊥|j⟩|² in (MHz/mT)²); the first-order path matches EasySpin `perturb1` to
   round-off and EasySpin's default to the first-order error (0.3 % in area for 1H and
   1H+14N with |A| ≤ 7 MHz at 326.5 mT, about 1 % for 1H with |A| up to 16 MHz).
@@ -643,6 +645,24 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
 - **Equivalent nuclei.** `salt` raises for `Sys.n > 1`, as EasySpin does (salt.m:135-136).
   Before 0.8.10 it ignored `n` and returned the spectrum of a single nucleus. Give equivalent
   nuclei as separate entries of `Nucs`.
+- **Higher-order Zeeman terms (`Sys.Ham*`), deliberate deviation (0.9.5).** EasySpin's salt
+  rejects them (salt.m:132). torchspin sends every system with a `Sys.Ham` entry to the matrix
+  paths: resonance fields by `resfields_batch` in the field-swept mode, ENDOR transitions by
+  diagonalizing `ham()` (zero-field and linear-in-B Ham terms included exactly), also for one
+  electron without Q. The first-order paths build the Zeeman term from `Sys.g` only, which is
+  zero when `Ham110`/`Ham112` carry it; before 0.9.5 such a system gave a fixed-field spectrum
+  12.8x too large with Larmor-only lines (8.9x with `ExciteWidth`) and an all-zero field-swept
+  spectrum (B35). Now Ham110/112 equal to g gives the g spectrum of the matrix path to 2e-12
+  (test_salt_ham.py). Field-quadratic and cubic terms (lB >= 2) are dropped, as in pepper with
+  `Options.QuadraticZeeman=False`; `QuadraticZeeman=True` raises. An explicit
+  `Options.Method='perturb*'` with `Sys.Ham` raises `ValueError`. Ham coefficients carry no
+  gradient (`ham_ezho` detaches them; § Higher-order Zeeman terms). In the field-swept mode
+  the Ham spectrum inherits `resfields_batch`'s scale, which differs from the
+  `resfields_perturb_batch` scale used for the same system given with `g` (factor 1.99 for
+  the 1H case above, 6.0 with an added 14N; a separate, open defect); fixed-field spectra are
+  not affected.
+- **Orbital angular momentum.** `salt` raises for `Sys.L`, as EasySpin does (salt.m:133).
+  Before 0.9.5 the first-order path ignored it (B45).
 - **Line width (0.8.11).** `lw_mhz` is a Gaussian FWHM, applied as EasySpin's salt.m applies
   `Sys.lwEndor(1)` (salt.m:899-911): a width of at most two rf increments is not convolved,
   as the line is delta-like. Before 0.8.11 torchspin convolved it, which lowered peaks of
