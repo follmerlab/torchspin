@@ -102,9 +102,14 @@ class SpinSystem:
     D:
         Zero-field splitting tensors (MHz).  Shape ``(nElectrons, 3)`` for
         diagonal (Dxx, Dyy, Dzz) or ``(3*nElectrons, 3)`` for full tensors.
-        Shorthands: a scalar ``D`` or, for one electron spin, ``[D]`` (E = 0);
-        ``[D, E]``; ``(nElectrons, 1)`` or ``(nElectrons, 2)`` rows of D or
-        [D, E].  Any other shape raises ``ValueError``.
+        Shorthands: a scalar ``D`` (E = 0, every electron); for one electron
+        spin ``[D]``, ``[D, E]`` or ``[Dxx, Dyy, Dzz]``; ``(nElectrons, 1)`` or
+        ``(nElectrons, 2)`` rows of D or [D, E]; for four or more electron
+        spins a flat list of one D per electron.  For two or more electron
+        spins a flat list of 2 or 3 values is ambiguous (shared [D, E] /
+        principal values, or EasySpin's one D per electron) and raises
+        ``ValueError``: give one row per electron.  Any other shape raises
+        ``ValueError``.
         Pass ``None`` (default) to omit ZFS entirely.
     D_:
         Zero-field splitting as ``[D, E/D]`` per electron spin, shape
@@ -454,17 +459,33 @@ class SpinSystem:
                             f'but the system has {n_e}. Give a scalar D (same D, E = 0 for every '
                             f'electron) or one row per electron spin.')
                     self.D = (self.D * torch.tensor([-1.0, -1.0, 2.0], dtype=torch.float64) / 3).unsqueeze(0).clone()
+                elif self.D.shape[0] in (2, 3) and n_e > 1:
+                    # B61: a flat [a, b] or [a, b, c] for several electron spins
+                    # is ambiguous.  EasySpin (validatespinsys.m:208-210) reads
+                    # numel(Sys.D) == nElectrons as one D per electron, while
+                    # torchspin up to 0.9.14 read it as one shared [D, E] /
+                    # [Dxx, Dyy, Dzz]; for nElectrons != numel it is EasySpin's
+                    # 'Sys.D has wrong size.'.  Neither reading is adopted: raise
+                    # and ask for one row per electron (deliberate deviation).
+                    k = self.D.shape[0]
+                    raise ValueError(
+                        f'D is ambiguous for {n_e} electron spins: a flat list of {k} values could be '
+                        f'one {"[D, E]" if k == 2 else "[Dxx, Dyy, Dzz]"} shared by every electron '
+                        f'(torchspin up to 0.9.14) or one D value per electron (EasySpin). Give one row '
+                        f'per electron spin, e.g. D=[[D1, E1], [D2, E2]], D=[[Dxx, Dyy, Dzz], ...], '
+                        f'D=[[D1], [D2]], or D_; a scalar D applies the same D (E = 0) to every '
+                        f'electron.')
                 elif self.D.shape[0] == 2:
-                    # EasySpin [D, E] shorthand: convert to [Dxx, Dyy, Dzz]
+                    # EasySpin [D, E] shorthand (one electron): convert to [Dxx, Dyy, Dzz]
                     D_val, E_val = self.D[0], self.D[1]
                     Dxx = -D_val / 3 + E_val
                     Dyy = -D_val / 3 - E_val
                     Dzz = 2 * D_val / 3
                     principal = torch.stack([Dxx, Dyy, Dzz])
-                    self.D = principal.unsqueeze(0).expand(n_e, 3).clone()
+                    self.D = principal.unsqueeze(0).clone()
                 elif self.D.shape[0] == 3:
                     # [Dxx, Dyy, Dzz] for one electron
-                    self.D = self.D.unsqueeze(0).expand(n_e, 3).clone()
+                    self.D = self.D.unsqueeze(0).clone()
             elif self.D.ndim == 2 and self.D.shape[1] == 2:
                 # (n_e, 2) EasySpin [D, E] per electron: convert each row
                 D_vals = self.D[:, 0]

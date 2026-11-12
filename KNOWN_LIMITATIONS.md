@@ -158,11 +158,16 @@ list is read as a MATLAB row vector. Deliberate differences from EasySpin:
   (`g`, `gStrain`), every nucleus (`A`, `AFrame` with one electron spin) or every pair (`ee`,
   `eeFrame`); one `DStrain` row for every electron; `D_`, `Q` as flat lists of
   `nNuclei`/`nElectrons` pairs or triples.
-- **Flat lists for two or three spins.** A 1-D `ee` of three values for three electron
+- **Flat `D` for several electron spins raises** (B61, 0.9.15). A 1-D `D` of 2 or 3 values
+  with two or more electron spins could be one shared `[D, E]` / principal-value set
+  (torchspin up to 0.9.14) or one D per electron (EasySpin, `numel(Sys.D) == nElectrons`).
+  torchspin adopts neither and raises `ValueError`; give one row per electron spin
+  (`[[D1, E1], [D2, E2]]`, `[[Dxx, Dyy, Dzz], ...]`, `[[D1], [D2]]`) or `D_`. EasySpin input
+  `Sys.D = [D1 D2]` for two electrons must therefore be written `D=[[D1], [D2]]`. A scalar
+  `D` and a flat list of one D per electron for four or more electron spins are accepted.
+- **Flat `ee` for three electron spins.** A 1-D `ee` of three values for three electron
   spins is read as principal values for every pair (EasySpin: one isotropic value per pair);
-  give `[[J12], [J13], [J23]]` for the latter. A flat `D` for two or three electron spins is
-  likewise read as one shared `[D, E]` / principal-value set (EasySpin: one D per
-  electron); under review (B61).
+  give `[[J12], [J13], [J23]]` for the latter.
 - **Missing `A` with `Nucs`** gives zero hyperfine (EasySpin raises).
 - **Not checked:** `sigma`, `sigmaFrame`, `nn`, `nnFrame` (wrong shapes still fail late) and
   negative widths (`lw`, strains), which EasySpin rejects.

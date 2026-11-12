@@ -314,3 +314,57 @@ def test_short_forms_vs_easyspin(name):
     print(f'{name}: cosine {cs:.10f}, amplitude ratio {amp:.7f}')
     assert cs > COS_MIN, (name, cs)
     assert amp == pytest.approx(1.0, abs=AMP_TOL), (name, amp)
+
+
+# --- B61: a flat D for several electron spins is ambiguous --------------------
+#
+# EasySpin reads numel(Sys.D) == nElectrons as one D per electron
+# (validatespinsys.m:208-210); torchspin up to 0.9.14 read a flat [a, b] as one
+# shared [D, E] and [a, b, c] as shared principal values.  Neither reading is
+# adopted (deliberate deviation from EasySpin): SpinSystem raises and asks for
+# one row per electron spin.
+
+AMBIGUOUS_D = [
+    ('[D, E] 2e', [1, 1], [300.0, 30.0]),
+    ('[a, b, c] 3e', [1, 1, 1], [-100.0, -100.0, 200.0]),
+    ('[Dxx, Dyy, Dzz] 2e', [1, 1], [-100.0, -100.0, 200.0]),
+    ('[D, E] 3e', [1, 1, 1], [300.0, 30.0]),
+    ('[D, E] 4e', [1, 1, 1, 1], [300.0, 30.0]),
+    ('[a, b, c] 4e', [1, 1, 1, 1], [-100.0, -100.0, 200.0]),
+]
+
+
+@pytest.mark.parametrize('S, D', [(S, D) for _, S, D in AMBIGUOUS_D], ids=[i for i, _, _ in AMBIGUOUS_D])
+@pytest.mark.parametrize('as_tensor', [False, True])
+def test_flat_D_for_several_electrons_raises(S, D, as_tensor):
+    if as_tensor:
+        D = torch.tensor(D, dtype=torch.float64)
+    with pytest.raises(ValueError, match='D is ambiguous'):
+        SpinSystem(S=S, D=D, ee=0.0)
+
+
+def test_explicit_D_forms_reproduce_both_readings():
+    """The explicit forms the error asks for give the tensors of the old shared
+    reading (torchspin <= 0.9.14) and of EasySpin's per-electron reading."""
+    D, E = 300.0, 30.0
+    shared = _t([[-D / 3 + E, -D / 3 - E, 2 * D / 3]] * 2)
+    assert torch.equal(SpinSystem(S=[1, 1], ee=0.0, D=[[D, E], [D, E]]).D, shared)
+    pv = [-100.0, -90.0, 190.0]
+    assert torch.equal(SpinSystem(S=[1, 1, 1], ee=0.0, D=[pv] * 3).D, _t([pv] * 3))
+    # EasySpin's reading of D = [D1 D2]: one D (E = 0) per electron
+    per_e = SpinSystem(S=[1, 1], ee=0.0, D=[[300.0], [200.0]]).D
+    assert torch.allclose(per_e, _t([[-100.0, -100.0, 200.0], [-200 / 3, -200 / 3, 400 / 3]]), rtol=0, atol=1e-12)
+    # D_ = [D, E/D] per electron
+    assert torch.allclose(SpinSystem(S=[1, 1], ee=0.0, D_=[[D, E / D], [D, E / D]]).D, shared,
+                          rtol=0, atol=1e-12)
+
+
+def test_unambiguous_D_forms_unchanged():
+    # scalar D: same D, E = 0 for every electron (as EasySpin)
+    assert torch.equal(SpinSystem(S=[1, 1], ee=0.0, D=300.0).D, _t([[-100.0, -100.0, 200.0]] * 2))
+    # one D per electron as a flat list for four or more electron spins
+    assert torch.equal(SpinSystem(S=[1] * 4, ee=0.0, D=[300.0, 300.0, 300.0, 300.0]).D,
+                       _t([[-100.0, -100.0, 200.0]] * 4))
+    # one electron spin: [D, E] and [Dxx, Dyy, Dzz]
+    assert torch.equal(SpinSystem(S=1, D=[300.0, 30.0]).D, _t([[-70.0, -130.0, 200.0]]))
+    assert torch.equal(SpinSystem(S=1, D=[-100.0, -90.0, 190.0]).D, _t([[-100.0, -90.0, 190.0]]))

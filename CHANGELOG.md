@@ -44,9 +44,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     ignored); `gStrain` without one row per electron; `HStrain`/`AStrain` with 4+ values; and
     `A`, `AFrame`, `Q` or a nonzero `QFrame` without `Nucs` (were silently ignored).
   - **Unchanged:** every input that worked before, including torchspin's own shorthands (scalar
-    `g`, `A`, `gStrain`, `DStrain`; `[x, y, z]` for every electron, nucleus or pair). The
-    reading of a flat `D` for two or three electrons is not changed (see B61).
+    `g`, `A`, `gStrain`, `DStrain`; `[x, y, z]` for every electron, nucleus or pair), except the
+    flat `D` below.
   Gradients flow through the expanded forms.
+
+### Changed
+
+- **A flat `D` of 2 or 3 values for two or more electron spins raises `ValueError`** (B61;
+  behavior change, deliberate deviation from EasySpin). `SpinSystem(S=[1, 1], D=[a, b])` was
+  read as one `[D, E]` shared by both electrons and `S=[1, 1, 1], D=[a, b, c]` as shared
+  principal values, while EasySpin reads both as one D value per electron
+  (`numel(Sys.D) == nElectrons`, validatespinsys.m:208-210). The same lists with a different
+  number of electrons (e.g. `[D, E]` for three or four) were also read as shared. Neither
+  reading is adopted: the error asks for the explicit form, one row per electron spin
+  (`D=[[D1, E1], [D2, E2]]`, `D=[[Dxx, Dyy, Dzz], ...]`, `D=[[D1], [D2]]` or `D_`). The old
+  meaning is `D=[[D, E]] * nElectrons`. Unchanged: a scalar `D` (same D, E = 0 for every
+  electron, as EasySpin), a flat list of one D per electron for four or more electron spins,
+  `[D]`, `[D, E]` and `[Dxx, Dyy, Dzz]` for one electron spin, and every 2-D form. `D_` has
+  no shared shorthand and is unchanged. No test, example or document in the repository used
+  the ambiguous form.
 
 ## [0.9.12] — 2026-11-11
 
