@@ -44,6 +44,7 @@ Tests comparing against these are true cross-validation.
 | `generate_pepper_zerofield_refs.m` | `ref_pepper_zerofield.mat` | Zero-field frequency sweeps (`Exp.Field = 0`, torchspin `Options.ZeroField`, 0.7.4): S = 1 with D, E (plain, Boltzmann 0.1 K, HStrain), S = 3/2 Kramers, S = 1/2 + 1H isotropic hyperfine (5 cases) |
 | `generate_pepper_quadzeeman_refs.m` | `ref_pepper_quadzeeman.mat` | Field-quadratic `Sys.Ham220`/`Ham222` terms in pepper (S=1 with lwpp and with HStrain, S=3/2), EasySpin field sweeps, and one frequency sweep (`S1_ham2_freqsweep`, added 2026-11-11; needs EasySpin's `resfreqs_matrix.m` Ham check from StollLab/EasySpin d46e5ef9, applied as a one-line patch to the local Dec-2025 copy; the three field-sweep cases regenerated bit-identical); `Options.QuadraticZeeman` (0.7.1) |
 | `generate_orisel_refs.m` | `ref_orisel.mat` | `orisel` (0.9.0, B26; EasySpin main, R2024b, 2026-11-11): `[Weights,Trans]` and the summed weights for 18 cases: 12 with `Exp.Orientations` (a 400-point Fibonacci sphere; rhombic S=1/2 at the gz/gy/gx fields, Cu(II) 63Cu at 2 fields, g=[1.9 2.0 6.0] at g=6 and g=4, S=1 with D and HStrain incl. `AveragedIntensity` false, S=3/2 with D, two coupled electrons, `ExciteWidth` Inf) and 6 on default grids, stored with the orientations orisel.m builds (hamsymm D2h, rotated D2h, C2h from an AFrame, Dinfh, O3, explicit Ci) |
+| `generate_range_padding_refs.m` | `range_padding_refs.mat` | Range padding before the final line-width convolution (bug B34, 0.9.6; salt.m:858-882, pepper.m:1171-1193): spectra nonzero at the range ends, each at `Opt.PaddingMultiplier` 3 (default), 0 and 1: fixed-field salt 1H `perturb1` (10–19 MHz, lwEndor 0.2) and 1H+14N with Q `matrix` (1.5–19 MHz, lwEndor 0.3); pepper frequency sweep, Lorentzian lw 40 MHz, Harmonic 1; pepper field sweep with HStrain and Gaussian lw 1 mT; rhombic Voigt field sweep cut by the range (not padded by EasySpin) (5 cases) |
 
 ### MATLAB-sourced .mat files (by module)
 
@@ -68,6 +69,7 @@ Tests comparing against these are true cross-validation.
 `ref_pepper_transitions.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-10; stores each case's `Sys`/`Exp`/`Opt`)
 `ref_pepper_narrowlw.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
 `ref_closedphi_interp.mat` — MATLAB-gen (`generate_closedphi_interp_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
+`range_padding_refs.mat` — MATLAB-gen (`generate_range_padding_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`): salt and pepper spectra reaching the range ends at `Opt.PaddingMultiplier` 3, 0, 1
 
 `ref_nucspin_core.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; spectra only, the systems are written out in `test_nucspin_keep_fields.py`)
 

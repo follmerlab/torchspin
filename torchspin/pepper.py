@@ -563,8 +563,42 @@ def _lorentzian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np
     return out
 
 
+# Relative tolerance of the range-padding decision (see _edge_pad_count).
+_EDGE_PAD_RTOL = 1e-9
+
+
+def _edge_pad_count(spec: torch.Tensor, dx: float, fwhm_g, fwhm_l,
+                    multiplier: float = 3.0) -> int:
+    """EasySpin's range padding before the final convolution (pepper.m:1171-1193,
+    salt.m:858-882): when the spectrum is nonzero at the first or last point of
+    the range, both ends are extended by
+    ``nPad = round(max(fwhmG, fwhmL)/deltaX * Opt.PaddingMultiplier)`` copies of
+    the edge values, so the convolution does not see a step to zero there.
+
+    Returns ``nPad`` (0: no padding).  As EasySpin's ``any(spec(:,1)~=0)``, one
+    decision covers all rows of a multi-row ``spec``.  An end counts as nonzero
+    when ``|edge| > 1e-9 * max|row|`` for some row, not at exact ``~= 0``:
+    torchspin's projections leave a ~1e-14 relative round-off floor in empty
+    bins that EasySpin's leave exactly zero, and an exact test would pad
+    spectra EasySpin does not pad (KNOWN_LIMITATIONS.md).  ``round`` is
+    MATLAB's (half away from zero).  The decision is discrete and reads
+    detached values only.
+    """
+    mult = float(multiplier)
+    if mult <= 0 or spec.shape[-1] < 2:
+        return 0
+    g_val = float(fwhm_g.detach()) if torch.is_tensor(fwhm_g) else float(fwhm_g)
+    l_val = float(fwhm_l.detach()) if torch.is_tensor(fwhm_l) else float(fwhm_l)
+    rd = spec.detach().reshape(-1, spec.shape[-1]).abs()
+    tol = _EDGE_PAD_RTOL * rd.max(dim=-1).values
+    if not bool(((rd[:, 0] > tol) | (rd[:, -1] > tol)).any()):
+        return 0
+    return int(math.floor(max(g_val, l_val) / dx * mult + 0.5))
+
+
 def _lw_convolve(row: torch.Tensor, dx: float, fwhm_g, fwhm_l, harmonic: int,
-                 phase: float = 0.0, conv=None) -> torch.Tensor:
+                 phase: float = 0.0, conv=None, pad_multiplier: float = 3.0,
+                 n_pad: Optional[int] = None) -> torch.Tensor:
     """EasySpin pepper.m's final ``Sys.lw`` convolution (pepper.m:1150-1223).
 
     * The harmonic and ``Exp.mwPhase`` go to the Lorentzian when
@@ -574,6 +608,12 @@ def _lw_convolve(row: torch.Tensor, dx: float, fwhm_g, fwhm_l, harmonic: int,
       0 is not convolved: it is a delta-like line (pepper.m:1195-1223).
       EasySpin raises for such a component with a harmonic > 0; torchspin
       convolves it anyway (KNOWN_LIMITATIONS.md).
+    * Range padding (pepper.m:1171-1193): a spectrum that is nonzero at an end
+      of the range is extended by ``n_pad`` edge copies on both sides before
+      the convolutions and cropped afterwards (:func:`_edge_pad_count`, from
+      ``pad_multiplier`` = ``Options.PaddingMultiplier``; 0 disables it).
+      ``n_pad`` overrides the count, for callers that decide once for several
+      rows.  The copies are torch slices, so gradients flow through them.
 
     ``conv(spec, dx, fwhm_g, fwhm_l, deriv, phase)`` is the convolution
     (default :func:`convspec`; :mod:`torchspin.pepper_autograd` passes its
@@ -596,19 +636,27 @@ def _lw_convolve(row: torch.Tensor, dx: float, fwhm_g, fwhm_l, harmonic: int,
     for w_, used in ((fwhm_g, use_g), (fwhm_l, use_l)):
         if not used and torch.is_tensor(w_) and w_.requires_grad:
             row = row + 0.0 * w_.to(row.dtype)
-    if use_l and use_g:
-        row = conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
-        return conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+    if not (use_l or use_g):
+        return row          # padding followed by cropping alone is the identity
+    n = row.shape[-1]
+    if n_pad is None:
+        n_pad = _edge_pad_count(row, dx, fwhm_g, fwhm_l, pad_multiplier)
+    if n_pad > 0:
+        lead = row.shape[:-1]
+        row = torch.cat([row[..., :1].expand(*lead, n_pad), row,
+                         row[..., -1:].expand(*lead, n_pad)], dim=-1)
     if use_l:
-        return conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
+        row = conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
     if use_g:
-        return conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+        row = conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+    if n_pad > 0:
+        row = row[..., n_pad:n_pad + n]
     return row
 
 
 def _finish_field_sweep(spec: torch.Tensor, x: torch.Tensor, dx: float, exp,
                         fwhm_g: float, fwhm_l: float, fd_deriv: bool,
-                        phase: float = 0.0) -> torch.Tensor:
+                        phase: float = 0.0, pad_multiplier: float = 3.0) -> torch.Tensor:
     """EasySpin's final broadening/harmonic bookkeeping for field sweeps.
 
     With field modulation (``Exp.ModAmp``) the absorption spectrum is convolved
@@ -617,17 +665,20 @@ def _finish_field_sweep(spec: torch.Tensor, x: torch.Tensor, dx: float, exp,
     (ConvHarmonic) or, without residual line width, by differentiation
     (DerivHarmonic: finite differences for template/strain spectra, spectral
     derivative for stick spectra).  ``phase`` (``Exp.mwPhase``) enters the
-    convolution kernel.  Multi-row spectra are processed row-wise.
+    convolution kernel.  Multi-row spectra are processed row-wise, with one
+    range-padding decision for all rows (``pad_multiplier`` =
+    ``Options.PaddingMultiplier``), as EasySpin pads the whole ``spec`` matrix.
     """
     mod_amp = float(getattr(exp, 'ModAmp', 0.0) or 0.0)
     if mod_amp > 0 and exp.Harmonic < 1:
         raise ValueError("With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.")
     conv_harm = 0 if mod_amp > 0 else int(exp.Harmonic)
     rows = [spec] if spec.ndim == 1 else list(spec)
+    n_pad = _edge_pad_count(spec, dx, fwhm_g, fwhm_l, pad_multiplier) if (fwhm_g > 0 or fwhm_l > 0) else 0
     out = []
     for row in rows:
         if fwhm_g > 0 or fwhm_l > 0:
-            row = _lw_convolve(row, dx, fwhm_g, fwhm_l, conv_harm, phase)
+            row = _lw_convolve(row, dx, fwhm_g, fwhm_l, conv_harm, phase, n_pad=n_pad)
         elif conv_harm > 0:
             if fd_deriv:
                 for _h in range(conv_harm):
@@ -1865,7 +1916,8 @@ def _pepper_single(
         else:
             g_rem, l_rem, deriv_fd = 0.0, 0.0, True
         spec = _finish_field_sweep(spec, x, dx, exp, g_rem, l_rem, deriv_fd,
-                                   phase=_conv_phase if l_rem > 0 else 0.0)
+                                   phase=_conv_phase if l_rem > 0 else 0.0,
+                                   pad_multiplier=opt.PaddingMultiplier)
         return x, spec
 
     # EasySpin p_sampletype: a crystal needs Exp.MolFrame or Exp.CrystalSymmetry;
@@ -1949,7 +2001,8 @@ def _pepper_single(
         spec = torch.stack(list(specs)) if n_spec > 1 else specs[0]
         # phase enters the Lorentzian template (above) or the Lorentzian convolution
         spec = _finish_field_sweep(spec, x, dx, exp, g_rem, l_rem, deriv_fd,
-                                   phase=_conv_phase if l_rem > 0 else 0.0)
+                                   phase=_conv_phase if l_rem > 0 else 0.0,
+                                   pad_multiplier=opt.PaddingMultiplier)
         return x, spec
 
     if grid_sym == 'O3':
@@ -1997,7 +2050,8 @@ def _pepper_single(
         spec = spec / dx * (2.0 * math.pi)
         # EasySpin disregards mwPhase for a Gaussian-only template spectrum
         spec = _finish_field_sweep(spec, x, dx, exp, g_rem, l_rem, deriv_fd,
-                                   phase=_conv_phase if l_rem > 0 else 0.0)
+                                   phase=_conv_phase if l_rem > 0 else 0.0,
+                                   pad_multiplier=opt.PaddingMultiplier)
         return x, spec
 
     # Strain on a projectable grid (D2h-type or Dinfh): EasySpin pepper.m's
@@ -2512,5 +2566,6 @@ def _pepper_single(
     # modulation; otherwise the harmonic is produced by the convolution
     # (ConvHarmonic) or, without lw, by finite differences (DerivHarmonic).
     # Exp.mwPhase (dispersion admixture) enters through the line-shape kernel.
-    spec = _finish_field_sweep(spec, x, dx, exp, fwhm_g, fwhm_l, has_strain, phase=_conv_phase)
+    spec = _finish_field_sweep(spec, x, dx, exp, fwhm_g, fwhm_l, has_strain, phase=_conv_phase,
+                              pad_multiplier=opt.PaddingMultiplier)
     return x, spec
