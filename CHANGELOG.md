@@ -14,6 +14,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.12] — 2026-11-11
+
+### Fixed
+
+- **A one-element `D` is one D value with E = 0, as in EasySpin** (B52). `SpinSystem(S=[2.5],
+  D=[300.])` was accepted with D left as a length-1 vector, and `pepper` then failed in `ham_zf`
+  with `IndexError: too many indices for tensor of dimension 1`. EasySpin reads
+  `numel(Sys.D) == nElectrons` as one D per electron (validatespinsys.m:208-210), so for one
+  electron spin `[D]` is now the same as the scalar `D`: identical tensor and spectrum, and for
+  S = 3/2, D = 300 MHz and S = 1, D = 400 MHz (`ref_pepper_ext2.mat`) `D = [D]` matches EasySpin
+  to cosine 1.0000000, amplitude 1.00000 / 1.00001 (was an `IndexError`). For several electrons a single value is EasySpin's
+  'Sys.D has wrong size.' and now raises `ValueError` (torchspin's scalar `D`, which is applied to
+  every electron, is unchanged). Any other `D` that does not normalize to `(nElectrons, 3)` or
+  `(3*nElectrons, 3)`, such as `[[D]]` for two electrons or a length-6 vector, now raises
+  `ValueError` in the constructor instead of an `IndexError` later. Valid inputs are unchanged.
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed
