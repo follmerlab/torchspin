@@ -192,7 +192,108 @@ amplitude (S = 1/2, g = [2 2.05 2.1], GridSize [19 4]).
   fixed-field `salt` (`Method 'perturb1'`): residual 1e-12. HStrain: residual 8e-5, amplitude
   0.999996 (not traced; widths are interpolated linearly in both codes).
 - Grids without interpolation, axial (Dinfh) grids and open-φ grids (Ci, C2h, C4h, C6h, S6, C1)
-  are not affected.
+  are not affected. (The D3d/D4h/D6h/Oh/C6h/S6 grids had a separate defect, fixed in 0.9.3; see
+  § Powder grid φ range. C1 had another one, fixed in 0.9.21; see § C1 grid interpolation of
+  the lower hemisphere.)
+
+## Powder grid φ range of the D3d/D4h/D6h/Oh/C6h/S6 grids (fixed 0.9.3)
+
+Up to 0.9.2 `sphgrid` covered φ = 0..π/2 for the D6h, D4h, Oh, D3d and C6h grids and 0..π for
+S6, while EasySpin (private/gridparam.m) and torchspin's `gridparam` (used by pepper's grid
+interpolation and by `grid_triangulation`) use π/6, π/4, π/4, π/3, π/3 and 2π/3. `sphgrid` now
+reads the same table. Spectra on these grids changed:
+
+- With orientations without resonances the coarse knots were interpolated in the wrong layout
+  (S = 5/2, D4h, [200 480] mT: cosine 0.673 with EasySpin; Oh, [250 430] mT: 0.491).
+- The D3d, C6h and S6 grids held a non-integer number of symmetry wedges, also without
+  interpolation (D3d, [0 800] mT: cosine 0.964; D3d system on an S6 grid 0.901; D6h system on a
+  C6h grid 0.735). The D6h, D4h and Oh grids covered whole wedges, so they were only affected
+  through the interpolation.
+- Now (tests/data/ref_sphgrid_maxphi.mat, 9 cases, pepper and pepper_autograd): cosine
+  ≥ 0.99993, amplitude within 5e-4; EasySpin's `sphgrid` knots and weights for all 14 groups
+  agree to 1e-13.
+- With missing knots, positions of all transitions are interpolated linearly (EasySpin `L1`),
+  also for transitions that resonate at every knot, on every grid (the D4h system on a D2h
+  grid: cosine 0.959 before, 1.0000000 now).
+- `Options.GridSymmetry` accepts all 14 EasySpin grid symmetries, `'auto'` and `''` (before
+  0.9.3 only Dinfh, D2h, C2h, Ci, C1, O3 and `'auto'`).
+
+## Powder grid interpolation when resonances are missing (fixed 0.9.4)
+
+When any transition has no resonance at some knot of the coarse grid (it leaves the sweep range,
+or the level pair does not resonate there), EasySpin interpolates the positions of every
+transition linearly (`L1`, 2-D grids) or with the local cubic `L3` (axial grids)
+(pepper.m:701, 763-772). Up to 0.9.3 `pepper` switched only the slots that carried NaNs and
+splined the rest with `G3`; `pepper_autograd` and `salt` were already right. S = 5/2 with
+D = 300 MHz and a B4 term on an explicit D2h grid (Range [200 480] mT) was cosine 0.9587 at
+Harmonic 1.
+
+- EasySpin agreement (tests/data/ref_pepper_nanlinear.mat), closed-φ grids (D2h explicit and
+  from hamsymm): cosine ≥ 1 − 3e-8, amplitude within 4e-5, pepper and pepper_autograd.
+- **Open-φ grids with missing resonances are not exact.** The same S = 5/2 system on an explicit
+  C2h grid is cosine 0.9964 and amplitude 1.053 of EasySpin (Ci: 0.9986, 1.017), in `pepper`
+  and `pepper_autograd` alike (before 0.9.4 `pepper` was 0.9395 / 0.9478). Without
+  interpolation (GridSize [19 1]) or without missing resonances (Range [0 800] mT) the same
+  grid agrees to 2e-8 / 2e-6, so the residual is in the linear interpolation or projection of
+  open-φ grids with NaN knots, most likely EasySpin's `L1` rectify of periodic rows (B58, see
+  § Powder grid interpolation next to knots without a resonance; unchanged by the 0.9.10 fix).
+  The C2h case is an `xfail(strict=True)` in `test_pepper_nanlinear_matlab_validation.py`.
+
+## Powder grid interpolation next to knots without a resonance (fixed 0.9.10)
+
+When some orientations have no resonance in the field range, pepper and pepper_autograd
+interpolate the coarse knots linearly (EasySpin gridinterp `L1`, gridinterp.m:129). Up to 0.9.9
+a missing coarse knot also removed the fine knots on the neighboring coarse row or column
+(`0 * NaN` in the bilinear sum; MATLAB's interp2 skips zero-weight corners), and `sphgrid`'s
+φ differed from EasySpin's `linspace(0, maxPhi, nPhi)` by a few ulp, which decided whether a
+fine knot lay exactly on a coarse column.
+
+- Before: S = 1/2, g = [2 2.05 2.1], [325 337] mT, GridSize [31 4]: up to 5.6 % (stick), 2.4 %
+  and 7.1 % (lw 1.5 mT, Harmonic 0/1) of the maximum; S = 5/2 with D and B4 on a D2h grid,
+  [290 390] mT: 0.54 % / 0.96 %. Now 5e-7 / 2e-8 / 1e-7 and 4e-5 (B50's residual is the same
+  without interpolation). tests/data/ref_interp_nan_edges.mat.
+- `sphgrid` φ and θ equal EasySpin's bitwise (12 groups, GridSize 7 and 73). Spectra with a
+  resonance at every knot change by roundoff only (≤ 1.3e-13).
+- **Open-φ grids with missing knots still deviate (B58, not fixed).** For periodic θ rows
+  EasySpin's `L1` rectify samples the wrapped row (len + 1 values) at `linspace(1, len, nc)`
+  (gridinterp.m:188, 217), i.e. it stretches the row over the first len knots and leaves out the
+  segment back to φ = 0; torchspin's `_row` (pepper.py, `xx = np.linspace(1.0, float(n), nc)`
+  with n = len + 1) samples the full period. Affects Ci, C2h, C4h, C6h, S6 and C1 grids only
+  when some knot has no resonance. S = 3/2, g = [2 2.05 2.1], D = [3000 500] MHz, Ci grid,
+  [50 400] mT: cosine 0.9925, amplitude 0.954 with EasySpin (0.9923 / 0.953 before 0.9.10).
+  `test_gridinterp_l1_vs_easyspin` marks the open-φ cases xfail.
+
+## C1 grid interpolation of the lower hemisphere: deliberate deviation from EasySpin (fixed 0.9.21)
+
+The C1 grid's lower hemisphere is built from the upper knots in reverse order (EasySpin
+sphgrid.m:320-325; torchspin's `sphgrid` does the same and keeps that order, which
+`grid_triangulation` relies on), so each lower θ row is stored with φ decreasing. EasySpin's
+rectify step (private/gridinterp.m:204-224) reads these rows as φ increasing, so a lower knot at φ
+takes the value from −φ − Δφ (mirrored and shifted by one coarse φ step Δφ of that row);
+torchspin's port (`pepper._interp_grid`) did the same
+up to 0.9.20 (B74). Since 0.9.21 torchspin reverses each lower row before resampling it and so
+**deliberately deviates from EasySpin**, toward the exact (uninterpolated) result.
+
+- Affected: `pepper`, `pepper_autograd` and `salt` on a C1 grid with interpolation
+  (`GridSize(2) > 1`). C1 is chosen by default for low-symmetry systems with `Sys.tdm`
+  (photoselection), otherwise only with `Options.GridSymmetry='C1'`. Because of the shift by
+  Δφ, also systems with coaxial tensors move (rhombic g on C1 [20 4] vs D2h: 2.4e-3 → 3.6e-4 of
+  the maximum); only φ-independent (axial about z) data are unaffected. All other grids are
+  unchanged bit for bit.
+- Size (C1 [19 4] vs the same fine knots without interpolation, C1 [73 1]; max deviation of
+  the maximum, EasySpin's error before → torchspin now): Cu(II) with non-coaxial g and A
+  0.342 → 0.0075 (Ci grid of the same size: 0.0078); photoselection triplet with non-coaxial
+  g, D and tdm, default grid 0.069 → 0.0018; `salt` 1H ENDOR 0.021 → 0.00054. Interpolating
+  f = 12x + 15y + 8z + 4xy − 3yz + 2xz (mT) from C1 [19 4] to 73: max error 32.5 → 0.52 mT
+  (`L1`), 35.7 → 0.064 mT (`G3`).
+- Proposed upstream fix: read the rows reversed at gridinterp.m:211/213/217/219, i.e.
+  `y(idx+len-1:-1:idx)` in place of `y(idx:idx+len-1)`, with the periodic wrap element
+  `idx+len-1` in place of `idx` (`y([idx+len-1:-1:idx idx+len-1])`).
+- EasySpin-reference cases on interpolated C1 grids (`photosel_*` in ref_pepper_features2.mat
+  and ref_pepper_round3.mat, `fullsphere_C1` in ref_pepper_ext2.mat) moved by up to 9e-3 of the
+  maximum (cosine ≥ 0.999989, amplitude within 0.85 %). Their EasySpin comparison is replaced
+  by torchspin on the same fine knots without interpolation (`*_c1_vs_no_interpolation`).
+  `test_gridinterp_l1_vs_easyspin[C1-*]` remains xfail (B58 and this deviation).
 
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
@@ -397,7 +498,10 @@ and `resfreqs_perturb` always). A negative field still raises in the constructor
   a bin edge then lands in either neighbor depending on the last bit of round-off, which can
   differ between machines (a one-bin shift; 4 % of the maximum for a 300 MHz line at 10 MHz
   bins). Avoid axes whose points coincide with the zero-field splittings, or compare on the
-  axis shifted by dx/2.
+  axis shifted by dx/2. With an interpolated grid (e.g. GridSize [19 4]) the single-bin deposit
+  relies on `pepper._zf_const_pos`, which gives every interpolated orientation the coarse
+  position; interpolation round-off would otherwise split a line on an edge between the two bins
+  (5-39 % in the lower bin). Tested against EasySpin in `test_pepper_zerofield_edge.py` (0.9.1).
 - **Not supported.** Non-equilibrium populations (`Sys.initState`) raise with
   `ZeroField`. Frequency sweeps have no differentiable pepper path (`pepper_autograd`
   raises for them, as before). The zero-field resonances from `resfreqs_batch`
@@ -949,8 +1053,11 @@ segment; for 63Cu+14N its intensities are 3–4 % off the exact value and its
 spectrum disagrees with its own perturb2 (cosine 0.951), while torchspin's exact
 intensities agree with EasySpin perturb2 at 0.988 (`septrans_CuN_matrix` xfail).
 (2) For S=5/2 in parallel mode torchspin and EasySpin agree exactly on the coarse
-grid; with the default [19 4] interpolation EasySpin sits farther from its own
-converged spectrum (0.9947) than torchspin (0.9983); the test threshold is 0.995.
+grid. With the default [19 4] interpolation they differed (cosine 0.9959) because
+torchspin splined the positions of transitions that resonate everywhere while EasySpin
+interpolates all of them linearly once any transition misses a knot; fixed in 0.9.4
+(cosine 0.99989, see § Powder grid interpolation when resonances are missing). The test
+threshold is 0.9998 (was 0.995).
 
 Internals aligned with EasySpin in the process: global transition pre-/post-
 selection (`Opt.Threshold`) instead of per-orientation thresholds, a
