@@ -156,7 +156,8 @@ def _sphgrid_core(
             th = (iSlice - 1) * dtheta
             w_slice = 2 * math.sin(th) * sindth2 * dPhi
             for k in range(nPhi):
-                phi[start + k] = k * dPhi
+                # MATLAB linspace(0, maxPhi, nPhi) (sphgrid.m:298): exact end point
+                phi[start + k] = maxPhi if k == nPhi - 1 else k * maxPhi / (nPhi - 1)
                 theta[start + k] = th
                 if k == 0:
                     Weights[start + k] = w_slice * w0
@@ -171,7 +172,8 @@ def _sphgrid_core(
         dPhi = maxPhi / (nPhi - 1)
         w_eq = sindth2 * dPhi
         for k in range(nPhi):
-            phi[start + k] = k * dPhi
+            # MATLAB linspace(0, maxPhi, nPhi) (sphgrid.m:307)
+            phi[start + k] = maxPhi if k == nPhi - 1 else k * maxPhi / (nPhi - 1)
             theta[start + k] = math.pi / 2
             if k == 0:
                 Weights[start + k] = w_eq * w0
