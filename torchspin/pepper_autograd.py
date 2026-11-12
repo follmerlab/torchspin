@@ -471,6 +471,11 @@ def _check_supported(sys: SpinSystem, exp: Experiment, opt: Options) -> None:
     mod_amp = getattr(exp, 'ModAmp', 0.0)
     if mod_amp is not None and float(torch.as_tensor(mod_amp).detach()) > 0 and int(exp.Harmonic) < 1:
         raise ValueError('With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.')
+    if torch.is_tensor(mod_amp) and mod_amp.requires_grad and float(mod_amp.detach()) <= 0:
+        # ModAmp = 0 switches from pseudo-modulation to the plain field-derivative
+        # harmonic: the spectrum is discontinuous there, so no gradient exists (B92)
+        raise ValueError('pepper_autograd: Exp.ModAmp requires grad but is <= 0; the spectrum is not '
+                         'differentiable in ModAmp there (ModAmp = 0 switches off field modulation).')
     if float(getattr(exp, 'mwPhase', 0.0) or 0.0) != 0.0:
         raise NotImplementedError('pepper_autograd: Exp.mwPhase (dispersion) is not supported.')
     for name in ('Ordering', 'lightBeam', 'SampleFrame', 'CrystalSymmetry', 'MolFrame'):

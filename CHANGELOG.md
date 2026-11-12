@@ -14,6 +14,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.27] — 2026-11-12
+
+### Fixed
+
+- **`Exp.ModAmp` gradients are correct on every torch version; at Harmonic 2 they were silently
+  wrong on torch <= 2.14 (B92).** The pseudo-modulation kernel (`dataproc.fieldmod_t`, used by
+  `pepper_autograd` and `pepper` with grad inputs) is a Bessel function of ModAmp, and
+  `torch.special.bessel_j0`/`bessel_j1` have no derivative before torch 2.15: their outputs left
+  the graph without an error. A grad ModAmp therefore raised "does not require grad" at
+  Harmonic 1 on torch <= 2.14, and at Harmonic 2 the upward recurrence
+  J2 = 2/x J1 - J0 kept only its 2/x path: S = 1/2, g = [2.0 2.05 2.1], lw 0.5, ModAmp 0.5,
+  loss sum(y^2): autograd -90.59 against central differences 10.004 on torch 2.10 and 2.14.1
+  (CI's py3.10 torch). On torch 2.15 the gradient was already right. `dataproc._bessel_j01` now
+  supplies the backward itself (J0' = -J1, J1' = J0 - J1/x, 1/2 at x = 0) on every version; the
+  forward values are torch's, so spectra are unchanged (bit-identical). Gradients against
+  central differences: rel 1e-9..1e-7 for Harmonic 1 and 2, ModAmp below the bin width,
+  overmodulated, powder and `Exp.Orientations`, on torch 2.10, 2.14.1 and 2.15. A grad ModAmp
+  <= 0 now raises `ValueError` (ModAmp = 0 switches off field modulation; the spectrum is not
+  continuous there). Only ModAmp was affected: every other float-read input raises on all
+  three torch versions, and `torch.special` is used nowhere else.
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed

@@ -26,7 +26,7 @@ If you find behavior that contradicts this document, please open an issue.
 | `cardamom` (trajectory) | 3 EasySpin 6 references (diffusion/fast, jump/fast, diffusion/ISTOs): cosine 0.9998 / ≥0.97 / 0.9992, amplitude 1.00 | matches EasySpin's scale | See § Cardamom |
 | `esfit` (fitting) | 6 EasySpin esfit references (levmar/simplex from offset starts): torchspin reaches EasySpin's residual or better; `levmar` is a port of `esfit_levmar.m` | n/a | EasySpin's own levmar stalls at symmetric starts in 2 of 6 cases |
 | `orca2torchspin` | 33 ORCA files identical to `orca2easyspin` (tensors compared in the molecular frame) | n/a | atoms without data are not listed (EasySpin lists zero rows) |
-| `autograd` (differentiable) | `differentiable_spectrum` = `pepper_autograd`: forward equals `pepper` to 1e-11; Jacobians vs finite differences of `pepper` for g, A, D, lw, Temperature (see § Autograd) | same as `pepper` | strains, ModAmp, mwPhase, ordering, crystals, frequency sweeps not differentiable |
+| `autograd` (differentiable) | `differentiable_spectrum` = `pepper_autograd`: forward equals `pepper` to 1e-11; Jacobians vs finite differences of `pepper` for g, A, D, lw, Temperature (see § Autograd) | same as `pepper` | mwPhase, ordering, crystals, frequency sweeps not differentiable |
 | Hamiltonians, utilities, constants | exact — 92 cases mirroring EasySpin's `ham_*` test suite (rtol 1e-10) plus `ee2`/`D_` cases | exact | None |
 | `eprload` | identical to EasySpin on all 75 readable files in `tests/eprfiles` (Bruker, JEOL, specman, Magnettech, Adani, CIQTEK, ETH formats) | n/a | See § eprload (native units) |
 | `isotopologues` | EasySpin's 15 `isotopologues_*` tests ported (incl. the `A_` spherical form); pepper/garlic/chili mixtures validated in MATLAB | exact | None |
@@ -1015,7 +1015,14 @@ derivative), against 0.9998–1.0000 / 0.999 for `pepper`; the ripple only falls
 below 1 % of the signal around GridSize 91. Do not train models on their output.
 
 Strains are differentiable (HStrain, gStrain, AStrain; DStrain magnitudes
-are constants). Not yet differentiable (`pepper_autograd` raises
+are constants). `Exp.ModAmp` (pseudo-modulation) is differentiable on every
+torch version (0.9.27, B92): `torch.special.bessel_j0`/`bessel_j1` have no
+derivative before torch 2.15, so `dataproc._bessel_j01` supplies the backward
+(J0' = -J1, J1' = J0 - J1/x). Before 0.9.27 a grad `ModAmp` raised at Harmonic 1
+and gave a silently wrong gradient at Harmonic 2 on torch <= 2.14 (the Bessel
+recurrence kept only its 2k/x path). A grad `ModAmp` <= 0 raises: `ModAmp = 0`
+switches to the plain field-derivative harmonic, so the spectrum is not
+continuous there. Not yet differentiable (`pepper_autograd` raises
 `NotImplementedError`, `pepper()` itself is unchanged): `Exp.mwPhase`,
 partial ordering, photoselection, crystals, frequency sweeps, `Sys.initState`.
 `salt` (fixed-field mode) and `garlic` (all modes) are
