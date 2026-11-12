@@ -97,10 +97,23 @@ def cosine(a, b):
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
+# multidstrain / multidstrain_31: two S = 1 spins with axial D and E strain.
+# EasySpin's hamsymm ignores strains and picks Dinfh (one meridian), so its
+# spectrum is 5.9 % of the maximum off the converged D2h one; torchspin (B82,
+# 0.9.24) takes the strains into account and picks D2h.  The EasySpin comparison
+# is kept as a strict xfail; test_multidstrain_converged_reference checks the new
+# default against a fine D2h grid, and the same Dinfh grid still reproduces EasySpin.
+EASYSPIN_GRID_B82 = ('multidstrain', 'multidstrain_31')
+_B82_XFAIL = pytest.mark.xfail(
+    strict=True, reason='B82: EasySpin picks Dinfh and ignores the E strain '
+                        '(KNOWN_LIMITATIONS, automatic grid symmetry and strains)')
+
 CASES = [
     'dstrain_explicit', 'dstraincorr_+0', 'dstraincorr_+1', 'dstraincorr_-1',
     'dstraincorr_+0_gs31', 'dstraincorr_+1_gs31', 'dstraincorr_+0_gs61', 'dstraincorr_+1_gs61',
-    'dstraincorr_nostrain_gs15', 'multidstrain', 'multidstrain_31', 'two_triplets_dstrain_corr_61',
+    'dstraincorr_nostrain_gs15',
+    *(pytest.param(n, marks=_B82_XFAIL) for n in EASYSPIN_GRID_B82),
+    'two_triplets_dstrain_corr_61',
 ]
 
 
@@ -115,3 +128,22 @@ def test_dstrain_spectra_vs_matlab(cases, name):
     ratio = np.abs(spc).max() / np.abs(ref).max()
     assert cs > 0.999, f"{name}: cosine {cs:.5f}"
     assert abs(ratio - 1) < 0.03, f"{name}: amplitude ratio {ratio:.4f}"
+
+
+@pytest.mark.parametrize("name", EASYSPIN_GRID_B82)
+def test_multidstrain_converged_reference(cases, name):
+    """Default grid (now D2h) vs a fine D2h grid [61 4] (which agrees with [121 4]
+    to 2.3e-4 of the maximum): 0.22 % / 0.07 % off; the Dinfh grid that EasySpin
+    and torchspin < 0.9.24 used is 5.9 % off.  With that Dinfh grid forced,
+    torchspin still reproduces EasySpin's spectrum (1e-4)."""
+    c = cases[name]
+    sys, exp, opt = sys_from_mat(c.Sys), exp_from_mat(c.Exp), opt_from_mat(c.Opt)
+    y_auto = pepper(sys, exp, opt)[1].numpy()
+    y_fine = pepper(sys, exp, Options(GridSize=[61, 4], GridSymmetry='D2h', Verbosity=0))[1].numpy()
+    y_dinfh = pepper(sys, exp, Options(GridSize=opt.GridSize, GridSymmetry='Dinfh', Verbosity=0))[1].numpy()
+    scale = np.abs(y_fine).max()
+    assert np.abs(y_auto - y_fine).max() < 5e-3 * scale
+    assert np.abs(y_dinfh - y_fine).max() > 5e-2 * scale         # the old grid
+    ref = np.asarray(c.spc, dtype=float)
+    assert cosine(y_dinfh, ref) > 0.999
+    assert abs(np.abs(y_dinfh).max() / np.abs(ref).max() - 1) < 0.03
