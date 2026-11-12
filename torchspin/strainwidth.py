@@ -20,6 +20,57 @@ from torchspin.rotations import erot
 from torchspin.spinsystem import SpinSystem
 
 
+def _astrain_active(sys: SpinSystem) -> bool:
+    """True when the AStrain width term is used (EasySpin ``useAStrain``)."""
+    return (sys.AStrain is not None and sys.nNuclei > 0
+            and bool(torch.any(torch.as_tensor(sys.AStrain).detach() != 0)))
+
+
+def astrain_level_mI(
+    sys: SpinSystem,
+    H0: torch.Tensor,
+    muz: torch.Tensor,
+    centerB: float,
+) -> Optional[torch.Tensor]:
+    """Effective nuclear spin projection per level for the AStrain width (EasySpin model).
+
+    EasySpin ``resfields.m`` (766-788) assigns every level one effective mI of
+    the first nucleus, computed once for all orientations: the eigenvectors of
+    ``H0 - centerB*muz`` with the field along the *molecular* z axis and
+    ``centerB = mean(Exp.Range)``, levels sorted by energy, and
+    ``mI_k = <k|Iz|k>`` of nucleus 1.  A transition (u, v) then uses
+    ``(mI_u + mI_v)/2`` at every orientation, and the AStrain matrix enters the
+    width as ``(G + gAStrainCorr * mI * AStrainMatrix).^2``.  The level index,
+    not the state, carries mI, so an orientation where the energy order of the
+    levels differs from the molecular-z order gets the mI of another state
+    (see KNOWN_LIMITATIONS).
+
+    Parameters
+    ----------
+    sys:
+        Spin system (one electron spin; AStrain belongs to the first nucleus).
+    H0, muz:
+        Field-independent Hamiltonian and molecular z magnetic moment
+        operator (MHz, MHz/mT), each ``(n, n)``.
+    centerB:
+        Field (mT) at which the levels are labeled; EasySpin uses
+        ``mean(Exp.Range)``.
+
+    Returns
+    -------
+    ``(n,)`` float64 tensor of mI per energy-sorted level, or ``None`` when
+    the system has no AStrain (or no nuclei).  Differentiable in H0 and muz
+    (degeneracy-safe eigendecomposition).
+    """
+    if not _astrain_active(sys):
+        return None
+    from torchspin.spinops import sop
+    _, V = _eigh(H0 - float(centerB) * muz)
+    Iz = sop(sys.Spins, [[sys.nElectrons + 1, 3]], device=H0.device).to(dtype=V.dtype)
+    return torch.real((V.conj() * (Iz @ V)).sum(dim=0)).to(torch.float64)
+
+
+
 def compute_strain_widths(
     sys: SpinSystem,
     H0: torch.Tensor,        # field-independent Hamiltonian
@@ -32,6 +83,8 @@ def compute_strain_widths(
     mwFreq: float,           # microwave frequency (GHz)
     B0: float,               # resonance field (mT) for this orientation
     dtype: torch.dtype = torch.complex128,
+    Range: Optional[tuple] = None,           # field range (mT); AStrain labels levels at mean(Range)
+    mI_levels: Optional[torch.Tensor] = None,  # (n,) AStrain mI per level (overrides Range)
 ) -> Optional[torch.Tensor]:
     """
     Compute orientation-dependent Gaussian FWHM (mT) for each transition.
@@ -66,6 +119,13 @@ def compute_strain_widths(
         0-d tensor).
     dtype:
         Accepted for backward compatibility; the arithmetic uses H0's dtype.
+    Range:
+        Sweep range (mT).  AStrain only: EasySpin computes the effective mI
+        of every level once, at ``mean(Exp.Range)`` with the field along the
+        molecular z axis (:func:`astrain_level_mI`).  Without ``Range`` (and
+        without ``mI_levels``) the levels are labeled at ``B0``.
+    mI_levels:
+        AStrain only: precomputed :func:`astrain_level_mI` (overrides ``Range``).
 
     Returns
     -------
@@ -92,7 +152,11 @@ def compute_strain_widths(
     muzL = ((st * cp).view(1, 1, 1) * mux + (st * sp).view(1, 1, 1) * muy
             + ct.view(1, 1, 1) * muz)
     B0_t = torch.as_tensor(B0, dtype=torch.float64, device=device).reshape(1)
-    return compute_strain_widths_batch(sys, H0, muzL, ph, th, B0_t, [pairs], mwFreq)[0]
+    if mI_levels is None and _astrain_active(sys):
+        centerB = 0.5 * (float(Range[0]) + float(Range[1])) if Range is not None else float(B0_t.detach())
+        mI_levels = astrain_level_mI(sys, H0, muz, centerB)
+    return compute_strain_widths_batch(sys, H0, muzL, ph, th, B0_t, [pairs], mwFreq,
+                                       mI_levels=mI_levels)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +174,7 @@ def compute_strain_widths_batch(
     mwFreq: float,              # GHz
     pairs_flat: Optional[torch.Tensor] = None,   # (M, 2): exactly one transition per orientation
     ho_batch: Optional[tuple] = None,            # (Q2, Q3), each (M, n, n) or None: Options.QuadraticZeeman
+    mI_levels: Optional[torch.Tensor] = None,    # (n,) AStrain mI per level, from astrain_level_mI
 ) -> list:
     """Vectorized strain widths for a batch of M orientations.
 
@@ -127,9 +192,23 @@ def compute_strain_widths_batch(
     B0 is H0 − B0 muzL + B0² Q2 + B0³ Q3 and dB/dE uses the slope operator
     muzL − 2 B0 Q2 − 3 B0² Q3.
 
+    AStrain needs ``mI_levels``, the effective mI of the first nucleus per
+    energy-sorted level from :func:`astrain_level_mI` (EasySpin labels the
+    levels once, at ``mean(Exp.Range)`` along the molecular z axis, and uses
+    these mI at every orientation; :func:`torchspin.resfields_batch.resfields_batch`
+    passes them).  Before 0.9.25 mI was ``<Iz>`` at each orientation's own
+    resonance field, which vanishes for the field perpendicular to a large A
+    and gave perpendicular lines no AStrain width (B68).
+
     Returns
     -------
     list of M tensors (nTrans_m,) in mT, or None if orientation had no resonances.
+
+    Raises
+    ------
+    ValueError
+        AStrain without ``mI_levels``; AStrain with more than one electron and
+        gStrain (as EasySpin).
     """
     if not _has_any_strain(sys):
         return torch.zeros(pairs_flat.shape[0], dtype=torch.float64, device=H0.device) if pairs_flat is not None else [None] * len(pairs_list)
@@ -198,20 +277,26 @@ def compute_strain_widths_batch(
                       + zc[:, 2, None, None] * Sz)                          # (M, n, n)
             kSzL_diag_e.append(torch.real((V_b.conj() * (kSzL_b @ V_b)).sum(dim=1)))  # (M, n)
 
-    # AStrain: build AStrainMatrix (3, 3) in molecular frame; compute mI_eff batch
+    # AStrain: build AStrainMatrix (3, 3) in molecular frame; mI per level is
+    # orientation-independent (EasySpin resfields.m 766-788, astrain_level_mI)
     AStrainMatrix: Optional[torch.Tensor] = None
-    mI_eff_batch: Optional[torch.Tensor] = None
-    if sys.AStrain is not None and sys.nNuclei > 0 and sys.nElectrons == 1:
-        from torchspin.spinops import sop
+    if _astrain_active(sys) and sys.nElectrons == 1:
+        if mI_levels is None:
+            raise ValueError(
+                "compute_strain_widths_batch: AStrain needs mI_levels, the effective mI of the "
+                "first nucleus per level (EasySpin's model): pass "
+                "mI_levels=astrain_level_mI(sys, H0, muz, centerB) with the molecular muz and "
+                "centerB = mean(Exp.Range).")
+        mI_levels = mI_levels.to(device=device, dtype=torch.float64).reshape(-1)
+        if mI_levels.numel() != H0.shape[0]:
+            raise ValueError(f"mI_levels has {mI_levels.numel()} entries; the Hamiltonian has "
+                             f"{H0.shape[0]} levels.")
         AStrainMatrix = torch.diag(
             sys.AStrain.to(device=device, dtype=torch.float64)
         )
         if sys.AFrame is not None and torch.any(sys.AFrame[0] != 0):
             R_A2M = erot(sys.AFrame[0].tolist(), device=device).T.to(dtype=torch.float64)
             AStrainMatrix = R_A2M @ AStrainMatrix @ R_A2M.T
-        mIz_op = sop(sys.Spins, [[2, 3]], device=device).to(dtype=H0.dtype)
-        tmp_mi = mIz_op.unsqueeze(0) @ V_b              # (M, n, n)
-        mI_eff_batch = torch.real((V_b.conj() * tmp_mi).sum(dim=1))  # (M, n)
 
     # DStrain: per-electron dH/dD and dH/dE operators (EasySpin getdstrainops;
     # DFrame and DStrainCorr included), diagonals in the eigenbasis: (M, n)
@@ -253,7 +338,7 @@ def compute_strain_widths_batch(
         lw2 += lw2_g_vec[m_of]
     elif AStrainMatrix is not None:
         # SM = G (if gStrain) + corr * mI_avg * A, lw2 += z^T (SM ∘ SM) z per transition
-        mI_avg = 0.5 * (mI_eff_batch[m_of, u_idx] + mI_eff_batch[m_of, v_idx])          # (K,)
+        mI_avg = 0.5 * (mI_levels[u_idx] + mI_levels[v_idx])                            # (K,)
         G = gStrainMatrix if sys.gStrain is not None else torch.zeros_like(AStrainMatrix)
         SM = G.unsqueeze(0) + (corr * mI_avg).view(-1, 1, 1) * AStrainMatrix.unsqueeze(0)  # (K, 3, 3)
         z = zLab_M[m_of]                                                                   # (K, 3)
@@ -268,7 +353,11 @@ def compute_strain_widths_batch(
     # dBdE: |<v|muzL|v> - <u|muzL|u>|^{-1}  (already computed)
     muzL_diff = muzL_diag[m_of, v_idx] - muzL_diag[m_of, u_idx]
     dBdE = torch.where(torch.abs(muzL_diff) > 1e-12, 1.0 / torch.abs(muzL_diff), torch.zeros_like(muzL_diff))
-    widths = dBdE * torch.sqrt(torch.clamp(lw2, min=0.0))
+    # sqrt with a finite gradient at lw2 = 0 (a zero width, e.g. HStrain = [5 5 0]
+    # along z): d sqrt/d lw2 is infinite there and 0 * inf gave NaN gradients
+    pos = lw2.detach() > 0
+    widths = dBdE * torch.where(pos, torch.sqrt(torch.where(pos, lw2, torch.ones_like(lw2))),
+                                torch.zeros_like(lw2))
     if counts is None:
         return widths
     chunks = torch.split(widths, counts)

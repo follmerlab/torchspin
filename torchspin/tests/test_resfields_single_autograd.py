@@ -27,7 +27,7 @@ from torchspin.experiment import Experiment, Options
 from torchspin.ham import ham
 from torchspin.resfields import resfields
 from torchspin.resfields_batch import resfields_batch
-from torchspin.strainwidth import compute_strain_widths, compute_strain_widths_batch
+from torchspin.strainwidth import astrain_level_mI, compute_strain_widths, compute_strain_widths_batch
 
 DT = torch.float64
 PHI, THETA = 0.4, 0.9
@@ -275,7 +275,10 @@ def test_compute_strain_widths_equals_batch(name):
     W = compute_strain_widths(sys, H0, mux, muy, muz, PHI, THETA, tr, 9.5, 320.0)
     st, ct, sp, cp = map(float, (torch.sin(T(THETA)), torch.cos(T(THETA)), torch.sin(T(PHI)), torch.cos(T(PHI))))
     muzL = (st * cp * mux + st * sp * muy + ct * muz).unsqueeze(0)
-    Wb = compute_strain_widths_batch(sys, H0, muzL, T(PHI), T(THETA), T(320.0), [tr], 9.5)[0]
+    # AStrain: the single-orientation wrapper labels the levels at B0 when no
+    # Range is given (0.9.25, B68); the batch takes those mI explicitly
+    mI = astrain_level_mI(sys, H0, muz, 320.0)
+    Wb = compute_strain_widths_batch(sys, H0, muzL, T(PHI), T(THETA), T(320.0), [tr], 9.5, mI_levels=mI)[0]
     assert W.shape == (tr.shape[0],)
     torch.testing.assert_close(W, Wb, rtol=1e-14, atol=0.0)
 

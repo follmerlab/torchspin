@@ -49,6 +49,7 @@ Tests comparing against these are true cross-validation.
 | `generate_pepper_quadzeeman_refs.m` | `ref_pepper_quadzeeman.mat` | Field-quadratic `Sys.Ham220`/`Ham222` terms in pepper (S=1 with lwpp and with HStrain, S=3/2), EasySpin field sweeps, and one frequency sweep (`S1_ham2_freqsweep`, added 2026-11-11; needs EasySpin's `resfreqs_matrix.m` Ham check from StollLab/EasySpin d46e5ef9, applied as a one-line patch to the local Dec-2025 copy; the three field-sweep cases regenerated bit-identical); `Options.QuadraticZeeman` (0.7.1) |
 | `generate_orisel_refs.m` | `ref_orisel.mat` | `orisel` (0.9.0, B26; EasySpin main, R2024b, 2026-11-11): `[Weights,Trans]` and the summed weights for 18 cases: 12 with `Exp.Orientations` (a 400-point Fibonacci sphere; rhombic S=1/2 at the gz/gy/gx fields, Cu(II) 63Cu at 2 fields, g=[1.9 2.0 6.0] at g=6 and g=4, S=1 with D and HStrain incl. `AveragedIntensity` false, S=3/2 with D, two coupled electrons, `ExciteWidth` Inf) and 6 on default grids, stored with the orientations orisel.m builds (hamsymm D2h, rotated D2h, C2h from an AFrame, Dinfh, O3, explicit Ci) |
 | `generate_ham_gstrain_refs.m` | `ref_ham_gstrain.mat` | `gStrain` with a `Ham110`/`Ham112` Zeeman term (0.9.13, B56; EasySpin main, R2024b, 2026-11-11): EasySpin spectra of the same systems with the g-equivalent given as `Sys.g` (g = [2.01 2.005 1.998]; along the molecular axes, with `gFrame` [0.3 0.4 0.5], and with a 1H), plus EasySpin's own Ham spectra without strain (equal to the g ones) and with gStrain (all zero, or wrong with `gFrame`) (3 cases) |
+| `generate_astrain_mi_refs.m` | `ref_astrain_mi.mat` | AStrain effective nuclear mI (0.9.25, B68; EasySpin main, R2024b, 2026-11-12): per case pepper spectra (Harmonic 0 and 1, 1024 points, default options) and `resfields` positions, widths, intensities and level pairs at φ = 0.3, θ = 0:10:90° (one `SampleFrame` row `[0 -theta -phi]` each, same `Exp.Range`); 14N and 1H with A = [20 20 90], AStrain 10; 63Cu A = [50 50 500], AStrain [10 10 50] (also with `AFrame` [0 0.4 0]); 14N + gStrain with `gAStrainCorr` +1 and -1 (6 cases) |
 
 ### MATLAB-sourced .mat files (by module)
 
@@ -65,6 +66,7 @@ Tests comparing against these are true cross-validation.
 `strain_ref_combined.mat`, `strain_ref_dstrain.mat`, `strain_ref_gstrain.mat`,
 `strain_ref_gstrain_astrain.mat`, `strain_ref_hstrain.mat`,
 `strain_ref_tilted_frame.mat` — MATLAB-gen
+`ref_astrain_mi.mat` — MATLAB-gen (`generate_astrain_mi_refs.m`, EasySpin main, R2024b, 2026-11-12; stores each case's `Sys`, `Range` and the `ori` list)
 
 **CW EPR (pepper):**
 `pepper_*.mat` (all 30 files) — MATLAB

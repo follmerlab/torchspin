@@ -1159,6 +1159,38 @@ from earlier development snapshots should pass `seed=` explicitly.
 - `Options.QuadraticZeeman` with lB ≥ 2 terms still raises in `resfields` (single
   orientation); use `resfields_batch(..., zeeman_ho=...)`.
 
+## AStrain — EasySpin's effective-mI model, followed deliberately (0.9.25)
+
+- **Convention.** The AStrain width of a transition (u, v) is
+  `dBdE * sqrt(zL' (G + gAStrainCorr * mI_uv * AStrainMatrix).^2 zL)` with
+  `mI_uv = (mI_u + mI_v)/2`, as in EasySpin `resfields.m` 766-788 and 1297-1306. Each
+  level's mI (`<Iz>` of the first nucleus) is computed **once per call**, from the
+  eigenvectors of `H0 - centerB*muz` with the field along the **molecular z axis** and
+  `centerB = mean(Exp.Range)`, and is attached to the **level index** (levels sorted by
+  energy). The same mI is used at every orientation (`strainwidth.astrain_level_mI`).
+  Before 0.9.25 torchspin used `<Iz>` at each orientation's own resonance field, which
+  gave perpendicular lines no AStrain width (B68; EasySpin and an explicit A ensemble
+  agree with the model above).
+- **Limitation (EasySpin's too).** Because mI goes with the level index, an orientation
+  at which the energy order of the levels differs from their order at `centerB` along
+  molecular z (level crossings with orientation or field: strong nuclear Zeeman or
+  quadrupole terms, several nuclei with comparable couplings, zero-field splitting
+  comparable to the hyperfine levels) assigns a transition the mI of a different state.
+  The labels also depend on `Exp.Range` through `centerB`. In the regime AStrain is meant
+  for (one dominant hyperfine coupling, hyperfine levels ordered by mI) the order does not
+  change and the model matches an explicit ensemble.
+- **Scope.** First nucleus only, one electron spin; the same mI for every orientation in
+  pepper, pepper_autograd, `Opt.Method='hybrid'` (core system) and `resfields`/
+  `resfields_batch`. `compute_strain_widths_batch` requires `mI_levels` with AStrain;
+  `compute_strain_widths` (single orientation) takes `Range` or `mI_levels`, and without
+  either labels the levels at its `B0`. Frequency sweeps follow EasySpin's
+  `resfreqs_matrix.m` instead, which does not use mI (operator derivatives
+  `AStrain_k I_k S_k` evaluated per orientation).
+- Validated: per-orientation widths against EasySpin `resfields` to 1e-5 relative (incl.
+  θ = 90° and a tilted AFrame) and pepper/pepper_autograd spectra to cosine ≥ 0.999996
+  (`test_astrain_mi_model.py`). A 63Cu system with a tilted `AFrame` has a separate,
+  strain-independent spectrum difference from EasySpin (strict xfail there).
+
 ## Autograd — differentiable pepper
 
 Since 2026-09-05 `differentiable_spectrum()` builds a `SpinSystem` from the

@@ -14,6 +14,61 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.25] — 2026-11-12
+
+### Fixed
+
+- **AStrain widths use EasySpin's effective nuclear mI (B68).** EasySpin (`resfields.m`
+  766-788) labels every level once with the mI of the first nucleus: eigenvectors of
+  `H0 - mean(Exp.Range)*muz` with the field along the molecular z axis, levels sorted by
+  energy, `mI = <Iz>`; a transition uses the mean over its two levels at every orientation
+  (`resfields.m` 1297-1306). torchspin took `<Iz>` at each orientation's own resonance
+  field (strainwidth.py:201-214, 256 on 0.9.20), which vanishes for the field
+  perpendicular to a large A, so perpendicular lines got no AStrain width: 14N,
+  A = [20 20 90] MHz, AStrain 10 MHz, φ = 0.3, θ = 90°: 0.000 mT against EasySpin's
+  0.357 mT (an explicit ensemble with A sampled gives 0.32-0.38 mT). New
+  `strainwidth.astrain_level_mI`; `resfields_batch` computes it once per call and passes
+  it to `compute_strain_widths_batch(..., mI_levels=...)`. Differentiable
+  (degeneracy-safe eigendecomposition). **Every field-sweep result with AStrain changes**
+  (pepper, pepper_autograd, `Opt.Method='hybrid'`, esfit, `resfields`,
+  `resfields_batch`): spectra vs EasySpin (Harmonic 1, cosine / amplitude, before →
+  after) 14N 0.923 / 1.46 → 0.999999 / 0.9995; 1H 0.9987 / 1.024 → 1.000000 / 1.0001;
+  63Cu A = [50 50 500], AStrain [10 10 50] 0.972 / 0.945 → 0.999996 / 1.0000;
+  14N + gStrain 0.920 / 0.616 → 1.000000 / 1.0004; the same with `gAStrainCorr = -1`
+  0.926 / 1.027 → 1.000000 / 0.9989. Per-transition widths agree with EasySpin's
+  `resfields` to 1e-5 relative. Frequency sweeps are unchanged (EasySpin's
+  `resfreqs_matrix` uses a different AStrain model, without mI).
+- **Zero strain widths give finite gradients.** `compute_strain_widths_batch` took
+  `sqrt(lw2)` with an infinite derivative at `lw2 = 0` (e.g. HStrain = [h h 0] along z;
+  strainwidth.py:271 on 0.9.20), and pepper_autograd's facet smoothing computed
+  `gam = 1/sqrt(c1 Λ² + c2 Λ⁴)` = inf for a facet with zero mean width (Λ = 0;
+  pepper_autograd.py:685), then `0 * inf`: NaN spectra or gradients. Both now use a double
+  `torch.where`; the value at zero width is unchanged (`gam = 0`, as pepper's NumPy path
+  and EasySpin).
+
+### Changed
+
+- `compute_strain_widths_batch` raises `ValueError` for AStrain without the new
+  `mI_levels` argument (callers outside the package: pass
+  `astrain_level_mI(sys, H0, muz, mean(Range))`); without AStrain nothing changes.
+  `compute_strain_widths` (single orientation) takes optional `Range` and `mI_levels`;
+  without either it labels the levels at `B0`.
+
+### Tests
+
+- New `torchspin/tests/test_astrain_mi_model.py` (51 tests; 38 fail on 0.9.20, 2 strict
+  xfail) with EasySpin references `tests/data/ref_astrain_mi.mat`
+  (`generate_astrain_mi_refs.m`): per-orientation widths incl. θ = 90° (6 systems, one with
+  a tilted AFrame), single-orientation `compute_strain_widths`, pepper and pepper_autograd
+  spectra (Harmonic 0 and 1, 5 systems), zero-width facets, and gradients in AStrain, A
+  and gStrain vs converged central differences.
+- Tightened: `test_pepper_matlab_validation_ext2.py` `pt_broadenings_matrix` /
+  `pt_broadenings_perturb2` (cosine 0.9888 → 1.000000; threshold 0.985 → 0.99999,
+  amplitude 2 % → 0.2 %); `test_strain_validation.py` `gstrain_astrain` (RMS 0.0308 →
+  0.0002; tolerance 0.10 → 0.001, peak ratio 20 % → 0.2 %).
+  `test_resfields_single_autograd.py::test_compute_strain_widths_equals_batch` passes the
+  mI labels to the batch call (same tolerance).
+
 ## [0.9.21] — 2026-11-12
 
 ### Fixed
