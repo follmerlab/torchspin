@@ -527,7 +527,7 @@ and `resfreqs_perturb` always). A negative field still raises in the constructor
 
 - `salt` with `Options.ZeroField` and `Options.Enhancement` (0.7.3) together raises `NotImplementedError`: the zero-field cluster path sums nuclear-only rates.
 
-## Higher-order Zeeman terms (`Sys.Ham*`): deliberate deviation from EasySpin (0.6.7)
+## Higher-order Zeeman terms (`Sys.Ham*`): deliberate deviation from EasySpin (0.6.7, 0.9.8)
 
 `ham(Sys)` returns `(H0, mux, muy, muz)` with H(B) = H0 − μ·B. The simulators that
 work from this decomposition (pepper's resonance search, `levels`, `endorfrq`, `salt`,
@@ -547,6 +547,24 @@ work from this decomposition (pepper's resonance search, `levels`, `endorfrq`, `
 - **Quadratic and cubic terms (`Ham2xx`, `Ham3xx`)** cannot be written as H0 − μ·B. As in
   EasySpin, they enter only `ham(Sys, B0)`. Simulators that use the decomposition ignore
   them unless `Options.QuadraticZeeman=True` (0.7.1, next section).
+- **Perturbation theory raises for `Ham` (0.9.8).** `endorfrq_perturb`, `resfreqs_perturb`,
+  `resfields_perturb`/`resfields_perturb_batch`, and `pepper`/`pepper_autograd` with
+  `Options.Method='perturb'`, `'perturb1'` or `'perturb2'` build the electron Zeeman term
+  from `Sys.g` alone. With g given as `Ham110`/`Ham112`, `Sys.g` is zero, so up to 0.9.7
+  they returned NaN frequencies, no resonance fields, or an all-zero spectrum without an
+  error, and other nonzero terms of order lB ≤ 1 were dropped. They now raise
+  `ValueError` for any nonzero `Ham` term of order lB ≤ 1, and the message points to `Sys.g`
+  or the matrix method. Terms of order lB ≥ 2 still pass: every solver drops them unless
+  `Options.QuadraticZeeman=True`, which the perturbation solvers already reject. pepper
+  raises for every `'perturb*'` call with such a system, including frequency sweeps and
+  strained or multi-electron systems, where torchspin quietly ran the matrix solver
+  instead (that run was correct; a frequency sweep in EasySpin goes to
+  `resfreqs_perturb`, which raises). EasySpin is not uniform here:
+  `resfreqs_perturb.m:75-77` rejects every `Sys.Ham*`, but `resfields_perturb.m` and
+  `endorfrq_perturb.m` do not check, so EasySpin's pepper with `Method='perturb'` gives an
+  all-zero spectrum for a Ham-only Zeeman term, as torchspin did. torchspin raises
+  deliberately. The default `Method='matrix'` (and `'hybrid'`) include `Ham` and
+  reproduce the same g to 1e-9 or better.
 
 ## Simulator — field-quadratic Zeeman terms, `Options.QuadraticZeeman` (0.7.1)
 

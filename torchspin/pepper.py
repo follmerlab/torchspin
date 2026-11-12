@@ -1305,6 +1305,15 @@ def pepper(sys_or_list, exp: Experiment, opt: Optional[Options] = None):
             f"solver is second order: use 'perturb' or 'perturb2' for second order, "
             f"'perturb1' for first order, or 'hybrid'/'matrix'."
         )
+    # Perturbation theory takes the electron Zeeman term from Sys.g only: with
+    # g given as Ham110/Ham112 (g = 0) the spectrum was all zero, and other
+    # Sys.Ham terms were dropped.  EasySpin's pepper does the same silently;
+    # its resfreqs_perturb raises (resfreqs_perturb.m:75-77).
+    if _method.startswith('perturb'):
+        from torchspin.spinsystem import _reject_ham
+        for _s in components:
+            _reject_ham(_s, f"pepper with Options.Method='{_method}'",
+                        "Options(Method='matrix')")
     # Inputs on the autograd graph: run the differentiable forward path, as
     # garlic does, instead of returning a silently detached spectrum.
     from torchspin.autograd import inputs_require_grad

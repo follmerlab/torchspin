@@ -78,6 +78,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   at every knot change only by roundoff (≤ 1.3e-13 of the maximum, from the φ values). Open-φ
   grids (Ci, C2h, C4h, C6h, S6, C1) with missing knots keep a separate deviation from EasySpin
   (B58, see KNOWN_LIMITATIONS.md). EasySpin references: tests/data/ref_interp_nan_edges.mat.
+## [0.9.8] — 2026-11-11
+
+### Fixed
+
+- **Perturbation-theory solvers now raise for `Sys.Ham` instead of returning NaN or zero
+  (B46, B49).** They build the electron Zeeman term from `Sys.g` only, and with g given as
+  `Ham110`/`Ham112` `Sys.g` is zero: `endorfrq_perturb` and `resfreqs_perturb` returned NaN
+  frequencies, `resfields_perturb`/`resfields_perturb_batch` found no resonances, and
+  `pepper`/`pepper_autograd` with `Options.Method='perturb'`, `'perturb1'` or `'perturb2'`
+  returned an all-zero spectrum (S = 1/2 + 1H: max 0 against 456 for the same `g`), all
+  without an error. Other nonzero `Ham` terms of order lB ≤ 1 were dropped. These entry
+  points now raise `ValueError` for any nonzero `Ham` term of order lB ≤ 1 and point to
+  `Sys.g` or the matrix method (new `spinsystem._reject_ham`). EasySpin's
+  resfreqs_perturb rejects `Sys.Ham*` (resfreqs_perturb.m:75-77); its resfields_perturb,
+  endorfrq_perturb and pepper perturbation path do not and give zero, which torchspin
+  deliberately does not follow. pepper raises for every `'perturb*'` call with such a
+  system, also where it used to switch to the matrix solver without saying so (frequency
+  sweeps, strain, several electrons). Terms of order lB ≥ 2 (dropped unless
+  `Options.QuadraticZeeman`) still pass. Results with `g`, and every matrix and hybrid
+  result, are unchanged.
 ## [0.9.4] — 2026-11-11
 
 ### Fixed
