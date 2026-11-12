@@ -675,6 +675,13 @@ in a different order and a full 3×3 Q was misread (B20, B27; see CHANGELOG).
   (.m:281) with P already made traceless, so its first term is always 0 (tr(P²) was presumably
   meant). With `nuclei=[...]` the intensities still carry ∏(2I+1) over all nuclei of the system,
   as with EasySpin's `Opt.Nuclei`. `Sys.gnscale` is ignored (see § ENDOR (`salt`)).
+- **Deliberate deviation (0.9.23, B79).** A zero hyperfine principal value (or a singular full A)
+  at second order raises `ValueError: ... All hyperfine coupling constants must be non-zero`,
+  EasySpin's message from resfreqs_perturb.m/resfields_perturb.m. EasySpin's endorfrq_perturb.m
+  has no check: inv(A) (.m:176) warns and the frequencies are NaN. Before 0.9.23 torchspin used a
+  zero matrix for inv(A) and returned wrong second-order frequencies. `resfreqs_perturb` raises
+  the same; first order (no inverse) runs in both, whereas EasySpin's resfreqs_perturb rejects
+  every order. For the A -> 0 limit use a small non-zero value.
 - **Not ported.** One orientation per call (no orientation list), no `Transitions` or
   `Info.Selectivity` output, no `Exp.ExciteWidth` orientation selection (.m:310-339). The function
   is not differentiable: values pass through `float()` and a tensor that requires grad gives an
