@@ -14,6 +14,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.1] — 2026-11-11
+
+### Tests
+
+- **EasySpin reference for zero-field lines exactly on bin edges with an interpolated grid.**
+  S = 1, D = [-700 -1300 2000] MHz puts its lines (0.6, 2.7, 3.3 GHz) on points of a 10 MHz
+  axis, i.e. on bin edges. With GridSize [19 4] or [10 8] the positions are interpolated, and
+  `pepper._zf_const_pos` gives every fine-grid vertex the coarse position, so each line goes into
+  one bin as in EasySpin. Without it, interpolation round-off moves 5-39 % of each line into the
+  lower bin (sticks: 1 - cosine 0.069-0.079; Gaussian 30 MHz: 1.0e-2-1.2e-2; Gaussian 300 MHz:
+  max difference 1.9e-2). With it, torchspin matches EasySpin to max |difference| / max
+  6.9e-15 for sticks and both widths (`ref_pepper_zerofield_edge.mat`, 8 new tests; all 8 fail
+  with `_zf_const_pos` replaced by the identity). Which of the two bins a line on an edge lands
+  in depends on the last bit of the eigenvalues (B19), so the tests accept bin k or k - 1 and
+  rebuild the reference from EasySpin's single-pair spectra (`Opt.Transitions`) at torchspin's
+  bins; the tolerance (1e-12) holds either way. No code change.
+
+### Changed
+
+- `pepper._zf_const_pos` docstring and call-site comments give its current purpose (single-bin
+  deposit of a zero-field line on a bin edge). The near-zero-width triangle cancellation it was
+  written for was fixed in the projection in 0.8.4 (B18).
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed
