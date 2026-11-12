@@ -14,6 +14,45 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.20] — 2026-11-12
+
+### Fixed
+
+- **Single-orientation `resfields` and `compute_strain_widths` are differentiable (B76).**
+  Both had their own per-orientation code with a Python-float Brent search and `.item()`
+  (resfields.py:117-118, 124, 148, 174-184, 228; strainwidth.py:168, 552, 608, 665, 669),
+  so fields, intensities and widths carried no gradient. For S = 1 with DStrain + HStrain
+  the widths kept a partial graph through the eigenvectors and returned a wrong gradient
+  without warning (dW/dg0: +0.771 against -0.807 from finite differences). They are now
+  thin wrappers over `resfields_batch` and `compute_strain_widths_batch` with one
+  orientation; public signatures and return types are unchanged. Gradients with respect
+  to g, A, D, J, gStrain, AStrain, HStrain, the angles and B0 match 4-point central
+  differences to 1e-6 relative above their round-off floor.
+- **gStrain with a full g matrix raises in the single-orientation path (B5).**
+  `compute_strain_widths` read `Sys.g[0, :]` (the first row of the full matrix) and returned
+  an infinite width (strainwidth.py:619 on 0.9.13). It now raises `ValueError` ("gStrain and AStrain are not supported
+  when full g matrices are given!"), as `resfields_batch`, pepper and EasySpin do.
+- **Looping transitions return all their resonances in `resfields` (single orientation).**
+  The two-point bracket at the range ends found at most one resonance per level pair.
+  Example: S = 1, D = 10 GHz, 9.5 GHz, θ = 0.3, 5-1000 mT: the lowest pair now gives both
+  lines (18.8 and 622.8 mT); before, only 18.8 mT.
+
+### Changed
+
+- `resfields` (single orientation): resonance fields move by up to 2e-6 mT (the old Brent
+  tolerance was 1e-5 mT; S = 1/2 6e-14 mT), intensities and widths by ≤ 3e-8 relative.
+  `Exp.mwMode` is now honored (it was ignored), and `Options.Threshold` is applied to
+  `|I|` relative to the largest `|I|`, as in `resfields_batch`. With strains but no
+  resonance in range the widths are an empty tensor instead of `None`.
+- `strainwidth.compute_strain_widths`: the `dtype` argument is accepted but unused (the
+  arithmetic follows `H0`). The per-orientation helpers `_compute_hstrain_width_squared`,
+  `_compute_gstrain_astrain_width_squared`, `_compute_dstrain_width_squared`,
+  `_orientation_vector` and `resfields._brent`/`_nuc_states` are removed.
+
+### Tests
+
+- New `torchspin/tests/test_resfields_single_autograd.py` (44 tests; 42 fail on 0.9.13).
+
 ## [0.9.13] — 2026-11-11
 
 ### Added
