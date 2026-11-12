@@ -420,7 +420,10 @@ and `resfreqs_perturb` always). A negative field still raises in the constructor
   a bin edge then lands in either neighbor depending on the last bit of round-off, which can
   differ between machines (a one-bin shift; 4 % of the maximum for a 300 MHz line at 10 MHz
   bins). Avoid axes whose points coincide with the zero-field splittings, or compare on the
-  axis shifted by dx/2.
+  axis shifted by dx/2. With an interpolated grid (e.g. GridSize [19 4]) the single-bin deposit
+  relies on `pepper._zf_const_pos`, which gives every interpolated orientation the coarse
+  position; interpolation round-off would otherwise split a line on an edge between the two bins
+  (5-39 % in the lower bin). Tested against EasySpin in `test_pepper_zerofield_edge.py` (0.9.1).
 - **Not supported.** Non-equilibrium populations (`Sys.initState`) raise with
   `ZeroField`. Frequency sweeps have no differentiable pepper path (`pepper_autograd`
   raises for them, as before). The zero-field resonances from `resfreqs_batch`
