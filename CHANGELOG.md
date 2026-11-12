@@ -14,6 +14,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.3] — 2026-11-11
+
+### Fixed
+
+- **Wrong φ range of the D3d, D4h, D6h, Oh, C6h and S6 powder grids (B36), and `Options`
+  rejected these grid symmetries (B51).** `sphgrid` covered φ = 0..π/2 for D6h, D4h, Oh, D3d
+  and C6h and 0..π for S6. EasySpin (private/gridparam.m) and torchspin's own `gridparam`, used
+  by pepper's grid interpolation and by `grid_triangulation`, use π/6, π/4, π/4, π/3, π/3 and
+  2π/3. With orientations without resonances, pepper interpolated the coarse knots in
+  gridparam's layout although they came from the other grid: S = 5/2 with D and a tetragonal
+  B4 (hamsymm D4h) over [200 480] mT had cosine 0.673 with EasySpin, a cubic B4 (Oh) over
+  [250 430] mT 0.491. Even with resonances at all knots, the D3d, C6h and S6 grids held a
+  non-integer number of symmetry wedges, which affected every `sphgrid` caller: a trigonal B4
+  (D3d) over [0 800] mT had cosine 0.964; the same system on an explicit S6 grid 0.901, a
+  hexagonal B6 (D6h) on a C6h grid 0.735 (amplitude 1.83). The sphere average of a D3d-, S6- or
+  C6h-invariant function was 2-4 % off. `sphgrid` now takes all grid parameters from one table
+  (`sphgrid._GRIDPARAM`, EasySpin's values; `_SYM_PARAMS` is gone), and all nine EasySpin
+  cases agree to cosine ≥ 0.99993 and amplitude within 5e-4, for `pepper` and
+  `pepper_autograd`. The knot counts do not change. With missing knots, pepper now also
+  interpolates the positions of transitions that resonate at every knot linearly, as EasySpin
+  does once any transition misses a knot (its `L1` mode); before, those were bicubic (Oh case
+  with only the grid fixed: cosine 0.463). This part applies to every grid: the D4h system
+  above on an explicit D2h grid goes from cosine 0.959 to 1.0000000 with EasySpin. `Options`
+  accepted only Dinfh, D2h, C2h, Ci, C1, O3 and `'auto'`; it now accepts EasySpin's 14 grid
+  symmetries, `'auto'` and `''` (same as `'auto'`, as in pepper and EasySpin). The D2h, Th,
+  C4h, C2h, Ci, C1, Dinfh and O3 grids are unchanged, and so are their spectra unless some
+  orientations have no resonance.
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed

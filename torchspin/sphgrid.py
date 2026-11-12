@@ -6,12 +6,26 @@ The grid produces a set of orientations (phi, theta) with solid-angle weights
 for numerical integration over the orientational space.  Weights sum to 4π
 (full-sphere solid angle).
 
-Supported symmetries (subset of EasySpin):
+Supported symmetries: all 14 EasySpin grid symmetries (private/gridparam.m),
+each covering the unique region of its Laue class:
 
-    'Dinfh'  – axially symmetric: single meridian, phi=0, theta=0..π/2
-    'D2h'    – rhombic: one octant, phi=0..π/2, theta=0..π/2
-    'Ci'     – triclinic: hemisphere, phi=0..2π, theta=0..π/2
-    'C1'     – no symmetry: full sphere, phi=0..2π, theta=0..π
+    'O3'     – isotropic: single orientation (z)
+    'Dinfh'  – axial: one quarter meridian, phi=0, theta=0..π/2
+    'D6h'    – closed phi=0..π/6, theta=0..π/2
+    'D4h', 'Oh'
+             – closed phi=0..π/4, theta=0..π/2
+    'D3d'    – closed phi=0..π/3, theta=0..π/2
+    'D2h', 'Th'
+             – closed phi=0..π/2, theta=0..π/2 (one octant)
+    'C6h'    – open phi=0..π/3, theta=0..π/2
+    'C4h'    – open phi=0..π/2, theta=0..π/2
+    'S6'     – open phi=0..2π/3, theta=0..π/2
+    'C2h'    – open phi=0..π, theta=0..π/2
+    'Ci'     – open phi=0..2π, theta=0..π/2 (hemisphere)
+    'C1'     – open phi=0..2π, theta=0..π (full sphere)
+
+"Closed" grids include the phi=maxPhi border knots, "open" grids drop them
+(the region is periodic in phi).
 """
 from __future__ import annotations
 
@@ -22,22 +36,18 @@ import numpy as np
 import torch
 
 
-# Mapping from EasySpin symmetry name → (nOctants, maxPhi, closedPhi)
-_SYM_PARAMS: dict[str, tuple[int, float, bool]] = {
-    'O3':    (-1, 0.0,              False),  # single z point
-    'Dinfh': (0,  0.0,              False),  # quarter meridian
-    'D6h':   (1,  math.pi / 2,     True),
-    'D4h':   (1,  math.pi / 2,     True),
-    'Oh':    (1,  math.pi / 2,     True),
-    'D3d':   (1,  math.pi / 2,     True),
-    'Th':    (1,  math.pi / 2,     True),
-    'D2h':   (1,  math.pi / 2,     True),
-    'C4h':   (1,  math.pi / 2,     False),
-    'C6h':   (1,  math.pi / 2,     False),
-    'C2h':   (2,  math.pi,         False),
-    'S6':    (2,  math.pi,         False),
-    'Ci':    (4,  2 * math.pi,     False),
-    'C1':    (8,  2 * math.pi,     False),
+# Grid parameters of each EasySpin grid symmetry (private/gridparam.m):
+# symmetry → (maxPhi, closedPhi, nOctants). maxPhi is the φ width of the
+# unique wedge of the Laue class (e.g. π/4 for D4h, π/3 for D3d). This is the
+# single source for sphgrid, grid_triangulation and pepper's interpolation.
+_GRIDPARAM: dict[str, tuple[float, bool, int]] = {
+    'C1':  (2 * math.pi, False, 8), 'Ci': (2 * math.pi, False, 4),
+    'C2h': (math.pi, False, 2),     'S6': (2 * math.pi / 3, False, 2),
+    'C4h': (math.pi / 2, False, 1), 'C6h': (math.pi / 3, False, 1),
+    'D2h': (math.pi / 2, True, 1),  'Th': (math.pi / 2, True, 1),
+    'D3d': (math.pi / 3, True, 1),  'D4h': (math.pi / 4, True, 1),
+    'Oh':  (math.pi / 4, True, 1),  'D6h': (math.pi / 6, True, 1),
+    'Dinfh': (0.0, True, 0),        'O3': (0.0, True, -1),
 }
 
 
@@ -69,10 +79,10 @@ def sphgrid(
     """
     if N < 2:
         raise ValueError("N (GridSize) must be at least 2.")
-    if symmetry not in _SYM_PARAMS:
+    if symmetry not in _GRIDPARAM:
         raise ValueError(
             f"Unsupported symmetry '{symmetry}'. "
-            f"Supported: {sorted(_SYM_PARAMS)}."
+            f"Supported: {sorted(_GRIDPARAM)}."
         )
 
     phi_t, theta_t, weights_t, vecs = _sphgrid_tensors(symmetry, int(N))
@@ -84,7 +94,7 @@ def sphgrid(
 def _sphgrid_tensors(symmetry: str, N: int):
     """Cached grid tensors (the grid is rebuilt many times per simulation:
     interpolation, facets, ordering weights)."""
-    nOctants, maxPhi, closedPhi = _SYM_PARAMS[symmetry]
+    maxPhi, closedPhi, nOctants = _GRIDPARAM[symmetry]
     phi, theta, weights = _sphgrid_core(nOctants, maxPhi, N, closedPhi)
 
     # Convert to tensors
@@ -394,18 +404,6 @@ def sphrand(N: int, k: int = 4):
 # ---------------------------------------------------------------------------
 # Triangulation for all grid symmetries (EasySpin sphgrid.m, nargout > 1)
 # ---------------------------------------------------------------------------
-
-_GRIDPARAM = {
-    # symmetry: (maxPhi, closedPhi, nOctants) — EasySpin private/gridparam.m
-    'C1':  (2 * math.pi, False, 8), 'Ci': (2 * math.pi, False, 4),
-    'C2h': (math.pi, False, 2),     'S6': (2 * math.pi / 3, False, 2),
-    'C4h': (math.pi / 2, False, 1), 'C6h': (math.pi / 3, False, 1),
-    'D2h': (math.pi / 2, True, 1),  'Th': (math.pi / 2, True, 1),
-    'D3d': (math.pi / 3, True, 1),  'D4h': (math.pi / 4, True, 1),
-    'Oh':  (math.pi / 4, True, 1),  'D6h': (math.pi / 6, True, 1),
-    'Dinfh': (0.0, True, 0),        'O3': (0.0, True, -1),
-}
-
 
 def gridparam(symmetry: str) -> tuple[float, bool, int]:
     """(maxPhi, closedPhi, nOctants) for a grid symmetry (EasySpin gridparam.m)."""
