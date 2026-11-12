@@ -90,6 +90,27 @@ def _d2h_interp_matrix(N_c: int, N_f: int) -> np.ndarray:
     return W @ R
 
 
+def _interp_dinfh_g3(th_c: np.ndarray, th_f: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """EasySpin ``gridinterp`` G3 on an axial (Dinfh) grid: ``esspline1d(y, 1, iphi)``
+    (gridinterp.m:77-78), a cubic spline over the knot index ``1..n`` with zero
+    first derivatives at both ends (esspline1d.m ``EndCon = 1``; for two knots the
+    zero-slope cubic Hermite polynomial), evaluated at the fine knots'
+    fractional indices.  The Dinfh knots are equally spaced in θ, so the index
+    is θ/Δθ.  Up to 0.9.6 torchspin used a not-a-knot spline in cos θ here.
+    Linear in ``values``, so pepper_autograd's cached matrix stays exact."""
+    from scipy.interpolate import CubicSpline
+    order = np.argsort(th_c)
+    th_s = th_c[order]
+    n = th_s.size
+    if n < 2:
+        return np.full(th_f.shape, float(values[0]))
+    step = (th_s[-1] - th_s[0]) / (n - 1)
+    if not np.allclose(np.diff(th_s), step, rtol=1e-9, atol=1e-12):
+        raise ValueError('Dinfh interpolation needs knots equally spaced in theta.')
+    xi = np.clip((th_f - th_s[0]) / step, 0.0, n - 1.0)
+    return CubicSpline(np.arange(n, dtype=float), values[order], bc_type='clamped')(xi)
+
+
 def _interp_sph(
     coarse_vecs: torch.Tensor,
     fine_vecs: torch.Tensor,
@@ -103,7 +124,8 @@ def _interp_sph(
     ``gridinterp(..., 'G3')`` and eliminates the quantization artifacts that arise
     from unstructured 2-D scattered interpolation.
 
-    For Dinfh grids (1-D meridional), uses a cubic spline in cos(theta).
+    For Dinfh grids (1-D meridional), uses :func:`_interp_dinfh_g3` (EasySpin's
+    spline over the θ knot index with zero end slopes).
 
     For full-sphere (C1) grids, falls back to CloughTocher 2-D scattered interpolation.
 
@@ -125,21 +147,12 @@ def _interp_sph(
     z_c = coarse_vecs[2].numpy()
     z_f = fine_vecs[2].numpy()
 
-    # ---- 1-D fallback for meridional grids (Dinfh: all phi = 0, y ≈ 0) ----
+    # ---- 1-D meridional grids (Dinfh: all phi = 0, y ≈ 0) ----
     if np.std(y_c) < 1e-8:
-        from scipy.interpolate import CubicSpline
-        sort_idx = np.argsort(z_c)
-        zs = z_c[sort_idx]
-        vs = values[sort_idx]
-        if len(zs) >= 4:
-            cs = CubicSpline(zs, vs, extrapolate=False)
-            res = cs(z_f)
-            nan_mask = np.isnan(res)
-            if nan_mask.any():
-                res[nan_mask] = np.interp(z_f[nan_mask], zs, vs,
-                                          left=vs[0], right=vs[-1])
-            return res
-        return np.interp(z_f, zs, vs, left=vs[0], right=vs[-1])
+        x_f, y_f = fine_vecs[0].numpy(), fine_vecs[1].numpy()
+        th_c = np.arctan2(np.hypot(x_c, y_c), z_c)
+        th_f = np.arctan2(np.hypot(x_f, y_f), z_f)
+        return _interp_dinfh_g3(th_c, th_f, np.asarray(values, dtype=float))
 
     n_c = len(values)
 

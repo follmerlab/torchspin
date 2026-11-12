@@ -192,7 +192,33 @@ amplitude (S = 1/2, g = [2 2.05 2.1], GridSize [19 4]).
   fixed-field `salt` (`Method 'perturb1'`): residual 1e-12. HStrain: residual 8e-5, amplitude
   0.999996 (not traced; widths are interpolated linearly in both codes).
 - Grids without interpolation, axial (Dinfh) grids and open-φ grids (Ci, C2h, C4h, C6h, S6, C1)
-  are not affected.
+  are not affected (axial grids: see § Powder grid interpolation on axial grids).
+
+## Powder grid interpolation on axial grids (fixed 0.9.7)
+
+On an axial (Dinfh) grid EasySpin interpolates resonance positions with
+`esspline1d(y, 1, iphi)` (gridinterp.m:77-78): a cubic spline over the θ knot index with zero
+first derivatives at both ends (esspline1d.m `EndCon = 1`). Up to 0.9.6 `pepper`,
+`pepper_autograd` and `salt` used a not-a-knot spline in cos θ, which bends differently next to
+both poles: axial g = [2 2 2.4] at GridSize [10 10] was cosine 0.99863 and amplitude 1.029 of
+EasySpin; a Cu(II)-like g = [2.05 2.05 2.25], 63Cu A = [50 500] MHz was cosine 0.99380 and
+amplitude 1.034 on the default grid.
+
+- EasySpin agreement (tests/data/ref_pepper_dinfh_interp.mat, 6 cases, Harmonic 0 and 1,
+  default grid and [10 10]): cosine ≥ 1 − 1e-10, amplitude within 3e-6, `pepper` and
+  `pepper_autograd`. The interpolation map is linear in the knot values, so `pepper_autograd`
+  keeps its cached constant matrix and stays differentiable (checked against central
+  differences).
+- Existing EasySpin comparisons that moved: the Cu(II) phthalocyanine cases at EasySpin's
+  default GridSize [19 4] (`cupc_grid19_4N_*`, dominated by grid ripple) went from cosine
+  0.970 / 0.956 and amplitude 0.765 / 0.820 to 1 − 5e-9 and 3e-5, so the ripple was this
+  interpolation, not grid convergence; their tolerances were tightened. Other interpolated Dinfh cases
+  moved closer, e.g. `iso_Cu` 0.99987, `pt_ga1_matrix` 0.99929, `pt_ga2_matrix` 0.99927,
+  `nobroadening_*` 0.99914 and `autorange_field_Cu` 0.99984, all now ≥ 0.9999997. Cases
+  limited by something else (perturbation theory, the 2N `matrix` grid convergence) moved
+  by less than their own residual.
+- Intensities and widths on axial grids (`L3`) and axial positions with missing resonances
+  (`L3`) were already EasySpin's and are unchanged.
 
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
