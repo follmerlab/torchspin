@@ -192,7 +192,30 @@ amplitude (S = 1/2, g = [2 2.05 2.1], GridSize [19 4]).
   fixed-field `salt` (`Method 'perturb1'`): residual 1e-12. HStrain: residual 8e-5, amplitude
   0.999996 (not traced; widths are interpolated linearly in both codes).
 - Grids without interpolation, axial (Dinfh) grids and open-φ grids (Ci, C2h, C4h, C6h, S6, C1)
-  are not affected.
+  are not affected. (The D3d/D4h/D6h/Oh/C6h/S6 grids had a separate defect, fixed in 0.9.3; see
+  § Powder grid φ range.)
+
+## Powder grid φ range of the D3d/D4h/D6h/Oh/C6h/S6 grids (fixed 0.9.3)
+
+Up to 0.9.2 `sphgrid` covered φ = 0..π/2 for the D6h, D4h, Oh, D3d and C6h grids and 0..π for
+S6, while EasySpin (private/gridparam.m) and torchspin's `gridparam` (used by pepper's grid
+interpolation and by `grid_triangulation`) use π/6, π/4, π/4, π/3, π/3 and 2π/3. `sphgrid` now
+reads the same table. Spectra on these grids changed:
+
+- With orientations without resonances the coarse knots were interpolated in the wrong layout
+  (S = 5/2, D4h, [200 480] mT: cosine 0.673 with EasySpin; Oh, [250 430] mT: 0.491).
+- The D3d, C6h and S6 grids held a non-integer number of symmetry wedges, also without
+  interpolation (D3d, [0 800] mT: cosine 0.964; D3d system on an S6 grid 0.901; D6h system on a
+  C6h grid 0.735). The D6h, D4h and Oh grids covered whole wedges, so they were only affected
+  through the interpolation.
+- Now (tests/data/ref_sphgrid_maxphi.mat, 9 cases, pepper and pepper_autograd): cosine
+  ≥ 0.99993, amplitude within 5e-4; EasySpin's `sphgrid` knots and weights for all 14 groups
+  agree to 1e-13.
+- With missing knots, positions of all transitions are interpolated linearly (EasySpin `L1`),
+  also for transitions that resonate at every knot, on every grid (the D4h system on a D2h
+  grid: cosine 0.959 before, 1.0000000 now).
+- `Options.GridSymmetry` accepts all 14 EasySpin grid symmetries, `'auto'` and `''` (before
+  0.9.3 only Dinfh, D2h, C2h, Ci, C1, O3 and `'auto'`).
 
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 

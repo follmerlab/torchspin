@@ -490,7 +490,8 @@ def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
         # filled from neighboring knots.
         if symmetry == 'Dinfh':
             return _interp_l3(vals, N_f)          # EasySpin: 'L3' for axial grids with NaNs
-        return _interp_grid(vals, symmetry, N_c, N_f)
+        # linear for every transition, also those resonant at all knots
+        return _interp_grid(vals, symmetry, N_c, N_f, linear=True)
     if symmetry in _CLOSEDPHI_1OCT or symmetry == 'Dinfh':
         return _interp_sph(vecs_c, vecs_f, vals)
     return _interp_grid(vals, symmetry, N_c, N_f)
