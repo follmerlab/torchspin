@@ -18,6 +18,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **`resfields_perturb` raises a clear `ValueError` for a zero hyperfine principal value at second
+  order (B65).** The second-order terms invert A; `Sys.A = [0 5 10]` raised torch's raw
+  `LinAlgError` from `inv`. As EasySpin (resfields_perturb.m:120-127) the message is now "All
+  hyperfine coupling constants must be non-zero" (a singular full A too). First order still
+  runs (EasySpin rejects it at every order). Test in `test_resfields_perturb.py`.
 - **ENDOR transition selection as EasySpin endorfrq, in one place for `endorfrq` and every `salt`
   matrix path (B57/B41, B40, B59).** EasySpin selects the level pairs once (endorfrq.m:258-341):
   on the coarse grid `sphgrid(Opt.TPSGridSymm, Opt.TPSGridSize)` (`'D2h'`, 4) it sums the
