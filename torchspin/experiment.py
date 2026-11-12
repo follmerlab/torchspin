@@ -354,10 +354,17 @@ class Options:
 
     Threshold:
         Relative intensity cutoff for transitions.  Transitions with
-        intensity below ``Threshold * max_intensity`` are discarded.
+        intensity below ``Threshold * max_intensity`` are discarded.  In
+        :func:`~torchspin.salt.salt` (all matrix paths) it is EasySpin
+        endorfrq's selection threshold: a level pair is kept if its
+        nuclear-moment rate summed over the ``TPSGridSymm``/``TPSGridSize``
+        grid is ``> Threshold * max`` (0.9.14).
     Transitions:
-        :func:`pepper` / :func:`~torchspin.pepper_autograd.pepper_autograd`
-        only (EasySpin ``Opt.Transitions``).  ``None`` (default): automatic
+        :func:`pepper` / :func:`~torchspin.pepper_autograd.pepper_autograd`,
+        and the ENDOR matrix paths of :func:`~torchspin.endorfrq.endorfrq` and
+        :func:`~torchspin.salt.salt` (0.9.14; level pairs at the ENDOR field,
+        no selection and no threshold, as EasySpin endorfrq; not with salt's
+        ``ZeroField``) (EasySpin ``Opt.Transitions``).  ``None`` (default): automatic
         transition pre-selection with ``Threshold``.  ``'all'``: every level
         pair ``u < v``, with neither pre-selection nor the ``Threshold``
         intensity post-selection.  A list of 1-based level pairs ``(u, v)``
@@ -367,6 +374,13 @@ class Options:
         within the list, as in EasySpin.  With ``Method='hybrid'`` the levels
         are those of the exactly treated core.  Not available with
         ``Method='perturb*'`` (raises).
+    TPSGridSymm, TPSGridSize:
+        :func:`~torchspin.endorfrq.endorfrq` and :func:`~torchspin.salt.salt`
+        only (EasySpin's undocumented ``Opt.TPSGridSymm``/``Opt.TPSGridSize``,
+        endorfrq.m:145-146).  Symmetry and size of the coarse grid
+        (``sphgrid``, molecular frame) on which the automatic ENDOR transition
+        selection sums the nuclear-moment rates.  Defaults ``'D2h'`` and 4,
+        as in EasySpin.  The selection does not depend on ``GridSize``.
     Verbosity:
         Output verbosity: 0 = silent, 1 = progress, 2 = detailed.
     BatchSize:
@@ -431,6 +445,8 @@ class Options:
     Enhancement: bool = False         # ENDOR hyperfine enhancement (EasySpin Opt.Enhancement), endorfrq/salt matrix paths
     ZeroField: bool = False           # allow Experiment.Field = 0 (pepper frequency sweeps, salt fixed field)
     Transitions: Union[str, List[Tuple[int, int]], None] = None   # EasySpin Opt.Transitions: None, 'all' or 1-based (u, v) pairs
+    TPSGridSymm: str = 'D2h'          # ENDOR transition-selection grid symmetry (EasySpin Opt.TPSGridSymm), endorfrq/salt
+    TPSGridSize: int = 4              # ENDOR transition-selection grid size (EasySpin Opt.TPSGridSize), endorfrq/salt
 
     @property
     def grid_size_coarse(self) -> int:

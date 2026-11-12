@@ -303,7 +303,12 @@ class TestSaltZeroField:
             r = sum((np.abs(m[np.ix_(ua, ub)]) ** 2).sum() for m in mu) / 3
             nu = E[ub].mean() - E[ua].mean()
             assert _area(fn, yn, nu, 0.55) / (fn[1] - fn[0]) == pytest.approx(r, rel=2e-3)
-        _, y1 = salt(s, Experiment(Field=1e-5), Options(), freq_range=fr, n_points=2001, lw_mhz=0.3)
+        # Since 0.9.14 the B > 0 matrix path drops electronic level pairs (levels in different
+        # energy-sorted blocks of prod(2I+1)), as EasySpin endorfrq; at B -> 0+ that grouping cuts
+        # through the Kramers doublets and removes half of each line (y1.sum() is then 0.48 of
+        # y.sum()).  Options.Transitions='all' keeps every level pair, as the zero-field path does.
+        _, y1 = salt(s, Experiment(Field=1e-5), Options(Transitions='all'), freq_range=fr, n_points=2001,
+                     lw_mhz=0.3)
         assert float(y.sum()) == pytest.approx(float(y1.sum()), rel=1e-6)
         # line positions sit inside bins here; nearer a bin edge the B → 0+
         # path splits a line over two bins (binning, not physics)

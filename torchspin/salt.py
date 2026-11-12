@@ -38,6 +38,9 @@ from torchspin._linalg import eigh as _eigh
 
 from torchspin.convspec import convspec
 from torchspin.endorfrq import endorfrq
+from torchspin.endorfrq import (TPS_GRID_SIZE as _TPS_GRID_SIZE, TPS_GRID_SYMM as _TPS_GRID_SYMM,
+                                _endor_tps_select, _n_electron_states, _tps_keep, _tps_option,
+                                _tps_rates)
 from torchspin.experiment import Experiment, Options
 from torchspin.ham import ham
 from torchspin.ham_nz import ham_nz
@@ -45,6 +48,23 @@ from torchspin.hamsymm import hamsymm
 from torchspin.resfields_perturb import resfields_perturb, resfields_perturb_batch
 from torchspin.sphgrid import sphgrid
 from torchspin.spinsystem import SpinSystem
+
+
+# Entries (orientation, resonance field) per batched eigh in the field-swept
+# matrix path (memory permitting).  Module constant so that tests can check
+# that the spectrum does not depend on it.
+_ENDOR_BATCH_CAP = 512
+# Fields spanning the resonance fields of a field sweep at which the level
+# pairs are selected (union).
+_FIELD_SWEPT_TPS_FIELDS = 5
+
+
+def _salt_user_pairs(opt: Options, n_states: int) -> Optional[list]:
+    """0-based level pairs from ``Options.Transitions``, ``None`` if not given."""
+    if getattr(opt, 'Transitions', None) is None:
+        return None
+    from torchspin.pepper import _user_transitions
+    return _user_transitions(opt.Transitions, n_states)[0]
 
 
 def _fixed_field_transitions(
@@ -60,6 +80,8 @@ def _fixed_field_transitions(
     use_perturb: bool,
     zero_field: bool = False,
     enhancement: bool = False,
+    user_pairs: Optional[list] = None,
+    tps: tuple = (_TPS_GRID_SYMM, _TPS_GRID_SIZE),
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """ENDOR transition positions/intensities on the orientation grid.
 
@@ -81,8 +103,16 @@ def _fixed_field_transitions(
     difference of the cluster mean energies; intra-cluster pairs are dropped.
     ``enhancement`` (matrix path only; the caller never combines it with
     ``use_perturb``): intensities from the total moment ``mux/muy/muz``
-    (hyperfine enhancement, EasySpin ``Opt.Enhancement``), selection from the
-    nuclear-only rates, electronic level pairs excluded.
+    (hyperfine enhancement, EasySpin ``Opt.Enhancement``).
+
+    Matrix paths: the level pairs are selected once, as in EasySpin endorfrq
+    (:func:`torchspin.endorfrq._endor_tps_select`: nuclear-moment rates summed
+    over the coarse ``tps = (TPSGridSymm, TPSGridSize)`` grid, electronic pairs
+    removed, rate ``> threshold * max``), independent of the orientation grid
+    (0.9.14).  ``user_pairs`` (0-based, from ``Options.Transitions``) replaces
+    the selection.  At zero field the same rule acts on the cluster pairs,
+    without the electronic-pair removal (the levels are not grouped by
+    electron spin at B = 0).
     """
     H0, mux, muy, muz, snmux, snmuy, snmuz = ops
     device = H0.device
@@ -151,27 +181,31 @@ def _fixed_field_transitions(
         I_rows = rate_c[:, ca, cb]                                     # (M, nCP)
         Pdat = P_c.unsqueeze(1).expand(-1, n_orient).contiguous()
         Idat = I_rows.T.contiguous() * orisel_w.to(dt64).unsqueeze(0)
-        max_all = float(I_rows.detach().max()) if I_rows.numel() else 0.0
-        strong = I_rows.detach().max(dim=0).values >= threshold * max_all if max_all > 0 \
-            else torch.ones(P_c.numel(), dtype=torch.bool, device=device)
-        inwin = (P_c.detach() >= f_lo) & (P_c.detach() <= f_hi)
-        keep = strong & inwin
+        # EasySpin endorfrq selection on the TPS grid, on cluster pairs
+        tps_r = _tps_rates(ops, 0.0, *tps)[0]
+        oh_c = oh.detach().to(dt64).cpu()
+        rc = oh_c.T @ tps_r @ oh_c                                       # (K, K)
+        Pm = torch.zeros(K, K, dtype=dt64)
+        Pm[ca.cpu(), cb.cpu()] = P_c.detach().to(dt64).cpu()
+        keep = _tps_keep(rc, Pm, Pm, (f_lo, f_hi), threshold, None)[ca.cpu(), cb.cpu()].to(device)
         Pdat, Idat = Pdat[keep], Idat[keep]
     else:
-        # Matrix diagonalization: every level pair is a transition slot.
+        # Matrix diagonalization: one row per selected level pair, selected
+        # once as in EasySpin endorfrq (independent of the orientation grid).
         dim = H0.shape[0]
-        iu = torch.triu_indices(dim, dim, offset=1, device=device)
-        pi_all, pj_all = iu[0], iu[1]
-        if enhancement:
-            same = _same_nuclear_block(sys, pi_all, pj_all)
-            pi_all, pj_all = pi_all[same], pj_all[same]
+        if user_pairs is not None:
+            pi_all = torch.tensor([p[0] for p in user_pairs], dtype=torch.long, device=device)
+            pj_all = torch.tensor([p[1] for p in user_pairs], dtype=torch.long, device=device)
+        else:
+            sel = _endor_tps_select(ops, field_mT, freq_range=(f_lo, f_hi), threshold=threshold,
+                                    n_electron_states=_n_electron_states(sys),
+                                    grid_symm=tps[0], grid_size=tps[1])
+            pi_all, pj_all = (t.to(device) for t in torch.nonzero(sel, as_tuple=True))
         n_pairs = pi_all.numel()
         bytes_per_entry = dim * dim * dim * 16 * 3
         batch = max(1, min(512, (100 * 1024 * 1024) // bytes_per_entry))
         P_rows = torch.empty((n_orient, n_pairs), dtype=dt64, device=device)
         I_rows = torch.empty((n_orient, n_pairs), dtype=dt64, device=device)
-        if enhancement:
-            S_rows = torch.empty((n_orient, n_pairs), dtype=dt64, device=device)
         for s in range(0, n_orient, batch):
             e = min(s + batch, n_orient)
             hz = h_all[s:e]
@@ -179,39 +213,27 @@ def _fixed_field_transitions(
             ny = torch.stack([-sin_p[s:e], cos_p[s:e], torch.zeros_like(cos_p[s:e])], dim=1)
             muzL = (hz[:, 0].view(-1, 1, 1) * mux + hz[:, 1].view(-1, 1, 1) * muy
                     + hz[:, 2].view(-1, 1, 1) * muz)
-            snx = (nx[:, 0].view(-1, 1, 1) * snmux + nx[:, 1].view(-1, 1, 1) * snmuy
-                   + nx[:, 2].view(-1, 1, 1) * snmuz)
-            sny = ny[:, 0].view(-1, 1, 1) * snmux + ny[:, 1].view(-1, 1, 1) * snmuy
+            if enhancement:
+                # Total moment perpendicular to the field (hyperfine enhancement)
+                ox, oy, oz = mux, muy, muz
+            else:
+                ox, oy, oz = snmux, snmuy, snmuz
+            opx = (nx[:, 0].view(-1, 1, 1) * ox + nx[:, 1].view(-1, 1, 1) * oy
+                   + nx[:, 2].view(-1, 1, 1) * oz)
+            opy = ny[:, 0].view(-1, 1, 1) * ox + ny[:, 1].view(-1, 1, 1) * oy
             H_B = H0.unsqueeze(0) - field_mT * muzL
             E_b, V_b = _eigh(H_B)
             P_rows[s:e] = (E_b[:, pj_all] - E_b[:, pi_all]).abs()
             Vh = V_b.conj().transpose(1, 2)
-            mx = torch.bmm(Vh, torch.bmm(snx, V_b))
-            my = torch.bmm(Vh, torch.bmm(sny, V_b))
-            rate = (mx.abs() ** 2 + my.abs() ** 2) / 2.0
-            if enhancement:
-                # Total moment perpendicular to the field (hyperfine enhancement)
-                ex = (nx[:, 0].view(-1, 1, 1) * mux + nx[:, 1].view(-1, 1, 1) * muy
-                      + nx[:, 2].view(-1, 1, 1) * muz)
-                ey = ny[:, 0].view(-1, 1, 1) * mux + ny[:, 1].view(-1, 1, 1) * muy
-                mex = torch.bmm(Vh, torch.bmm(ex, V_b))
-                mey = torch.bmm(Vh, torch.bmm(ey, V_b))
-                S_rows[s:e] = rate[:, pi_all, pj_all].real.to(dt64).detach()   # selection only
-                I_rows[s:e] = ((mex.abs() ** 2 + mey.abs() ** 2) / 2.0)[:, pi_all, pj_all].real.to(dt64)
-            else:
-                I_rows[s:e] = rate[:, pi_all, pj_all].real.to(dt64)
+            mx = torch.bmm(Vh, torch.bmm(opx, V_b))
+            my = torch.bmm(Vh, torch.bmm(opy, V_b))
+            I_rows[s:e] = ((mx.abs() ** 2 + my.abs() ** 2) / 2.0)[:, pi_all, pj_all].real.to(dt64)
         Pdat = P_rows.T.contiguous()
         Idat = I_rows.T.contiguous() * orisel_w.to(dt64).unsqueeze(0)
-        # EasySpin endorfrq transition selection: drop pairs that are weak
-        # everywhere (relative to the strongest) or never enter the window.
-        # With enhancement the selection uses the nuclear-only rates (EasySpin).
-        sel_rows = (S_rows if enhancement else I_rows).detach()   # discrete selection
-        max_all = float(sel_rows.max()) if sel_rows.numel() else 0.0
-        strong = sel_rows.max(dim=0).values >= threshold * max_all if max_all > 0 \
-            else torch.ones(n_pairs, dtype=torch.bool, device=device)
-        inwin = ((Pdat >= f_lo) & (Pdat <= f_hi)).any(dim=1)
-        keep = strong & inwin
-        Pdat, Idat = Pdat[keep], Idat[keep]
+        # Rows that never enter the window project to nothing (EasySpin keeps
+        # them); dropping them only saves work.
+        inwin = ((Pdat.detach() >= f_lo) & (Pdat.detach() <= f_hi)).any(dim=1)
+        Pdat, Idat = Pdat[inwin], Idat[inwin]
 
     return Pdat, Idat
 
@@ -237,17 +259,6 @@ def _first_order_weights(sys: SpinSystem) -> list[float]:
         pre = float(gn_i) * NMAGN / PLANCK * 1e-9                  # MHz/mT
         out.append(pre ** 2 / 4.0 * 2.0 * I_i * (I_i + 1.0) / 3.0 * n_states)
     return out
-
-
-def _same_nuclear_block(sys: SpinSystem, pi: torch.Tensor, pj: torch.Tensor) -> torch.Tensor:
-    """Mask of level pairs inside one block of ``prod(2I+1)`` energy-sorted levels.
-
-    EasySpin endorfrq's exclusion of electronic transitions (used here only
-    with ``Options.Enhancement``, where EPR transitions would otherwise carry
-    the full electron moment).
-    """
-    n_nuc = int(round(math.prod(2.0 * float(i) + 1.0 for i in sys.I)))
-    return (pi // n_nuc) == (pj // n_nuc)
 
 
 def _project_powder(
@@ -327,6 +338,11 @@ def salt(
         grid, interpolated ``Ninterp``-fold and projected onto the frequency
         axis (``projecttriangles``/``projectzones``), so coarse grids give
         smooth powder patterns.  Set ``opt.device='cuda'`` for GPU acceleration.
+        On the matrix paths the level pairs are selected once, as in EasySpin
+        endorfrq (``Threshold`` on the nuclear-moment rates summed over the
+        ``TPSGridSymm``/``TPSGridSize`` grid, electronic pairs removed; at 5
+        fields spanning the sweep in field-swept mode), independent of
+        ``GridSize``; ``Transitions`` replaces the selection (0.9.14).
     freq_range:
         ``(f_lo, f_hi)`` in MHz for the ENDOR frequency axis.  If ``None``,
         the range is set to ``[0, 2 * mwFreq * 1e3]`` (i.e. 0 to 2× the
@@ -368,6 +384,10 @@ def salt(
     # Hyperfine enhancement needs the matrix ENDOR path: it bypasses the
     # automatic first-order perturbation shortcut below.
     enhancement = bool(getattr(opt, 'Enhancement', False))
+    # Options.Transitions (EasySpin Opt.Transitions, passed on to endorfrq):
+    # user level pairs replace the automatic selection; matrix paths only.
+    use_user_pairs = getattr(opt, 'Transitions', None) is not None
+    tps = (_tps_option(opt, 'TPSGridSymm'), _tps_option(opt, 'TPSGridSize'))
 
     from torchspin.ham_ezho import check_quadratic_zeeman_unsupported
     check_quadratic_zeeman_unsupported(sys, opt, 'salt')
@@ -512,24 +532,28 @@ def salt(
         if grid_sym != 'O3' and n_orient > 2:
             _perturb_ok = (sys.nElectrons == 1
                            and (sys.Q is None or not torch.any(sys.Q.abs() > 0))
-                           and not enhancement)
+                           and not enhancement and not use_user_pairs)
             if zero_field:
                 if enhancement:
                     raise NotImplementedError(
                         "salt: Options.Enhancement=True is not supported together with "
                         "Options.ZeroField=True (zero-field ENDOR uses the nuclear-only rates).")
+                if use_user_pairs:
+                    raise NotImplementedError(
+                        "salt: Options.Transitions is not supported together with "
+                        "Options.ZeroField=True (zero-field lines are pairs of degenerate clusters).")
                 # first-order ENDOR theory needs a quantizing field
                 Pdat, Idat = _fixed_field_transitions(
                     sys, (H0, mux, muy, muz, snmux, snmuy, snmuz),
                     phi_arr, theta_arr, 0.0, orisel_w,
-                    f_lo, f_hi, float(opt.Threshold), False, zero_field=True,
+                    f_lo, f_hi, float(opt.Threshold), False, zero_field=True, tps=tps,
                 )
             else:
                 Pdat, Idat = _fixed_field_transitions(
                     sys, (H0, mux, muy, muz, snmux, snmuy, snmuz),
                     phi_arr, theta_arr, float(exp.Field), orisel_w,
                     f_lo, f_hi, float(opt.Threshold), _perturb_ok,
-                    enhancement=enhancement,
+                    enhancement=enhancement, user_pairs=_salt_user_pairs(opt, H0.shape[0]), tps=tps,
                 )
             # EasySpin Opt.OriThreshold: orientations outside the excitation
             # window are not computed (NaN), which also disables interpolation.
@@ -593,7 +617,7 @@ def salt(
     _use_perturb_endor = (sys.nElectrons == 1
                           and (sys.Q is None
                                or not torch.any(sys.Q.abs() > 0))
-                          and not enhancement)
+                          and not enhancement and not use_user_pairs)
 
     if _use_perturb_endor:
         # Fully vectorized first-order perturbation theory ENDOR.
@@ -700,7 +724,7 @@ def salt(
         dim = H0.shape[0]
         n_pairs_est = dim * (dim - 1) // 2
         bytes_per_entry = dim * max(n_pairs_est, 1) * 16 * 2
-        _BATCH_ENDOR = max(1, min(512, (100 * 1024 * 1024) // bytes_per_entry))
+        _BATCH_ENDOR = max(1, min(_ENDOR_BATCH_CAP, (100 * 1024 * 1024) // bytes_per_entry))
 
     # Build flat lists (used only by the matrix-diagonalization path below)
     flat_phi   = []
@@ -732,14 +756,24 @@ def salt(
         flat_w_amp_t = torch.tensor(flat_w_amp, dtype=torch.float64, device=device)
         N_flat = flat_B_t.shape[0]
 
-        # Precompute all-pairs indices (same for every entry)
-        all_i = [i for i in range(dim) for j in range(i + 1, dim)]
-        all_j = [j for i in range(dim) for j in range(i + 1, dim)]
-        pi_all = torch.tensor(all_i, dtype=torch.long, device=device)
-        pj_all = torch.tensor(all_j, dtype=torch.long, device=device)
-        if enhancement:
-            same = _same_nuclear_block(sys, pi_all, pj_all)
-            pi_all, pj_all = pi_all[same], pj_all[same]
+        # Level pairs, selected once per sweep (same for every entry) as in
+        # EasySpin endorfrq, at fields spanning the resonance fields: a pair
+        # is kept if it is selected at any of them (0.9.14).  Before, the
+        # threshold was applied per (entry, pair) relative to the maximum of
+        # each memory-sized batch, so the spectrum depended on the batch size.
+        user_pairs = _salt_user_pairs(opt, dim)
+        if user_pairs is not None:
+            pi_all = torch.tensor([p[0] for p in user_pairs], dtype=torch.long, device=device)
+            pj_all = torch.tensor([p[1] for p in user_pairs], dtype=torch.long, device=device)
+        else:
+            B_lo, B_hi = float(flat_B_t.min()), float(flat_B_t.max())
+            sel = torch.zeros(dim, dim, dtype=torch.bool)
+            for B_k in sorted(set(np.linspace(B_lo, B_hi, _FIELD_SWEPT_TPS_FIELDS).tolist())):
+                sel |= _endor_tps_select((H0, mux, muy, muz, snmux, snmuy, snmuz), B_k,
+                                         freq_range=(f_lo, f_hi), threshold=float(opt.Threshold),
+                                         n_electron_states=_n_electron_states(sys),
+                                         grid_symm=tps[0], grid_size=tps[1])
+            pi_all, pj_all = (t.to(device) for t in torch.nonzero(sel, as_tuple=True))
 
         for b_start in range(0, N_flat, _BATCH_ENDOR):
             b_end = min(b_start + _BATCH_ENDOR, N_flat)
@@ -799,34 +833,14 @@ def salt(
             intens_surv = ((me_x.abs() ** 2 + me_y.abs() ** 2) / 2.0).real  # (n_surv,)
             if enhancement:
                 # Total moment perpendicular to the field (hyperfine
-                # enhancement); the threshold below still uses the
-                # nuclear-only rates (EasySpin).
+                # enhancement)
                 ex_V = torch.bmm(nx_x * mux + nx_y * muy + nx_z * muz, V_b)
                 ey_V = torch.bmm(ny_x * mux + ny_y * muy, V_b)
                 me_ex = (psi_i_s.conj() * ex_V[mb_idx, :, pj_surv]).sum(dim=1)
                 me_ey = (psi_i_s.conj() * ey_V[mb_idx, :, pj_surv]).sum(dim=1)
                 intens_enh = ((me_ex.abs() ** 2 + me_ey.abs() ** 2) / 2.0).real
 
-            # Apply intensity threshold
-            if opt.Threshold > 0:
-                max_i = intens_surv.max()
-                if max_i > 0:
-                    thresh_mask = intens_surv >= opt.Threshold * max_i
-                    mb_idx      = mb_idx[thresh_mask]
-                    pair_idx    = pair_idx[thresh_mask]
-                    freqs_all_s = freqs_all[mb_idx, pair_idx]
-                    intens_surv = intens_surv[thresh_mask]
-                    if enhancement:
-                        intens_enh = intens_enh[thresh_mask]
-                else:
-                    continue
-            else:
-                freqs_all_s = freqs_all[mb_idx, pair_idx]
-
-            if mb_idx.numel() == 0:
-                continue
-
-            freqs_flat = freqs_all_s
+            freqs_flat = freqs_all[mb_idx, pair_idx]
             if enhancement:
                 intens_surv = intens_enh
             amps_flat  = w_b[mb_idx] * intens_surv
