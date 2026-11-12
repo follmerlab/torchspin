@@ -682,7 +682,12 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
         pos_spread = fSpread.detach() > 0
         Lambda = torch.where(pos_spread, fWidM / torch.where(pos_spread, fSpread, torch.ones_like(fSpread)),
                              torch.full_like(fSpread, float('inf')))
-        gam = torch.where(pos_spread, 1.0 / torch.sqrt(c1 * Lambda ** 2 + c2 * Lambda ** 4), torch.zeros_like(Lambda))
+        # Lambda = 0 (a facet whose mean width is exactly zero) gives gam = inf in
+        # EasySpin, which sets it to 0 (pepper.py does the same); the double
+        # where keeps the value and its gradient finite (0 * inf was NaN).
+        pos_l = pos_spread & (Lambda.detach() > 0)
+        Ls = torch.where(pos_l, Lambda, torch.ones_like(Lambda))
+        gam = torch.where(pos_l, 1.0 / torch.sqrt(c1 * Ls ** 2 + c2 * Ls ** 4), torch.zeros_like(Lambda))
         fWidC = fWidM * (1.0 + 2.0 * gam)                        # Opt.Smoothing = 2
         _bins = _lorentzian_bins_t if strain_lorentz else gaussian_bins_t
         spec = _bins(x, fPosC, fWidC, fIntC, dx / 100.0)
