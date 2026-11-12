@@ -77,11 +77,10 @@ def test_ham_equals_g_fixed_field(exp):
 def test_ham_equals_g_field_swept():
     """Field-swept mode: resfields_batch (Ham) vs resfields_perturb_batch (g).
 
-    Before the fix the Ham spectrum was all zero. Amplitudes are not compared
-    with the default g spectrum: on this version the two resonance-field
-    searches differ in scale (B44: 1.99x). B44 is fixed in 0.9.9 (1/prod(2I+1)
-    nuclear polarization in the matrix path); with it the amplitude is 0.994
-    and an amplitude check (|max ratio - 1| < 0.02) can be added.
+    Before the fix the Ham spectrum was all zero. Since 0.9.9 (B44) the two
+    resonance-field searches share the 1/prod(2I+1) nuclear-sublevel
+    polarization; the amplitude vs the first-order g spectrum is 0.994 (it was
+    1.99 before 0.9.9).
     """
     y_ham = _run(_sys(Ham=HAM_LIN), SWEPT).numpy()
     y_gm = _run(_sys(g=[G], Ham=ZERO_HAM), SWEPT).numpy()
@@ -89,6 +88,7 @@ def test_ham_equals_g_field_swept():
     assert y_ham.max() > 0
     assert _rel(y_ham, y_gm) < 1e-9
     assert _cos(y_ham, y_g) > 0.999
+    assert abs(y_ham.max() / y_g.max() - 1.0) < 0.02
 
 
 def test_field_quadratic_ham_dropped_by_default():
