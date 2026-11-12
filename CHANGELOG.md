@@ -267,6 +267,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   reads as floats (Euler frames, `gnscale`, `DStrain`, `Exp.ModAmp`, `Exp.Range`, `salt`'s
   `Exp.Field`/`mwFreq`/`ExciteWidth`) are not connected: they still raise instead of getting a
   silent zero gradient. Frequency sweeps still raise `NotImplementedError`.
+  With 0.9.17 (B3, frame angles on the graph) and 0.9.27 (B92, `Exp.ModAmp` gradients) the
+  spin-system Euler frames (`gFrame`, `AFrame`, `DFrame`, `QFrame`, `eeFrame`, `nnFrame`,
+  `sigmaFrame`; `pepper_autograd` and `salt`) and `Exp.ModAmp` (`pepper_autograd`) are
+  connected as well.
+
 ## [0.9.21] — 2026-11-12
 
 ### Fixed

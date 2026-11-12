@@ -8,7 +8,9 @@ multi-component sum. torch.autograd.grad then raised ("does not require grad" or
 the window crashed. salt's fixed-field mode did the same with no ENDOR line in
 freq_range. Every differentiable input now gets an exact zero gradient there, the
 spectrum values are unchanged bit for bit, and inputs the forward path detaches
-(frames, gnscale, ModAmp, ...) still raise instead of getting a silent zero.
+(gnscale, Exp.Range, Exp.Field, ...) still raise instead of getting a silent zero.
+The spin-system Euler frames (on the graph since 0.9.17, B3) and Exp.ModAmp
+(since 0.9.27, B92) are connected like the other differentiable inputs.
 """
 import importlib
 
@@ -121,6 +123,17 @@ def _exchange_ee():
     return s, Experiment(**OUT), GRID, [ee]
 
 
+def _frames():
+    g, gF, AF = T([2.0, 2.1, 2.2]), T([0.3, 0.4, 0.5]), T([0.2, -0.3, 0.1])
+    s = SpinSystem(S=[0.5], g=[g], gFrame=gF, Nucs='1H', A=[10.0, 20.0, 30.0], AFrame=AF, lw=[1.0, 0.0])
+    return s, Experiment(**OUT), GRID, [g, gF, AF]
+
+
+def _modamp():
+    g, ma = T([2.0, 2.1, 2.2]), T(0.5)
+    return SpinSystem(S=[0.5], g=[g], lw=[1.0, 0.0]), Experiment(**OUT, ModAmp=ma), GRID, [g, ma]
+
+
 def _natural_abundance():
     g, A = T([2.05, 2.05, 2.25]), T([[30.0, 30.0, 600.0]])
     return SpinSystem(S=[0.5], g=[g], Nucs='Cu', A=A, lw=[1.0, 0.0]), Experiment(**OUT), GRID, [g, A]
@@ -133,6 +146,7 @@ OUT_CASES = {
     'triplet_d': _triplet_d, 'orientations': _orientations, 'perturb': _perturb,
     'temperature_mwfreq': _temperature_mwfreq, 'two_components_weight': _two_components_weight,
     'exchange_ee': _exchange_ee, 'natural_abundance': _natural_abundance,
+    'frames': _frames, 'modamp': _modamp,
 }
 
 
@@ -248,9 +262,7 @@ def test_connect_inputs_exact_zero_term():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('where,field,val', [
-    ('sys', 'gFrame', [0.3, 0.4, 0.5]),
     ('sys', 'gnscale', [1.0]),
-    ('exp', 'ModAmp', 0.5),
     ('exp', 'Range', [300.0, 360.0]),
 ])
 def test_detached_inputs_still_raise(where, field, val):
@@ -263,6 +275,25 @@ def test_detached_inputs_still_raise(where, field, val):
     y = pa.pepper_autograd(SpinSystem(**s), Experiment(**e), GRID)[1]
     with pytest.raises(RuntimeError):
         torch.autograd.grad((y ** 2).sum(), [t])
+
+
+@pytest.mark.parametrize('where,field,val', [
+    ('sys', 'gFrame', [0.3, 0.4, 0.5]),
+    ('exp', 'ModAmp', 0.5),
+])
+def test_frame_and_modamp_on_graph_in_range(where, field, val):
+    """gFrame (0.9.17, B3) and ModAmp (0.9.27, B92) are no longer detached: in
+    range they get a finite, nonzero gradient (values vs central differences:
+    test_frame_gradients.py, test_modamp_grad.py); out of range an exact zero
+    (OUT_CASES 'frames', 'modamp')."""
+    t = T(val)
+    s = dict(S=[0.5], g=[2.0, 2.1, 2.2], lw=[1.0, 0.0])
+    e = dict(IN)
+    (s if where == 'sys' else e)[field] = t
+    y = pa.pepper_autograd(SpinSystem(**s), Experiment(**e), GRID)[1]
+    (g,) = torch.autograd.grad((y ** 2).sum(), [t])
+    assert g.shape == t.shape and bool(torch.all(torch.isfinite(g)))
+    assert float(g.abs().max()) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +313,14 @@ def test_salt_out_of_range_zero_gradients():
                 freq_range=(100, 120), n_points=256, lw_mhz=lw)
     assert y.shape == (256,)
     _assert_zero_grads(y, [A, Q, lw])
+
+
+def test_salt_out_of_range_frame_zero_gradients():
+    A, AF, Q = T([[4.0, 4.0, 5.0]]), T([[0.3, 0.4, 0.5]]), [[0.84, 0.84, -1.68]]
+    s = SpinSystem(S=[0.5], g=[[2.2, 2.2, 2.0]], Nucs='14N', A=A, AFrame=AF, Q=Q)
+    _, y = salt(s, Experiment(**SALT_EXP), Options(GridSize=19, GridSymmetry='D2h'),
+                freq_range=(100, 120), n_points=256, lw_mhz=0.2)
+    _assert_zero_grads(y, [A, AF])
 
 
 def test_salt_hstrain_without_orientation_selection_zero_gradient():

@@ -595,10 +595,11 @@ def salt(
                                     pad_multiplier=opt.PaddingMultiplier)
             # B77: exact +0.0 on every differentiable grad input, so that no
             # ENDOR line in freq_range gives zero gradients instead of a
-            # detached spectrum (frames, gnscale, Exp.Field/mwFreq/ExciteWidth
-            # are read as floats and are not connected: they still raise)
+            # detached spectrum (the Euler frames are on the graph since 0.9.17,
+            # B3; gnscale, Exp.Field/mwFreq/ExciteWidth are read as floats and
+            # are not connected: they still raise)
             from torchspin.autograd import connect_inputs
-            spec = connect_inputs(spec, sys, ('g', 'A', 'A_', 'Q', 'sigma', 'HStrain'), lw_mhz)
+            spec = connect_inputs(spec, sys, ('g', 'A', 'A_', 'Q', 'sigma', 'HStrain') + _FRAME_FIELDS, lw_mhz)
             return freq_axis.cpu(), spec.cpu()
 
         B_res_all  = [B_fixed] * n_orient
