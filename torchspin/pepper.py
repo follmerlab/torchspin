@@ -774,9 +774,14 @@ def _user_transitions(transitions, n_states):
 
 def _zf_const_pos(B_f, B_c):
     """Zero field: a transition has the same position at every orientation.
-    Restore that exactly after interpolation, whose round-off would otherwise
-    give near-zero-width triangles that straddle a bin edge, where the
-    projection formulas cancel catastrophically (a few % of the line area)."""
+    Give every interpolated vertex the coarse position exactly, so the line
+    goes into one bin as in EasySpin. Interpolation round-off scatters the
+    fine-grid positions by a few ulp; for a line exactly on a bin edge
+    (bin k covers [x_k, x_k + dx)) the vertices then straddle the edge and the
+    projection puts part of the line into the lower bin (5-39 % per line for
+    S = 1, D = [-700 -1300 2000] MHz on a 10 MHz axis, GridSize [19 4]; test
+    test_pepper_zerofield_edge.py). The projection itself is exact for such
+    near-zero-width triangles since 0.8.4 (B18); this is about which bin."""
     fin = B_c[np.isfinite(B_c)]
     if fin.size == 0:
         return B_f
@@ -2073,6 +2078,7 @@ def _pepper_single(
                 if B_f is None:
                     continue
                 if zero_field:
+                    # one position for all orientations: single-bin deposit on a bin edge
                     B_f = _zf_const_pos(B_f, B_c)
                 I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, mode='val')
                 W_f = _interp_slot(W_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, mode='val')
@@ -2225,6 +2231,7 @@ def _pepper_single(
                     if B_f is None:
                         continue
                     if zero_field:
+                        # one position for all orientations: single-bin deposit on a bin edge
                         B_f = _zf_const_pos(B_f, B_c)
                     I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
 
