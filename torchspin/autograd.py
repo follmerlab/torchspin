@@ -76,6 +76,65 @@ def inputs_require_grad(*objs) -> bool:
     return False
 
 
+def _grad_tensors(v, out: list, seen: set) -> None:
+    """Collect every tensor that requires grad in ``v`` (tensors, lists,
+    tuples and dicts, any depth)."""
+    if torch.is_tensor(v):
+        if v.requires_grad and id(v) not in seen:
+            seen.add(id(v))
+            out.append(v)
+    elif isinstance(v, (list, tuple)):
+        for u in v:
+            _grad_tensors(u, out, seen)
+    elif isinstance(v, dict):
+        for u in v.values():
+            _grad_tensors(u, out, seen)
+
+
+def connect_inputs(spec: torch.Tensor, objs, fields, *tensors) -> torch.Tensor:
+    """Return ``spec`` connected to the differentiable inputs that require grad.
+
+    ``objs`` is a SpinSystem/Experiment object or a list of them; ``fields``
+    names the attributes the caller differentiates (its forward path keeps them
+    on the autograd graph); ``tensors`` are further inputs such as a line
+    width. For each tensor ``t`` among them that requires grad, ``(t -
+    t.detach()).sum()`` is exactly ``+0.0`` with derivative 1, and that sum
+    times ``0.0`` is subtracted from ``spec``. The values are unchanged bit for
+    bit (``x - (+0.0)`` is ``x`` for every float, ``-0.0`` included), and
+    ``torch.autograd.grad`` returns an exact zero gradient, not an error or
+    ``None``, for an input that does not reach the spectrum (no line in range,
+    a component outside the window).
+
+    Only the listed fields are connected: an input the forward path detaches
+    (read with ``float()``) keeps failing loudly instead of getting a silent
+    zero gradient. Without grad inputs, or under ``torch.no_grad``, ``spec`` is
+    returned as is. Non-finite entries contribute ``0`` (``nan_to_num``
+    first), so they cannot turn the spectrum into NaN.
+    """
+    if not torch.is_grad_enabled():
+        return spec
+    ts: list = []
+    seen: set = set()
+    for obj in (objs if isinstance(objs, (list, tuple)) else [objs]):
+        if obj is None:
+            continue
+        for name in fields:
+            _grad_tensors(getattr(obj, name, None), ts, seen)
+    _grad_tensors(tensors, ts, seen)
+    if not ts:
+        return spec
+    zero = None
+    for t in ts:
+        # nan_to_num: a non-finite entry contributes 0 (its derivative is 0), not NaN
+        u = t if t.is_complex() else torch.nan_to_num(t)
+        d = (u - u.detach()).sum()
+        if d.is_complex():
+            d = d.real
+        d = d.to(dtype=spec.dtype, device=spec.device)
+        zero = d if zero is None else zero + d
+    return spec - zero * 0.0
+
+
 def _broadband_spectrum(
     sys: 'SpinSystem',
     mwFreq_GHz: float,

@@ -530,6 +530,12 @@ def salt(
                 from torchspin.pepper import _lw_convolve
                 from torchspin.pepper_autograd import _conv_t
                 spec = _lw_convolve(spec, df, lw_mhz, 0.0, 0, conv=_conv_t)
+            # B77: exact +0.0 on every differentiable grad input, so that no
+            # ENDOR line in freq_range gives zero gradients instead of a
+            # detached spectrum (frames, gnscale, Exp.Field/mwFreq/ExciteWidth
+            # are read as floats and are not connected: they still raise)
+            from torchspin.autograd import connect_inputs
+            spec = connect_inputs(spec, sys, ('g', 'A', 'A_', 'Q', 'sigma', 'HStrain'), lw_mhz)
             return freq_axis.cpu(), spec.cpu()
 
         B_res_all  = [B_fixed] * n_orient

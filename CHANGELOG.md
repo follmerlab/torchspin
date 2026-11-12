@@ -14,6 +14,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.22] — 2026-11-12
+
+### Fixed
+
+- **`pepper_autograd` and `salt` with no resonance in range stay on the autograd graph (B77).**
+  When no line of a system fell inside `Exp.Range`, `pepper_autograd` returned a detached zero
+  spectrum (the powder early return, pepper_autograd.py:621; the `Exp.Orientations` path built
+  its zeros from the orientation weights only), and a component without lines in range was not
+  used in the graph of a multi-component sum. `torch.autograd.grad` then raised ("does not
+  require grad" or "appears to not have been used in the graph"), so a fit whose lines drifted
+  out of the window crashed; a grad `Sys.lw` was lost as well, because the early return skipped
+  the convolution. `salt`'s fixed-field mode did the same with no ENDOR line in `freq_range`.
+  New `torchspin.autograd.connect_inputs` subtracts `0.0 * sum((t - t.detach()).sum())` over the
+  inputs each function keeps on the graph (`pepper_autograd`: `g`, `A`, `D`, `Q`, `ee`, `nn`,
+  `sigma`, `lw`/`lwpp`, `HStrain`, `HStrainL`, `gStrain`, `AStrain`, `gAStrainCorr`, `weight`,
+  `Exp.mwFreq`, `Exp.Temperature`, `Exp.Orientations`/`OrientationWeights`; `salt`: `g`, `A`,
+  `Q`, `sigma`, `HStrain`, `lw_mhz`). Such an input now gets an exact zero gradient of its own
+  shape, `pepper` (which routes grad inputs to `pepper_autograd`) included. The term is exactly
+  `+0.0`, so every spectrum value, `-0.0` included, and every in-range gradient are bit-identical
+  to 0.9.0; without grad inputs nothing is added (about 4 µs per call). Inputs the forward path
+  reads as floats (Euler frames, `gnscale`, `DStrain`, `Exp.ModAmp`, `Exp.Range`, `salt`'s
+  `Exp.Field`/`mwFreq`/`ExciteWidth`) are not connected: they still raise instead of getting a
+  silent zero gradient. Frequency sweeps still raise `NotImplementedError`.
+
 ## [0.9.0] — 2026-11-11
 
 ### Changed
