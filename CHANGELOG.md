@@ -14,6 +14,43 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.21] — 2026-11-12
+
+### Fixed
+
+- **C1 powder grids interpolated the lower hemisphere mirrored (B74).** `sphgrid` builds the
+  lower hemisphere of the C1 grid from the upper knots in reverse order (as EasySpin's
+  sphgrid.m:320-325 does), so each lower θ row is stored with φ decreasing. The rectify step of
+  the grid interpolation (`pepper._interp_grid`, port of private/gridinterp.m:204-224) read
+  those rows as φ increasing, so a lower knot at φ took the value from −φ − Δφ (mirrored and shifted by one
+  coarse φ step Δφ of that row); through the global bicubic spline (`G3`) this also disturbed the
+  upper hemisphere.
+  Each lower row is now reversed at the rectify step; the `sphgrid` order is unchanged
+  (`grid_triangulation` depends on it). This reaches `pepper`, `pepper_autograd` and `salt`
+  whenever a C1 grid is interpolated (`GridSize(2) > 1`): by default for low-symmetry systems
+  with `Sys.tdm` (photoselection), or with `Options.GridSymmetry='C1'`. Only C1 has lower rows;
+  the other grids are unchanged bit for bit. Interpolating f = 12x + 15y + 8z + 4xy − 3yz + 2xz
+  (mT) from C1 [19 4]: max error 32.5 → 0.52 mT (linear, `L1`) and 35.7 → 0.064 mT (cubic,
+  `G3`). Spectra on C1 [19 4] against the same fine knots without interpolation (C1 [73 1]),
+  max deviation of the maximum: Cu(II) with non-coaxial g and A 0.342 → 0.0075 (a Ci grid of
+  the same size: 0.0078); a photoselection triplet (default grid C1) 0.069 → 0.0018; `salt` 1H
+  ENDOR 0.021 → 0.00054. The rhombic-invariance test (C1 vs D2h, [20 4]) 2.4e-3 → 3.6e-4; its
+  C1 tolerance is tightened from 2.5e-3 to 1e-3. **Deliberate deviation from EasySpin**, which
+  has the same defect (gridinterp.m:211/213/217/219 read `y(idx:idx+len-1)`); torchspin now
+  follows the exact, uninterpolated result (KNOWN_LIMITATIONS.md). The EasySpin-reference cases
+  on interpolated C1 grids (9 photoselection cases, `fullsphere_C1`) therefore move away from
+  EasySpin by up to 9e-3 of the maximum (cosine ≥ 0.999989, amplitude within 0.85 %); against
+  the same fine grid without interpolation `fullsphere_C1` goes from 9.0e-3 to 6.0e-4. Tests:
+  `torchspin/tests/test_c1_lower_rows.py`.
+
+### Tests
+
+- Those 10 EasySpin-reference cases on interpolated C1 grids are no longer compared with
+  EasySpin (a known-wrong reference there) but with torchspin on the same fine knots without
+  interpolation, at bounds just above the measured deviations (3.7e-4 to 4.3e-3 of the
+  maximum). The check that the other open-φ grids (Ci, C2h, C4h) are unchanged uses error
+  bounds against exact symmetric test functions and the NaN pattern instead of output hashes.
+
 ## [0.9.10] — 2026-11-11
 
 ### Fixed

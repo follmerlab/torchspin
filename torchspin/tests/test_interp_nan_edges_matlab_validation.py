@@ -130,7 +130,9 @@ def _interp_ids():
 # Open-phi grids (periodic rows): EasySpin's 'L1' rectify samples the wrapped
 # row at linspace(1, len, nc) (gridinterp.m:188, 217), i.e. it stretches the
 # row over the len knots and leaves out the wrap segment; torchspin's _row
-# samples linspace(1, len + 1, nc). Not changed here (B58).
+# samples linspace(1, len + 1, nc). Not changed here (B58). C1 also differs
+# in the lower hemisphere, deliberately: since 0.9.21 torchspin reads those
+# rows in phi order, EasySpin mirrors them (B74, test_c1_lower_rows.py).
 _OPEN_PHI = {'Ci', 'C1', 'C2h', 'C4h', 'C6h', 'S6'}
 
 
