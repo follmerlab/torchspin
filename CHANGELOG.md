@@ -304,6 +304,160 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (tests/data/ref_pepper_isotropic.mat); gradients w.r.t. g, A, lw and HStrain match central
   differences of pepper. A powder grid that yields no usable facets now raises
   `RuntimeError` instead of returning zeros. pepper itself is unchanged.
+## [0.9.17] — 2026-11-11
+
+### Fixed
+
+- **Euler frame angles stay on the autograd graph (B3).** A `gFrame`, `AFrame`, `DFrame`,
+  `QFrame`, `eeFrame`, `nnFrame`, `sigmaFrame` or `BFrame` tensor with `requires_grad=True`
+  used to get no gradient, without a warning: every call site read the angles with
+  `.tolist()` or `float()` before `erot`. `erot` now builds the matrix from torch operations
+  when an angle requires grad (same formula; otherwise the float path as before), and the
+  angles are passed as tensors in `ham_ez`, `ham_hf`, `ham_zf` (D and the Stevens `BFrame`
+  rotation, now a torch Wigner D), `ham_nq`, `ham_ee`, `ham_nn`, `ham_nz`, `strainwidth`
+  (gStrain, AStrain and DStrain frames), `resfields_perturb`, `resfreqs_perturb`,
+  `endorfrq_perturb`, `resfields_hybrid` and `salt`. The zero-angle check that skips the
+  rotation is made on detached values and does not skip a frame that requires grad. With a
+  nonzero `BFrame` the Stevens `B` coefficients were detached too; they are not any more.
+  `pepper` routes a system whose only grad tensor is a frame to `pepper_autograd`, `saffron`
+  switches to its differentiable time-domain accumulation for frames as it does for tensors,
+  and `salt`'s field-swept mode raises `NotImplementedError` for grad frames as it does for
+  g, A, D, Q and ee. Gradients equal central differences (`ham`, `levels`, batched strain
+  widths: 1e-8; `pepper_autograd` powder, perturbation and `Exp.Orientations`, `salt`
+  fixed-field, `saffron`: 1e-5), also at beta = 0 and beta = pi.
+- **`hamsymm` with a frame that requires grad.** The eigenvalue path (full tensors, Stevens
+  terms) called `.numpy()` on the frame and raised `RuntimeError`. `hamsymm` now runs without
+  a graph: the point group and grid frame are a discrete decision on the detached values.
+- Values without grad are unchanged: 466 arrays (`ham`, `H0`, `muz` for 150 random systems
+  with every frame type, 16 `pepper` spectra with strains) and 30 outputs of `ham`, `pepper`
+  (matrix and perturb), strain widths, `salt` and `saffron` with tilted frames were
+  bit-identical to 0.9.0. The test suite checks the property within the build: with a frame
+  that requires grad the same 30 configurations give the float path's values (bit-identical;
+  `ham` with `BFrame` within 4 ulp, `pepper_autograd` with a grad `gFrame` within 1e-11),
+  and a tensor frame without grad is bit-identical to a list.
+## [0.9.16] — 2026-11-11
+
+### Fixed
+
+- **`pepper_autograd` with `Exp.Orientations` now honors `Options.QuadraticZeeman` and
+  `Options.Transitions`, as `pepper` does (B64).** Its orientation branch called
+  `resfields_batch` without the higher-order Zeeman operators and without the user's level
+  pairs, so the spectrum silently equaled the one without the option: for S = 1,
+  D = [300 30] MHz with `Sys.Ham220`/`Ham222` and `QuadraticZeeman=True` it differed from pepper
+  by 1.04 (one orientation) and 1.03 (five) of the maximum, and with `Transitions=[[1,2]]` by
+  1.00 and 0.39. Both now equal pepper to ≤ 5e-14. `Method='perturb'` with either option now
+  raises on this path too, as in pepper and on the powder path. The powder path, and every
+  spectrum without these options, is unchanged. EasySpin references:
+  tests/data/ref_pepper_orientations_qz.mat (crystal sums as the exact χ average; 2.5e-3 with
+  Ham2xx, which is EasySpin's linear-moment dB/dE, and 1.9e-4 for the level-pair selection).
+## [0.9.15] — 2026-11-11
+
+### Fixed
+
+- **SpinSystem input shapes follow EasySpin's validatespinsys.m** (B62, B63). Many shapes were
+  kept unnormalized by the constructor and failed later in `pepper` with an `IndexError` or
+  `RuntimeError` (some ran silently with the wrong tensor), and a 1-D `gStrain`, `HStrain` or
+  `AStrain` of one or two values raised although EasySpin expands them. A 1-D list is read as a
+  MATLAB row vector. Now:
+  - **Expanded as in EasySpin** (were late errors or `ValueError`): `g = [g_perp, g_par]` for one
+    electron spin and `(nElectrons, 2)` axial rows; one `g` per electron in any shape; `A` as
+    `(nNuclei, nElectrons)` isotropic (e.g. `[[10.]]` for one nucleus, `[A1, A2]` for one nucleus
+    and two electrons), `(nNuclei, 2*nElectrons)` axial (e.g. `[A_perp, A_par]`) and a 1-D
+    `3*nElectrons` row for one nucleus; a scalar `A_`; a 1x6 `AFrame` row; empty `gFrame`,
+    `DFrame`, `AFrame` (zeros); `ee` as an `(nPairs, 1)` column of isotropic values; `lw`/`lwpp` as
+    `[[G, L]]`; `gStrain` rows of 1 or 2 values (`[x]` -> `[x x x]`, `[x y]` -> `[x x y]`,
+    validatespinsys.m:822-823); `HStrain`/`AStrain` with 1, 2 or 3 values in any shape; empty
+    `gStrain`, `HStrain`, `AStrain`, `DStrain` (no strain). Each gives the same tensor and a
+    bit-identical spectrum as the explicit form, and against EasySpin (`ref_spinsystem_shapes.mat`,
+    5 cases in the short form) cosine >= 0.9999990, amplitude within 0.0009.
+  - **`ValueError` at construction, as EasySpin errors**: `g` that is not one of those forms (e.g.
+    `[2.0]` or `[[2.0]]` for two electrons, a 6-vector, `(3, 3)` for two electrons); `gFrame`,
+    `DFrame`, `QFrame`, `eeFrame`, `AFrame` that are not one row per tensor (e.g. `[0.1]`);
+    `D_` without one `[D, E/D]` pair per electron (e.g. `[300.]`, was a `RuntimeError`); `A`
+    inconsistent with the numbers of nuclei and electrons (e.g. `[10.]` for two nuclei, `[10.]`
+    or `[Ax, Ay, Az]` for two electrons); `Q` that does not give `(nNuclei, 3)`; `ee` that does
+    not give `(nPairs, 3)` or `(3*nPairs, 3)`; `lw`/`lwpp` with 0 or 3+ values (a third value was
+    ignored); `gStrain` without one row per electron; `HStrain`/`AStrain` with 4+ values; and
+    `A`, `AFrame`, `Q` or a nonzero `QFrame` without `Nucs` (were silently ignored).
+  - **Unchanged:** every input that worked before, including torchspin's own shorthands (scalar
+    `g`, `A`, `gStrain`, `DStrain`; `[x, y, z]` for every electron, nucleus or pair), except the
+    flat `D` below.
+  Gradients flow through the expanded forms.
+
+### Changed
+
+- **A flat `D` of 2 or 3 values for two or more electron spins raises `ValueError`** (B61;
+  behavior change, deliberate deviation from EasySpin). `SpinSystem(S=[1, 1], D=[a, b])` was
+  read as one `[D, E]` shared by both electrons and `S=[1, 1, 1], D=[a, b, c]` as shared
+  principal values, while EasySpin reads both as one D value per electron
+  (`numel(Sys.D) == nElectrons`, validatespinsys.m:208-210). The same lists with a different
+  number of electrons (e.g. `[D, E]` for three or four) were also read as shared. Neither
+  reading is adopted: the error asks for the explicit form, one row per electron spin
+  (`D=[[D1, E1], [D2, E2]]`, `D=[[Dxx, Dyy, Dzz], ...]`, `D=[[D1], [D2]]` or `D_`). The old
+  meaning is `D=[[D, E]] * nElectrons`. Unchanged: a scalar `D` (same D, E = 0 for every
+  electron, as EasySpin), a flat list of one D per electron for four or more electron spins,
+  `[D]`, `[D, E]` and `[Dxx, Dyy, Dzz]` for one electron spin, and every 2-D form. `D_` has
+  no shared shorthand and is unchanged. No test, example or document in the repository used
+  the ambiguous form.
+## [0.9.14] — 2026-11-11
+
+### Fixed
+
+- **`resfields_perturb` raises a clear `ValueError` for a zero hyperfine principal value at second
+  order (B65).** The second-order terms invert A; `Sys.A = [0 5 10]` raised torch's raw
+  `LinAlgError` from `inv`. As EasySpin (resfields_perturb.m:120-127) the message is now "All
+  hyperfine coupling constants must be non-zero" (a singular full A too). First order still
+  runs (EasySpin rejects it at every order). Test in `test_resfields_perturb.py`.
+- **ENDOR transition selection as EasySpin endorfrq, in one place for `endorfrq` and every `salt`
+  matrix path (B57/B41, B40, B59).** EasySpin selects the level pairs once (endorfrq.m:258-341):
+  on the coarse grid `sphgrid(Opt.TPSGridSymm, Opt.TPSGridSize)` (`'D2h'`, 4) it sums the
+  nuclear-moment rates with the grid weights, drops pairs whose frequency never enters the range,
+  always removes electronic pairs, and keeps a pair if its rate is `> Threshold * max`.
+  `Enhancement` changes intensities only. torchspin now does the same
+  (`endorfrq._endor_tps_select`, run without autograd; positions and intensities keep their
+  gradients), so the selection no longer depends on `GridSize` or on the orientation.
+  - *salt, fixed field (B57):* a pair was kept if it was strong at any orientation of the
+    simulation grid. For 14N+1H with `Enhancement` (endor_enhancement_refs.mat) the zero-quantum
+    pairs (8,9), (10,11) at an anticrossing near 0 MHz passed (4.3e-4 > 1e-4; EasySpin's summed
+    rates 1.3e-9, 2.1e-9): 23 pairs instead of EasySpin's 16, and a spike at 0 MHz. Residual vs
+    EasySpin 4.6e-3 → 1.8e-12 (without `Enhancement` 3.4e-6 → 1.9e-12). The 14N, 1H-enhanced
+    and 14N+1H references now all agree to ≤ 5e-12 (the test tolerance is tightened from 1e-2
+    to 1e-9).
+  - *endorfrq (B41):* thresholded each orientation against its own maximum and filtered the
+    range per orientation: 14 pairs vs EasySpin's 16 (14N+1H), 34-97 vs 81 (63Cu+14N) at
+    Threshold 1e-4. Now EasySpin's `Transitions` exactly, at every orientation, and
+    `freq_range` acts on the selection only: the selected pairs are returned even where their
+    frequency at this orientation is outside it, as in EasySpin. The threshold is now strict
+    (`>`), so at `threshold=0` pairs of exactly zero rate are dropped, as in EasySpin.
+  - *Electronic pairs (B40):* were kept without `Enhancement`: 6 pairs vs EasySpin's 2 for
+    S = 1/2 + 1H at threshold 0 in endorfrq; in salt, 63Cu (A = [60 60 600], Q) on the default
+    0-2·mwFreq axis had EPR lines near 8.9 GHz (0.05 % of the integral, 3e-4 of the maximum).
+    Now always removed.
+  - *salt, field sweep (B59):* the threshold was applied per (orientation, field) entry against
+    the maximum of each memory batch (≤ 512 entries), so the spectrum depended on the batch size
+    (14N+1H, Threshold 1e-2: 2.4e-3 of the maximum between batch caps 1 and 512, 0.19 with
+    `Enhancement`). The pairs are now selected once per sweep at 5 fields spanning the
+    resonance fields (kept if selected at any) and every entry of a kept pair is binned. The
+    spectrum is identical for any batch size; at Threshold 0.01 (0-40 MHz) 2.57 % of the
+    integral is dropped, as the fixed-field rule drops 2.56 % (0.60 % before).
+  - *Zero field* (`Options.ZeroField`): the same rule on cluster pairs, without the
+    electronic-pair removal.
+  - **New options:** `Options.TPSGridSymm` / `TPSGridSize` (EasySpin's undocumented options,
+    defaults `'D2h'`, 4). `Options.Transitions` is read by `endorfrq` and `salt` (as EasySpin's
+    `Opt.Transitions`): the pairs replace the selection, with no threshold; `salt` then uses the
+    matrix path; with `ZeroField` it raises.
+  - **Results that change:** every `endorfrq` result with a `freq_range` or a pair that was
+    below/above the per-orientation threshold; `salt` matrix-path spectra by the pairs that
+    EasySpin drops (e.g. 14N+1H fixed field above); field-swept matrix-path spectra (the
+    threshold is now EasySpin's). The first-order perturbation path (one electron, no Q, no
+    `Enhancement`) is unchanged. In `test_zero_field.py` the B → 0+ continuity check now
+    passes `Options(Transitions='all')`: at 1e-5 mT the electronic-pair rule cuts through the
+    Kramers doublets (the default spectrum is 0.48 of the zero-field one).
+  - Tests: `test_endor_tps_selection.py` with `tests/data/endor_tps_selection_refs.mat`
+    (`generate_endor_tps_selection_refs.m`: 18 endorfrq cases, 3 salt cases with
+    `info.Transitions`), batch-cap independence, gradients vs central differences (14N+1H with
+    `Enhancement`); `test_endor_enhancement.py` gains a default-threshold companion of
+    `test_endorfrq_vs_easyspin`. 15 of the new or tightened tests fail on the 0.9.2 base.
 ## [0.9.13] — 2026-11-11
 
 ### Added

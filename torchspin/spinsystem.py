@@ -88,20 +88,36 @@ class SpinSystem:
     g:
         Electron g-tensors.  Shape ``(nElectrons, 3)`` for diagonal tensors
         (principal values) or ``(3*nElectrons, 3)`` for full 3×3 tensors.
+        Shorthands: a scalar (every electron); one value per electron spin in
+        any shape (``[g1, g2]``, ``(nElectrons, 1)``); ``(nElectrons, 2)``
+        axial ``[g_perp, g_par]`` rows, and for one electron spin
+        ``[g_perp, g_par]``; ``[gx, gy, gz]`` (every electron).  A 1-D list is
+        read as a MATLAB row.  Any other shape raises ``ValueError``.
         Defaults to ``gfree`` for all electrons if not given.
     gFrame:
         Euler angles (alpha, beta, gamma) in radians rotating the molecular
-        frame to the g-tensor principal frame.  Shape ``(nElectrons, 3)``.
-        Defaults to zero (no rotation).
+        frame to the g-tensor principal frame.  Shape ``(nElectrons, 3)``;
+        ``[a, b, c]`` for one electron spin.  Empty or ``None``: zero (no
+        rotation).  Any other shape raises ``ValueError``.
     D:
         Zero-field splitting tensors (MHz).  Shape ``(nElectrons, 3)`` for
         diagonal (Dxx, Dyy, Dzz) or ``(3*nElectrons, 3)`` for full tensors.
-        Shorthands: a scalar ``D`` or, for one electron spin, ``[D]`` (E = 0);
-        ``[D, E]``; ``(nElectrons, 1)`` or ``(nElectrons, 2)`` rows of D or
-        [D, E].  Any other shape raises ``ValueError``.
+        Shorthands: a scalar ``D`` (E = 0, every electron); for one electron
+        spin ``[D]``, ``[D, E]`` or ``[Dxx, Dyy, Dzz]``; ``(nElectrons, 1)`` or
+        ``(nElectrons, 2)`` rows of D or [D, E]; for four or more electron
+        spins a flat list of one D per electron.  For two or more electron
+        spins a flat list of 2 or 3 values is ambiguous (shared [D, E] /
+        principal values, or EasySpin's one D per electron) and raises
+        ``ValueError``: give one row per electron.  Any other shape raises
+        ``ValueError``.
         Pass ``None`` (default) to omit ZFS entirely.
+    D_:
+        Zero-field splitting as ``[D, E/D]`` per electron spin, shape
+        ``(nElectrons, 2)`` (or the same values as a flat list).  Any other
+        number of values raises ``ValueError``.
     DFrame:
-        Euler angles for D-tensor frame.  Shape ``(nElectrons, 3)``.
+        Euler angles for D-tensor frame.  Shape ``(nElectrons, 3)``, as
+        ``gFrame``.
     B:
         Stevens ZFS coefficients (MHz) for high-order terms.  List of tensors
         indexed by rank k starting at 2: ``B[0]`` = rank-2, ``B[1]`` = rank-4, etc.
@@ -115,14 +131,34 @@ class SpinSystem:
     A:
         Hyperfine coupling tensors (MHz).  Shape ``(nNuclei, 3*nElectrons)``
         for diagonal entries (Axx, Ayy, Azz per electron), or
-        ``(3*nNuclei, 3*nElectrons)`` for full tensors.  Defaults to zero.
+        ``(3*nNuclei, 3*nElectrons)`` for full tensors.  As in EasySpin also
+        ``(nNuclei, nElectrons)`` isotropic and ``(nNuclei, 2*nElectrons)``
+        axial ``[A_perp, A_par]`` values, and for one electron spin one value
+        per nucleus ``[A1, A2, ...]``; a 1-D list is one row (one nucleus,
+        e.g. ``[A1, A2]`` per electron for two electrons).  torchspin
+        shorthands: a scalar (every nucleus and electron) and, for one
+        electron spin, ``[Ax, Ay, Az]`` (every nucleus).  Any other shape
+        raises ``ValueError``.  Defaults to zero.  Giving ``A``, ``AFrame``,
+        ``Q`` or ``QFrame`` without ``Nucs`` raises ``ValueError``.
+    A_:
+        Spherical hyperfine form per nucleus and electron: ``[aiso]``,
+        ``[aiso, T]`` or ``[aiso, T, rho]`` (EasySpin ``Sys.A_``); a scalar
+        is ``aiso`` of one nucleus.
     AFrame:
-        Euler angles for each A-tensor.  Shape ``(nNuclei, 3*nElectrons)``.
+        Euler angles for each A-tensor.  Shape ``(nNuclei, 3*nElectrons)``;
+        for one electron spin ``[a, b, c]`` applies to every nucleus.  Empty:
+        zero.  Any other shape raises ``ValueError``.
     ee:
         Electron-electron coupling tensors (MHz).  Shape ``(nPairs, 3)`` for
-        diagonal or ``(3*nPairs, 3)`` for full.
+        diagonal or ``(3*nPairs, 3)`` for full.  Shorthands: a scalar, one
+        isotropic value per pair (``[J]`` for one pair, ``(nPairs, 1)``; a
+        flat ``[a, b, c]`` for three pairs is principal values for every
+        pair), ``[Jx, Jy, Jz]`` (every pair).  Any other shape raises
+        ``ValueError``.
     eeFrame:
-        Euler angles for each ee coupling tensor.  Shape ``(nPairs, 3)``.
+        Euler angles for each ee coupling tensor.  Shape ``(nPairs, 3)``;
+        ``[a, b, c]`` applies to every pair.  Any other shape raises
+        ``ValueError``.
     gnscale:
         Per-nucleus scaling of the nuclear g-factor (dimensionless).  Shape
         ``(nNuclei,)``.  Defaults to 1.0 for each nucleus.
@@ -134,10 +170,13 @@ class SpinSystem:
         Euler angles for chemical shielding frame.  Shape ``(nNuclei, 3)``.
     Q:
         Nuclear quadrupole coupling tensors (MHz).  Shape ``(nNuclei, 3)``
-        for diagonal or ``(3*nNuclei, 3)`` for full.  ``None`` means no
-        quadrupole interaction.
+        for diagonal or ``(3*nNuclei, 3)`` for full.  Shorthands (EasySpin):
+        one ``e2qQ/h`` per nucleus, ``[e2qQ/h, eta]`` per nucleus.  Any
+        other shape raises ``ValueError``.  ``None`` means no quadrupole
+        interaction.
     QFrame:
-        Euler angles for Q-tensor frame.  Shape ``(nNuclei, 3)``.
+        Euler angles for Q-tensor frame.  Shape ``(nNuclei, 3)``; any other
+        shape raises ``ValueError``.
     nn:
         Nuclear-nuclear coupling tensors (MHz).  Shape ``(nPairs_nuc, 3)``
         for diagonal or ``(3*nPairs_nuc, 3)`` for full.
@@ -145,7 +184,25 @@ class SpinSystem:
         Euler angles for nn coupling tensor frame.
     lw:
         Linewidth ``[GaussianFWHM, LorentzianFWHM]`` in mT, used by
-        ``pepper``.  Defaults to ``[0.0, 0.0]`` (no broadening, as in EasySpin).
+        ``pepper``.  A scalar or ``[x]`` is ``[x, 0]``; ``[[G, L]]`` is
+        ``[G, L]``; any other size raises ``ValueError`` (``lwpp`` alike).
+        Defaults to ``[0.0, 0.0]`` (no broadening, as in EasySpin).
+    HStrain:
+        Frequency-domain Gaussian strain FWHM (MHz) along the molecular x, y,
+        z axes, ``[3]``.  As EasySpin: one value is ``[x, x, x]``, two are
+        ``[x, x, y]``, three in any shape are kept, empty is no strain; any
+        other number raises ``ValueError``.  ``AStrain`` (MHz, first nucleus)
+        alike.
+    gStrain:
+        g strain FWHM, one row per electron spin, ``(nElectrons, 3)``.  As
+        EasySpin, a row of 1 or 2 values is expanded to ``[x, x, x]`` /
+        ``[x, x, y]`` (``[x]`` and ``[x, y]`` for one electron spin), and
+        empty is no strain.  torchspin shorthands: a scalar and ``[x, y, z]``
+        for every electron.  Any other shape raises ``ValueError``.
+    DStrain:
+        D and E strain FWHM (MHz), one row ``[FWHM_D, FWHM_E]`` per electron
+        spin (1 to 3 columns); one row or a scalar applies to every electron.
+        Empty is no strain.
     H0Extra:
         Extra field-independent Hamiltonian terms, a list of ``(coeff, op)``
         pairs added to H0 as ``sum(coeff * op)`` (MHz) by :func:`torchspin.ham`
@@ -337,26 +394,42 @@ class SpinSystem:
                 elif self.g.shape[0] == 3:
                     # [gx, gy, gz] for one electron (replicated for all)
                     self.g = self.g.unsqueeze(0).expand(n_e, 3).clone()
-                elif self.g.shape[0] == 3 * n_e:
-                    # Full 3×3 matrices stacked as vector
-                    self.g = self.g  # keep as is
-            elif self.g.ndim == 2 and self.g.shape == (n_e, 1):
-                self.g = self.g.expand(n_e, 3).clone()
-            # Otherwise assume correct 2D shape
+                elif self.g.shape[0] == 2 and n_e == 1:
+                    # [g_perp, g_par]: a 1x2 row is EasySpin's (nElectrons, 2)
+                    # axial form for one electron (validatespinsys.m:141-143)
+                    self.g = self.g[[0, 0, 1]].unsqueeze(0)
+            elif self.g.ndim == 2 and self.g.numel() == n_e:
+                # (nElectrons, 1) or (1, nElectrons): one isotropic g per electron
+                # (numel(Sys.g) == nElectrons, validatespinsys.m:138-140)
+                self.g = self.g.reshape(n_e, 1).expand(n_e, 3).clone()
+            elif self.g.ndim == 2 and self.g.shape == (n_e, 2):
+                # axial [g_perp, g_par] per electron -> [g_perp g_perp g_par]
+                # (validatespinsys.m:141-143)
+                self.g = self.g[:, [0, 0, 1]]
+            # EasySpin accepts (3*nElectrons, 3), numel == nElectrons,
+            # (nElectrons, 2) and (nElectrons, 3); anything else is 'Sys.g has
+            # wrong size.' (validatespinsys.m:135-149)
+            if not (self.g.ndim == 2 and tuple(self.g.shape) in ((n_e, 3), (3 * n_e, 3))):
+                raise ValueError(
+                    f'g has wrong size {tuple(self.g.shape)} for {n_e} electron spin(s): expected a '
+                    f'scalar, one value per electron spin, [gx, gy, gz], (nElectrons, 1), '
+                    f'(nElectrons, 2) axial, (nElectrons, 3) or full tensors (3*nElectrons, 3).')
 
         # --- gFrame ---
-        if self.gFrame is None:
-            self.gFrame = torch.zeros(n_e, 3, dtype=torch.float64)
-        else:
-            self.gFrame = _to_tensor(self.gFrame, torch.float64)
-            if self.gFrame.ndim == 1:
-                self.gFrame = self.gFrame.unsqueeze(0)
+        self.gFrame = _euler_rows(self.gFrame, n_e, 'gFrame')
 
         # --- D_ = [D, E/D] per electron (EasySpin Sys.D_) → D = [D, E] ---
         if self.D_ is not None:
             if self.D is not None:
                 raise ValueError('Zero-field splitting given in both D and D_. Please remove one of them.')
-            D_ = _to_tensor(self.D_, torch.float64).reshape(-1, 2)
+            D_ = _to_tensor(self.D_, torch.float64)
+            if D_.numel() == 0 or D_.numel() % 2:
+                # EasySpin needs one [D, E/D] row per electron: 'Sys.D_ has
+                # wrong size.' (validatespinsys.m:220-230)
+                raise ValueError(
+                    f'D_ has wrong size {tuple(D_.shape)}: expected one [D, E/D] row per electron '
+                    f'spin ({n_e}, 2).')
+            D_ = D_.reshape(-1, 2)
             if D_.shape[0] != n_e:
                 raise ValueError('D_ has wrong size: expected one [D, E/D] row per electron.')
             self.D = torch.stack([D_[:, 0], D_[:, 0] * D_[:, 1]], dim=1)
@@ -386,17 +459,33 @@ class SpinSystem:
                             f'but the system has {n_e}. Give a scalar D (same D, E = 0 for every '
                             f'electron) or one row per electron spin.')
                     self.D = (self.D * torch.tensor([-1.0, -1.0, 2.0], dtype=torch.float64) / 3).unsqueeze(0).clone()
+                elif self.D.shape[0] in (2, 3) and n_e > 1:
+                    # B61: a flat [a, b] or [a, b, c] for several electron spins
+                    # is ambiguous.  EasySpin (validatespinsys.m:208-210) reads
+                    # numel(Sys.D) == nElectrons as one D per electron, while
+                    # torchspin up to 0.9.14 read it as one shared [D, E] /
+                    # [Dxx, Dyy, Dzz]; for nElectrons != numel it is EasySpin's
+                    # 'Sys.D has wrong size.'.  Neither reading is adopted: raise
+                    # and ask for one row per electron (deliberate deviation).
+                    k = self.D.shape[0]
+                    raise ValueError(
+                        f'D is ambiguous for {n_e} electron spins: a flat list of {k} values could be '
+                        f'one {"[D, E]" if k == 2 else "[Dxx, Dyy, Dzz]"} shared by every electron '
+                        f'(torchspin up to 0.9.14) or one D value per electron (EasySpin). Give one row '
+                        f'per electron spin, e.g. D=[[D1, E1], [D2, E2]], D=[[Dxx, Dyy, Dzz], ...], '
+                        f'D=[[D1], [D2]], or D_; a scalar D applies the same D (E = 0) to every '
+                        f'electron.')
                 elif self.D.shape[0] == 2:
-                    # EasySpin [D, E] shorthand: convert to [Dxx, Dyy, Dzz]
+                    # EasySpin [D, E] shorthand (one electron): convert to [Dxx, Dyy, Dzz]
                     D_val, E_val = self.D[0], self.D[1]
                     Dxx = -D_val / 3 + E_val
                     Dyy = -D_val / 3 - E_val
                     Dzz = 2 * D_val / 3
                     principal = torch.stack([Dxx, Dyy, Dzz])
-                    self.D = principal.unsqueeze(0).expand(n_e, 3).clone()
+                    self.D = principal.unsqueeze(0).clone()
                 elif self.D.shape[0] == 3:
                     # [Dxx, Dyy, Dzz] for one electron
-                    self.D = self.D.unsqueeze(0).expand(n_e, 3).clone()
+                    self.D = self.D.unsqueeze(0).clone()
             elif self.D.ndim == 2 and self.D.shape[1] == 2:
                 # (n_e, 2) EasySpin [D, E] per electron: convert each row
                 D_vals = self.D[:, 0]
@@ -413,12 +502,7 @@ class SpinSystem:
                     f'(nElectrons, 2) or (nElectrons, 3)) or full tensors (3*nElectrons, 3).')
 
         # --- DFrame ---
-        if self.DFrame is None:
-            self.DFrame = torch.zeros(n_e, 3, dtype=torch.float64)
-        else:
-            self.DFrame = _to_tensor(self.DFrame, torch.float64)
-            if self.DFrame.ndim == 1:
-                self.DFrame = self.DFrame.unsqueeze(0)
+        self.DFrame = _euler_rows(self.DFrame, n_e, 'DFrame')
 
         # --- B (Stevens ZFS coefficients) ---
         # B is a list indexed by rank offset: B[0] = k=2, B[1] = k=4, etc.
@@ -434,6 +518,23 @@ class SpinSystem:
             for i, BFk in enumerate(self.BFrame):
                 if BFk is not None:
                     self.BFrame[i] = _to_tensor(BFk, torch.float64)
+
+        # --- A, AFrame, Q, QFrame without nuclei ---
+        # EasySpin (validatespinsys.m:444-452) rejects these when Nucs is empty;
+        # torchspin ignored them.  QFrame defaults to a zero row even without
+        # nuclei (and is passed on by rebuilds), so for it only nonzero angles
+        # count as given.
+        if n_n == 0:
+            def _given(v, nonzero=False):
+                if v is None:
+                    return False
+                t = _to_tensor(v, torch.float64)
+                return t.numel() > 0 and (not nonzero or bool(torch.any(t != 0)))
+            if (_given(self.A) or _given(self.AFrame) or _given(self.Q)
+                    or _given(self.QFrame, nonzero=True)):
+                raise ValueError(
+                    'The system contains A and/or Q fields, but no nucleus is specified! '
+                    'Give the nuclei in Nucs.')
 
         # --- n (equivalent nuclei, EasySpin Sys.n) ---
         # Each entry of Nucs may stand for a group of n identical, equivalent
@@ -460,6 +561,10 @@ class SpinSystem:
             if self.A is not None:
                 raise ValueError('Hyperfine data given in both A and A_. Please remove one of them.')
             A_ = _to_tensor(self.A_, torch.float64)
+            if A_.ndim == 0:
+                # scalar aiso: EasySpin's [1 nNuclei] row for one nucleus
+                # (validatespinsys.m:540-543)
+                A_ = A_.reshape(1, 1)
             if A_.ndim == 1:
                 A_ = A_.reshape(n_n, -1) if (A_.numel() == n_n and n_n > 1) else A_.reshape(1, -1)
             if A_.shape[0] != n_n:
@@ -479,39 +584,33 @@ class SpinSystem:
         # --- A tensor ---
         if n_n > 0 and self.A is not None:
             self.A = _to_tensor(self.A, torch.float64)
-            # Normalize A: 
-            # scalar -> (n_n, 3*n_e)
-            # 1D vector handling: must check length == nNuclei BEFORE length == 3
-            # to match MATLAB's issize(Sys.A,[1 nNuclei]) precedence
-            if self.A.ndim == 0:
-                # Scalar A: isotropic for all nuclei
-                self.A = self.A.expand(n_n, 3 * n_e).clone()
-            elif self.A.ndim == 1:
-                if n_e == 1 and self.A.shape[0] == n_n:
-                    # [A1, A2, ..., An] for n nuclei, 1 electron
-                    # Expand isotropic values: [[A1,A1,A1], [A2,A2,A2], ...]
-                    # Matches MATLAB: Sys.A = Sys.A(:)*[1 1 1]
-                    self.A = self.A.unsqueeze(1).expand(n_n, 3).clone()
-                elif self.A.shape[0] == 3:
-                    # [Ax, Ay, Az] for one nucleus, one electron
-                    # Expand to all nuclei (principal values)
-                    self.A = self.A.unsqueeze(0).expand(n_n, 3).clone()
-            # Otherwise assume correct 2D shape (n_n, 3*n_e)
+            self.A = _normalize_A(self.A, n_n, n_e)
         elif n_n > 0 and self.A is None:
             # zero hyperfine by default
             self.A = torch.zeros(n_n, 3 * n_e, dtype=torch.float64)
 
         # --- AFrame ---
+        # EasySpin (validatespinsys.m:624-628): empty -> zeros, otherwise exactly
+        # (nNuclei, 3*nElectrons).  A 1-D vector is a MATLAB 1xk row, i.e. one
+        # nucleus; [alpha, beta, gamma] with one electron spin is applied to
+        # every nucleus (torchspin shorthand).
         if self.AFrame is None:
             self.AFrame = torch.zeros(n_n, 3 * n_e, dtype=torch.float64)
         elif n_n > 0:
             self.AFrame = _to_tensor(self.AFrame, torch.float64)
-            # Normalize AFrame: 1D [α, β, γ] for one nucleus -> (n_n, 3*n_e)
-            if self.AFrame.ndim == 1:
-                if self.AFrame.shape[0] == 3:
+            if self.AFrame.numel() == 0:
+                self.AFrame = torch.zeros(n_n, 3 * n_e, dtype=torch.float64)
+            elif self.AFrame.ndim == 1:
+                if self.AFrame.shape[0] == 3 and n_e == 1:
                     # Euler angles for one nucleus, one electron
                     self.AFrame = self.AFrame.unsqueeze(0).expand(n_n, 3).clone()
-            # Otherwise assume correct 2D shape
+                else:
+                    self.AFrame = self.AFrame.unsqueeze(0)
+            if tuple(self.AFrame.shape) != (n_n, 3 * n_e):
+                raise ValueError(
+                    f'Spin system field AFrame has wrong size {tuple(self.AFrame.shape)} for the given '
+                    f'spins: expected ({n_n}, {3 * n_e}) Euler angles (nNuclei, 3*nElectrons), or '
+                    f'[alpha, beta, gamma] for every nucleus with one electron spin.')
 
         # --- ee2 (biquadratic exchange, one value per electron pair) ---
         if n_pairs > 0:
@@ -539,10 +638,17 @@ class SpinSystem:
                     # Ambiguous n_pairs == 3 with 3 values: treat as
                     # principal values for every pair (legacy behavior)
                     self.ee = self.ee.unsqueeze(0).expand(n_pairs, 3).clone()
-                elif self.ee.shape[0] == 3 * n_pairs:
-                    # Full 3×3 matrices stacked as vector
-                    self.ee = self.ee  # keep as is
-            # Otherwise assume correct 2D shape
+            elif self.ee.ndim == 2 and self.ee.numel() == n_pairs:
+                # (nPairs, 1) or (1, nPairs): one isotropic coupling per pair
+                # (numel(Sys.ee) == nElPairs, validatespinsys.m:329-331)
+                self.ee = self.ee.reshape(n_pairs, 1).expand(n_pairs, 3).clone()
+            # EasySpin then requires (3*nPairs, 3) full or (nPairs, 3) principal
+            # values (validatespinsys.m:333-338)
+            if not (self.ee.ndim == 2 and tuple(self.ee.shape) in ((n_pairs, 3), (3 * n_pairs, 3))):
+                raise ValueError(
+                    f'Spin system field ee has wrong size {tuple(self.ee.shape)} for {n_pairs} electron '
+                    f'pair(s): expected a scalar, one value per pair, [Jx, Jy, Jz], (nPairs, 3) '
+                    f'principal values or (3*nPairs, 3) full tensors.')
         elif n_pairs > 0 and self.ee is None:
             self.ee = torch.zeros(n_pairs, 3, dtype=torch.float64)
 
@@ -554,7 +660,11 @@ class SpinSystem:
             # Normalize eeFrame: 1D [α, β, γ] for one pair -> (n_pairs, 3)
             if self.eeFrame.ndim == 1 and self.eeFrame.shape[0] == 3:
                 self.eeFrame = self.eeFrame.unsqueeze(0).expand(n_pairs, 3).clone()
-            # Otherwise assume correct 2D shape
+            # EasySpin: exactly (nPairs, 3) (validatespinsys.m:414-416)
+            if n_pairs > 0 and tuple(self.eeFrame.shape) != (n_pairs, 3):
+                raise ValueError(
+                    f'Spin system field eeFrame has wrong size {tuple(self.eeFrame.shape)} for the given '
+                    f'spins: expected ({n_pairs}, 3) Euler angles, one row per electron pair.')
 
         # --- gnscale ---
         if self.gnscale is None:
@@ -625,6 +735,14 @@ class SpinSystem:
                         rows.append(e2qQh / (4 * I_q * (2 * I_q - 1))
                                     * torch.stack([-1 + eta, -1 - eta, 2 * torch.ones_like(eta)]))
                 Q = torch.stack(rows)
+            # After the shorthand conversion EasySpin requires (nNuclei, 3)
+            # principal values or (3*nNuclei, 3) full tensors (validatespinsys.m:
+            # 645-667, 'Spin system field Q has wrong size for the given spins.')
+            if n_n > 0 and not (Q.ndim == 2 and tuple(Q.shape) in ((n_n, 3), (3 * n_n, 3))):
+                raise ValueError(
+                    f'Spin system field Q has wrong size {tuple(self.Q.shape)} for {n_n} nucleus/nuclei: '
+                    f'expected one e2qQ/h per nucleus, [e2qQ/h, eta] per nucleus (nNuclei, 2), '
+                    f'principal values (nNuclei, 3) or full tensors (3*nNuclei, 3).')
             self.Q = Q
 
         # --- QFrame ---
@@ -632,6 +750,11 @@ class SpinSystem:
             self.QFrame = torch.zeros(max(n_n, 1), 3, dtype=torch.float64)
         else:
             self.QFrame = _per_nucleus_rows(_to_tensor(self.QFrame, torch.float64), max(n_n, 1), False)
+            # EasySpin: exactly (nNuclei, 3) (validatespinsys.m:686-690)
+            if n_n > 0 and tuple(self.QFrame.shape) != (n_n, 3):
+                raise ValueError(
+                    f'Spin system field QFrame has wrong size {tuple(self.QFrame.shape)} for the given '
+                    f'spins: expected ({n_n}, 3) Euler angles, one row per nucleus.')
 
         # --- nn tensor (nuclear-nuclear coupling) ---
         from itertools import combinations as _comb
@@ -665,16 +788,9 @@ class SpinSystem:
         
         # Normalize to [Gaussian, Lorentzian] format
         if self.lwpp is not None:
-            if isinstance(self.lwpp, (int, float)):
-                self.lwpp = [float(self.lwpp), 0.0]
-            elif len(self.lwpp) == 1:
-                self.lwpp = [float(self.lwpp[0]), 0.0]
-        
+            self.lwpp = _normalize_lw(self.lwpp, 'lwpp')
         if self.lw is not None:
-            if isinstance(self.lw, (int, float)):
-                self.lw = [float(self.lw), 0.0]
-            elif len(self.lw) == 1:
-                self.lw = [float(self.lw[0]), 0.0]
+            self.lw = _normalize_lw(self.lw, 'lw')
         
         # Set default if neither specified
         if self.lw is None and self.lwpp is None:
@@ -683,11 +799,7 @@ class SpinSystem:
         # --- Strain parameters ---
         # HStrain: [3] MHz in molecular frame
         if self.HStrain is not None:
-            self.HStrain = _to_tensor(self.HStrain, torch.float64)
-            if self.HStrain.ndim == 0:
-                self.HStrain = self.HStrain.expand(3).clone()
-            elif self.HStrain.shape[0] != 3:
-                raise ValueError("HStrain must have shape [3].")
+            self.HStrain = _three_widths(self.HStrain, 'HStrain')
         if self.HStrainL is not None:
             self.HStrainL = _to_tensor(self.HStrainL, torch.float64)
             if self.HStrainL.ndim == 0:
@@ -698,30 +810,48 @@ class SpinSystem:
                 raise ValueError("HStrainL values must be non-negative.")
 
         # gStrain: [nElectrons, 3] unitless
+        # EasySpin (validatespinsys.m:810-827): empty -> no strain; one row per
+        # electron spin with 1, 2 or 3 columns, [x] -> [x x x], [x y] -> [x x y].
+        # A 1-D vector is a MATLAB 1xk row (one electron spin).  torchspin
+        # shorthands kept: a scalar or [x, y, z] for every electron spin.
         if self.gStrain is not None:
             self.gStrain = _to_tensor(self.gStrain, torch.float64)
-            if self.gStrain.ndim == 0:
+            if self.gStrain.numel() == 0:
+                self.gStrain = None
+            elif self.gStrain.ndim == 0:
                 # Scalar: isotropic for all electrons
                 self.gStrain = self.gStrain.expand(n_e, 3).clone()
-            elif self.gStrain.ndim == 1:
-                if self.gStrain.shape[0] == 3:
-                    # [3] -> expand to all electrons
-                    self.gStrain = self.gStrain.unsqueeze(0).expand(n_e, 3).clone()
-                else:
-                    raise ValueError("gStrain must have shape [3] or [nElectrons, 3].")
+            elif self.gStrain.ndim == 1 and self.gStrain.shape[0] == 3:
+                # [3] -> expand to all electrons
+                self.gStrain = self.gStrain.unsqueeze(0).expand(n_e, 3).clone()
+            else:
+                if self.gStrain.ndim == 1:
+                    self.gStrain = self.gStrain.unsqueeze(0)
+                if self.gStrain.ndim != 2 or self.gStrain.shape[0] != n_e:
+                    raise ValueError(
+                        f'gStrain must have {n_e} rows, one per electron spin (got shape '
+                        f'{tuple(self.gStrain.shape)}).')
+                cols = self.gStrain.shape[1]
+                if cols == 1:
+                    self.gStrain = self.gStrain[:, [0, 0, 0]]
+                elif cols == 2:
+                    self.gStrain = self.gStrain[:, [0, 0, 1]]
+                elif cols != 3:
+                    raise ValueError(
+                        f'gStrain must have 1, 2, or 3 columns (got shape {tuple(self.gStrain.shape)}).')
 
         # AStrain: [3] MHz (first nucleus only)
         if self.AStrain is not None:
-            self.AStrain = _to_tensor(self.AStrain, torch.float64)
-            if self.AStrain.ndim == 0:
-                self.AStrain = self.AStrain.expand(3).clone()
-            elif self.AStrain.shape[0] != 3:
-                raise ValueError("AStrain must have shape [3].")
+            self.AStrain = _three_widths(self.AStrain, 'AStrain')
 
         # DStrain: normalized to (nElectrons, 2) = [FWHM_D, FWHM_E] per electron
         # (EasySpin Sys.DStrain: one row per electron spin, 1-3 columns).
         if self.DStrain is not None:
             self.DStrain = _to_tensor(self.DStrain, torch.float64)
+            if self.DStrain.numel() == 0:
+                # empty: no D strain, as EasySpin (validatespinsys.m:837-839)
+                self.DStrain = None
+        if self.DStrain is not None:
             if self.DStrain.ndim == 0:
                 self.DStrain = self.DStrain.reshape(1, 1)
             elif self.DStrain.ndim == 1:
@@ -1790,6 +1920,131 @@ def _reject_ham(sys, where: str, alternative: str) -> None:
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
+def _normalize_A(A: torch.Tensor, n_n: int, n_e: int) -> torch.Tensor:
+    """Normalize a hyperfine array to ``(nNuclei, 3*nElectrons)`` principal
+    values or ``(3*nNuclei, 3*nElectrons)`` full tensors.
+
+    Follows EasySpin's validatespinsys.m:591-617 in its order, reading a 1-D
+    vector as a MATLAB 1xk row: full tensors; ``[1, nNuclei]`` one isotropic
+    value per nucleus (one electron spin only); ``[nNuclei, nElectrons]``
+    isotropic per electron; ``[nNuclei, 2*nElectrons]`` axial
+    ``[A_perp, A_par]`` per electron; ``[nNuclei, 3*nElectrons]`` principal
+    values.  torchspin shorthands kept: a scalar (isotropic, every nucleus and
+    electron) and, for one electron spin, ``[Ax, Ay, Az]`` for every nucleus.
+    Any other shape raises ``ValueError`` (EasySpin: 'Size of Sys.A ... is
+    inconsistent with number of nuclei and electrons').
+    """
+    if A.ndim == 0:
+        # torchspin shorthand: isotropic for all nuclei and electrons
+        return A.expand(n_n, 3 * n_e).clone()
+    if A.ndim == 1:
+        if n_e == 1 and A.shape[0] == 3 and n_n not in (1, 3):
+            # torchspin shorthand: [Ax, Ay, Az] for every nucleus
+            return A.unsqueeze(0).expand(n_n, 3).clone()
+        A = A.unsqueeze(0).clone()  # MATLAB 1xk row
+    if A.ndim == 2:
+        r, c = A.shape
+        if (r, c) in ((3 * n_n, 3 * n_e), (n_n, 3 * n_e)):
+            return A                # full tensors (591-593) / principal values (612-613)
+        if (r, c) == (1, n_n):
+            # one isotropic value per nucleus, one electron spin only (594-601)
+            if n_e == 1:
+                return A.reshape(n_n, 1).expand(n_n, 3).clone()
+            raise ValueError(
+                f'Size of A {tuple(A.shape)} is inconsistent with number of electrons: one value '
+                f'per nucleus is only for one electron spin, the system has {n_e}. Give '
+                f'({n_n}, {n_e}) isotropic values, one per nucleus and electron.')
+        if (r, c) == (n_n, n_e):
+            # isotropic per nucleus and electron: kron(A, [1 1 1]) (602-604)
+            return A.repeat_interleave(3, dim=1)
+        if (r, c) == (n_n, 2 * n_e):
+            # axial [A_perp, A_par] per electron -> [A_perp A_perp A_par] (605-611)
+            idx = [2 * k + i for k in range(n_e) for i in (0, 0, 1)]
+            return A[:, idx]
+    raise ValueError(
+        f'Size of A {tuple(A.shape)} is inconsistent with number of nuclei ({n_n}) and electrons '
+        f'({n_e}): expected a scalar, one value per nucleus (one electron spin), or '
+        f'(nNuclei, nElectrons) isotropic, (nNuclei, 2*nElectrons) axial, (nNuclei, 3*nElectrons) '
+        f'principal values or (3*nNuclei, 3*nElectrons) full tensors.')
+
+
+def _normalize_lw(v, name: str):
+    """Normalize a line width ``lw`` / ``lwpp`` to ``[Gaussian, Lorentzian]``.
+
+    As EasySpin's validatespinsys.m (774-777, 790-793): a scalar is
+    ``[x, 0]``, otherwise the value must be a 1x2 row ``[G, L]`` (a nested
+    ``[[G, L]]`` is the same row).  A length-2 list, tuple, array or tensor is
+    kept as given (tensors keep their autograd graph).  Any other size raises
+    ``ValueError`` ('System.lw has wrong size.').
+    """
+    if isinstance(v, (int, float)):
+        return [float(v), 0.0]
+    if isinstance(v, (torch.Tensor, np.ndarray)):
+        shape = tuple(v.shape)
+    else:
+        try:
+            shape = np.shape(v)
+        except Exception:
+            shape = (len(v),)
+    if len(shape) == 2 and shape[0] == 1:
+        v = v[0]          # 1xk row
+        shape = shape[1:]
+    if len(shape) == 0:
+        return [float(v), 0.0]
+    if len(shape) != 1 or shape[0] not in (1, 2):
+        raise ValueError(
+            f'{name} has wrong size {tuple(shape)}: expected a scalar or [GaussianFWHM, LorentzianFWHM].')
+    if shape[0] == 1:
+        return [float(v[0]), 0.0]
+    return v
+
+
+def _three_widths(x, name: str) -> Optional[torch.Tensor]:
+    """Normalize ``HStrain`` / ``AStrain`` to three widths ``[x, y, z]``.
+
+    As EasySpin's validatespinsys.m (877-899), which counts elements and
+    ignores the array's shape: empty is no strain (``None``), one value is
+    ``[x x x]``, two are ``[x x y]``, three are kept, any other number raises
+    ``ValueError`` ('Sys.HStrain must have 3 elements!').
+    """
+    t = _to_tensor(x, torch.float64)
+    if t.numel() == 0:
+        return None
+    if t.ndim != 1:
+        t = t.reshape(-1)
+    if t.numel() == 1:
+        return t[[0, 0, 0]]
+    if t.numel() == 2:
+        return t[[0, 0, 1]]
+    if t.numel() == 3:
+        return t
+    raise ValueError(
+        f'{name} must have 3 elements (or 1, [x] -> [x x x], or 2, [x y] -> [x x y]); got {t.numel()}.')
+
+
+def _euler_rows(x, n_rows: int, name: str) -> torch.Tensor:
+    """Normalize Euler angles of ``n_rows`` tensors (gFrame, DFrame) to ``(n_rows, 3)``.
+
+    As EasySpin's validatespinsys.m (189-193 for gFrame, 240-244 for DFrame):
+    ``None`` or an empty array is all zeros, and anything else must have
+    exactly ``(n_rows, 3)`` angles.  A 1-D ``[a, b, c]`` is the 1x3 row of a
+    MATLAB vector, so it is one electron spin's angles.  Any other shape
+    raises ``ValueError`` ('Spin system field ... has wrong size').
+    """
+    if x is None:
+        return torch.zeros(n_rows, 3, dtype=torch.float64)
+    t = _to_tensor(x, torch.float64)
+    if t.numel() == 0:
+        return torch.zeros(n_rows, 3, dtype=torch.float64)
+    if t.ndim == 1:
+        t = t.unsqueeze(0)
+    if tuple(t.shape) != (n_rows, 3):
+        raise ValueError(
+            f'Spin system field {name} has wrong size {tuple(t.shape)} for the given spins: '
+            f'expected ({n_rows}, 3) Euler angles, one row [alpha, beta, gamma] per tensor.')
+    return t
+
 
 def _to_tensor(x, dtype: torch.dtype) -> torch.Tensor:
     """Convert *x* to a ``torch.Tensor`` with the given dtype.

@@ -146,6 +146,32 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## `SpinSystem` input shapes follow EasySpin (0.9.15)
+
+The constructor accepts the short forms EasySpin's `validatespinsys.m` expands and expands
+them the same way, and raises `ValueError` for the shapes EasySpin rejects (up to 0.9.14 many
+of these failed later in `pepper` with an `IndexError`, or were silently ignored). A 1-D
+list is read as a MATLAB row vector. Deliberate differences from EasySpin:
+
+- **torchspin shorthands are kept**, although EasySpin rejects them: a scalar `g`, `A`
+  (every nucleus and electron), `gStrain`, `DStrain` or `ee`; `[x, y, z]` for every electron
+  (`g`, `gStrain`), every nucleus (`A`, `AFrame` with one electron spin) or every pair (`ee`,
+  `eeFrame`); one `DStrain` row for every electron; `D_`, `Q` as flat lists of
+  `nNuclei`/`nElectrons` pairs or triples.
+- **Flat `D` for several electron spins raises** (B61, 0.9.15). A 1-D `D` of 2 or 3 values
+  with two or more electron spins could be one shared `[D, E]` / principal-value set
+  (torchspin up to 0.9.14) or one D per electron (EasySpin, `numel(Sys.D) == nElectrons`).
+  torchspin adopts neither and raises `ValueError`; give one row per electron spin
+  (`[[D1, E1], [D2, E2]]`, `[[Dxx, Dyy, Dzz], ...]`, `[[D1], [D2]]`) or `D_`. EasySpin input
+  `Sys.D = [D1 D2]` for two electrons must therefore be written `D=[[D1], [D2]]`. A scalar
+  `D` and a flat list of one D per electron for four or more electron spins are accepted.
+- **Flat `ee` for three electron spins.** A 1-D `ee` of three values for three electron
+  spins is read as principal values for every pair (EasySpin: one isotropic value per pair);
+  give `[[J12], [J13], [J23]]` for the latter.
+- **Missing `A` with `Nucs`** gives zero hyperfine (EasySpin raises).
+- **Not checked:** `sigma`, `sigmaFrame`, `nn`, `nnFrame` (wrong shapes still fail late) and
+  negative widths (`lw`, strains), which EasySpin rejects.
+
 ## `SpinSystem` field assignment normalizes (0.8.7)
 
 Since 0.8.7 `sys.<field> = value` rebuilds the spin system with the new value, so the
@@ -497,6 +523,8 @@ make pepper sum stick spectra over the given field directions with χ-averaged r
 - **pepper_autograd**: field sweeps only (no frequency sweeps, photoselection,
   `initState`, `mwPhase`, hybrid, `Opt.separate`, as for its powder path). Gradients
   w.r.t. the orientation angles flow through the resonance search but are not tested.
+  `Options.QuadraticZeeman` and `Options.Transitions` apply as in pepper (before 0.9.16
+  this path ignored both; B64).
 ## Simulator — transition selection, `Options.Transitions` (0.7.5)
 
 `Options.Transitions` (EasySpin `Opt.Transitions`) replaces pepper's automatic
@@ -525,8 +553,9 @@ state label such as mS.
 - **Frequency sweeps.** `'all'` takes every pair of the full (electron × nuclear) level
   space. EasySpin's `resfreqs_matrix` builds `'all'` from the electron levels only and
   keeps its post-selection threshold; the two agree for systems without nuclei.
-- Only `pepper` and `pepper_autograd` read the field; `garlic`, `salt` and the other
-  simulators ignore it. (`SaffronOptions.Transitions` is a separate, unrelated field.)
+- `pepper`, `pepper_autograd`, and since 0.9.14 `endorfrq` and `salt` (ENDOR level pairs, see
+  § ENDOR — transition selection) read the field; `garlic` and the other simulators ignore
+  it. (`SaffronOptions.Transitions` is a separate, unrelated field.)
 - EasySpin agreement (9 cases: S=3/2 central/outer/all transitions in a powder, with
   HStrain and in a crystal; the S=1 half-field line; a frequency sweep): cosine ≥ 0.99997,
   amplitude within 0.05 %. (Before 0.8.5 the frequency sweep was 1–3 % low, at 0.984;
@@ -726,7 +755,8 @@ terms are included as H(B) = H0 − B n·μ + B² n·G2·n + B³ G3[n,n,n], whic
 `ham(Sys, B·n)`.
 
 - **Supported:** `pepper` and `pepper_autograd` with `Method='matrix'` (powder
-  grids including O3, crystals, field and frequency sweeps, strains), `levels`,
+  grids including O3, crystals, `Exp.Orientations` (pepper_autograd from 0.9.16),
+  field and frequency sweeps, strains), `levels`,
   `resfreqs_matrix`, and `resfields_batch`/`resfreqs_batch` (keyword
   `zeeman_ho=`).
 - **Raise `NotImplementedError`** when the option is on and a nonzero lB ≥ 2 term
@@ -1076,14 +1106,11 @@ in a different order and a full 3×3 Q was misread (B20, B27; see CHANGELOG).
 `endorfrq` and of `salt`'s matrix paths the total moment (electron + nuclear,
 `ham()`'s `mux/muy/muz`) perpendicular to the field, chi-averaged over lab x and y.
 Agreement with EasySpin `endorfrq`/`salt` (`Opt.Enhancement='on'`) is 1e-13 of the
-strongest line per level pair (endorfrq) and cosine > 0.99995 (salt).
+strongest line per level pair (endorfrq) and, since 0.9.14, a residual of at most 5e-12 of
+the maximum for the fixed-field salt references (4.6e-3 for 14N+1H before).
 
 - **Selection.** As in EasySpin, `threshold` / `Opt.Threshold` selects on the nuclear-only
-  rates and electronic level pairs are excluded. "Electronic" is decided by EasySpin's
-  rule: energy-sorted levels grouped into blocks of prod(2I+1) and only pairs in the same
-  block kept. This is right when the electron Zeeman (or zero-field) splitting exceeds
-  all nuclear splittings. Near level crossings or at very low field the block assignment,
-  and with it the line list, can be wrong.
+  rates whether `Enhancement` is on or off; see § ENDOR — transition selection.
 - **Moment operator.** torchspin uses `ham()`'s moments. These also contain orbital
   Zeeman (`Sys.L`) and linear higher-order Zeeman (`Sys.Ham1xx`) terms. EasySpin uses
   `ham_ez + ham_nz` only. The two agree for ordinary spin systems. There is no
@@ -1099,6 +1126,47 @@ strongest line per level pair (endorfrq) and cosine > 0.99995 (salt).
   ratio is now EasySpin's to 1.1 %; the rest is first-order theory against diagonalization
   (EasySpin's `'off'` uses the matrix path). Systems with Q, or more than one electron, are on the
   matrix path either way, and their on/off ratio matches EasySpin to 1e-3.
+
+## ENDOR — transition selection (0.9.14)
+
+`endorfrq` and every `salt` matrix path (fixed field, zero field, field sweep) select the
+level pairs with EasySpin endorfrq's rule (endorfrq.m:258-341), in one place
+(`torchspin.endorfrq._endor_tps_select`): on the coarse grid
+`sphgrid(Options.TPSGridSymm, Options.TPSGridSize)` (defaults `'D2h'`, 4, EasySpin's
+undocumented `Opt.TPSGridSymm`/`TPSGridSize`), the nuclear-moment rates are summed with the
+grid weights; pairs whose frequency is outside the rf range at every grid point are dropped;
+electronic pairs are removed; a pair is kept if its rate is `> Threshold * max`. The selection
+does not depend on `GridSize` or on the orientation, and runs without autograd (positions and
+intensities keep their gradients). EasySpin's level pairs (`Transitions`, `info.Transitions`)
+are reproduced exactly for 1H, 14N+1H and 63Cu+14N (tests/data/endor_tps_selection_refs.mat).
+Before 0.9.14, `salt` kept a pair if it was strong at any orientation of the simulation grid,
+`endorfrq` thresholded per orientation, electronic pairs were kept without `Enhancement`, and
+the field-swept path thresholded each (orientation, field) entry against the maximum of its
+memory batch.
+
+- **Electronic pairs.** "Electronic" is EasySpin's rule: levels sorted by energy, grouped into
+  blocks of nStates / prod(2S+1), pairs across blocks removed (always, as EasySpin). This is
+  right when the electron Zeeman (or zero-field) splitting exceeds all nuclear splittings. Near
+  level crossings or at very low field the block assignment, and with it the line list, can be
+  wrong, as in EasySpin; `Options.Transitions='all'` keeps every pair.
+- **`Options.Transitions`** (EasySpin `Opt.Transitions`, passed by salt to endorfrq): `'all'`
+  or 1-based level pairs replace the selection, with no threshold. In `salt` it forces the
+  matrix path; with `Options.ZeroField` it raises `NotImplementedError`.
+- **`endorfrq` range.** `freq_range` acts on the selection only, as EasySpin's `Exp.Range`: the
+  selected pairs are returned at the requested orientation even if their frequency there is
+  outside the range. Rows are ordered by frequency (EasySpin: by selection rate).
+- **Zero field** (`Options.ZeroField`, torchspin only): the rule acts on pairs of degenerate
+  level clusters, without the electronic-pair removal (at B = 0 the levels are not grouped by
+  electron spin projection).
+- **Field sweeps** (torchspin only; EasySpin's salt has no field-swept mode): the pairs are
+  selected at 5 fields spanning the resonance fields of the sweep and a pair is kept if it is
+  selected at any of them. With `Threshold = 0.01` and 0-40 MHz, 2.57 % of the integral is
+  dropped, close to the fixed-field 2.56 % (EasySpin's rule); before 0.9.14, 0.60 %, depending
+  on the batch size.
+- **Not explained:** for 63Cu (A = [60 60 600], Q = [-5 -5 10] MHz) at 320 mT on a 0-19400 MHz
+  axis (4001 points, lwEndor 30 MHz) salt differs from EasySpin by up to 1e-2 of the maximum
+  below ~600 MHz with identical level pairs (also before 0.9.14); the 14N+1H references agree to
+  1e-12.
 
 ## Garlic — what is and is not ported
 
@@ -1476,7 +1544,13 @@ derivative), against 0.9998–1.0000 / 0.999 for `pepper`; the ripple only falls
 below 1 % of the signal around GridSize 91. Do not train models on their output.
 
 Strains are differentiable (HStrain, gStrain, AStrain; DStrain magnitudes
-are constants). Not yet differentiable (`pepper_autograd` raises
+are constants). Euler frame angles of the spin system (`gFrame`, `AFrame`,
+`DFrame`, `QFrame`, `eeFrame`, `nnFrame`, `sigmaFrame`, `BFrame`) are
+differentiable since 0.9.17 (before, they were detached silently); the
+automatic grid symmetry, which a frame can change, is chosen on the detached
+values, so a finite-difference check at a symmetric point must fix
+`GridSymmetry`. The crystal frames `Exp.SampleFrame` and `Exp.MolFrame` are
+not differentiable (crystals raise, below). Not yet differentiable (`pepper_autograd` raises
 `NotImplementedError`, `pepper()` itself is unchanged): `Exp.mwPhase`,
 partial ordering, photoselection, crystals, frequency sweeps, `Sys.initState`.
 `salt` (fixed-field mode) and `garlic` (all modes) are
