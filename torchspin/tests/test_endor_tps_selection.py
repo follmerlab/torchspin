@@ -138,7 +138,10 @@ def test_endorfrq_user_transitions_skip_selection():
                           opt=Options(Transitions=[(4, 3)]))
     assert t1.tolist() == [[3, 4]]
     k = [tuple(x) for x in t.tolist()].index((3, 4))
-    assert float(f1[0]) == float(f[k]) and float(I1[0]) == float(I[k])
+    assert float(f1[0]) == float(f[k])
+    # roundoff bound: the transition moments come from op @ V[:, pairs] with 6 vs 1
+    # columns, two BLAS summation orders (1 ulp apart on Linux/Windows CI, equal on macOS)
+    assert abs(float(I1[0]) - float(I[k])) <= 1e-14 * abs(float(I[k]))
 
 
 # ---------------------------------------------------------------------------
