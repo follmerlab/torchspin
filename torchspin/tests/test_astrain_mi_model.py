@@ -273,14 +273,14 @@ def test_zero_width_facets_finite_value_and_gradient():
 
     def loss(a_strain, g):
         s = SpinSystem(S=0.5, g=g, Nucs='14N', A=[0.0, 0.0, 0.0], lw=0.3, AStrain=a_strain)
-        return pepper_autograd(s, exp)[1]
+        return pepper_autograd(s, exp, Options(GridSymmetry='D2h'))[1]
 
     a = torch.tensor([10.0, 10.0, 10.0], dtype=F64, requires_grad=True)
     g = torch.tensor([2.0, 2.0, 2.1], dtype=F64, requires_grad=True)
     y = loss(a, g)
     assert torch.all(torch.isfinite(y))
     _, y_np = pepper(SpinSystem(S=0.5, g=[2.0, 2.0, 2.1], Nucs='14N', A=[0.0, 0.0, 0.0], lw=0.3,
-                                AStrain=[10.0, 10.0, 10.0]), exp)
+                                AStrain=[10.0, 10.0, 10.0]), exp, Options(GridSymmetry='D2h'))
     np.testing.assert_allclose(y.detach().numpy(), np.asarray(y_np, float), rtol=1e-9,
                                atol=1e-9 * float(np.abs(np.asarray(y_np)).max()))
     (y * wts).sum().backward()
