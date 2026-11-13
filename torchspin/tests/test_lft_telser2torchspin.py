@@ -469,7 +469,7 @@ def test_ddzhq_nmr_lines_match_endorfrq(name, C):
         fr, it, tr = endorfrq(cv.sys, c["field_mT"], phi=c["phi"], theta=c["theta"], threshold=0.0)
         P = spin.nmr_probabilities(ops, spin.Eigensystem(cy.energies, cy.vectors), c["direction"].numpy())
         e = cy.energies / C.mhz_to_cm
-        for f, i_t, (a, b) in zip(fr.numpy(), it.numpy(), tr.numpy()):
+        for f, i_t, (a, b) in zip(fr.numpy(), it.numpy(), tr.numpy() - 1):     # endorfrq pairs are 1-based
             assert e[b] - e[a] == pytest.approx(f, abs=1e-8 * max(1.0, np.abs(e).max()))
             if i_t > 1e-6 * it.numpy().max():
                 assert gn_mu ** 2 * P[a, b] == pytest.approx(i_t, rel=1e-8)

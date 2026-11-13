@@ -73,8 +73,10 @@ def resfreqs_perturb(
     if opt is None:
         opt = Options()
 
-    from torchspin.spinsystem import _reject_h0extra
+    from torchspin.spinsystem import _reject_h0extra, _reject_ham
     _reject_h0extra(sys, 'resfreqs_perturb (perturbation theory)')
+    _reject_ham(sys, 'resfreqs_perturb (perturbation theory)',
+                'resfreqs_matrix (matrix diagonalization)')
     if sys.nElectrons != 1:
         raise ValueError(
             f"resfreqs_perturb: nElectrons must be 1, got {sys.nElectrons}."
