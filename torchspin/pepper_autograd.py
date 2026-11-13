@@ -575,10 +575,33 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
     H0, mux, muy, muz = ham(sys)
     H0, mux, muy, muz = H0.to(device), mux.to(device), muy.to(device), muz.to(device)
 
+    # Options.QuadraticZeeman: lB = 2, 3 Sys.Ham terms in the matrix search (the
+    # implicit-function gradient at the Newton step then uses the full slope).
+    # Both this and Opt.Transitions apply to the powder and the Exp.Orientations
+    # paths, as in pepper's _resonances.
+    zho = None
+    if bool(getattr(opt, 'QuadraticZeeman', False)):
+        from torchspin.ham_ezho import field_nonlinear_zeeman_ops, has_field_nonlinear_zeeman
+        if has_field_nonlinear_zeeman(sys):
+            if str(opt.Method).startswith('perturb'):
+                raise NotImplementedError(
+                    f"pepper_autograd: Options.Method='{opt.Method}' does not support "
+                    f"Options.QuadraticZeeman=True with field-quadratic/cubic Sys.Ham terms; "
+                    f"use Method='matrix'.")
+            zho = tuple(None if g is None else g.to(device) for g in field_nonlinear_zeeman_ops(sys))
+    # Opt.Transitions (as in pepper): user level pairs replace the pre-selection;
+    # 'all' also switches the intensity post-selection off
+    user_tr = getattr(opt, 'Transitions', None)
+    if user_tr is not None and str(opt.Method).startswith('perturb'):
+        raise ValueError("Options.Transitions cannot be used with perturbation theory "
+                         f"(Options.Method='{opt.Method}'); use Method='matrix'.")
+    user_pairs, trans_all = _pep._user_transitions(user_tr, H0.shape[0]) if user_tr is not None else (None, False)
+
     user_ori = _pep._user_orientations(exp)
     if user_ori is not None:
         return _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori,
-                                    strain_lorentz=strain_lorentz)
+                                    strain_lorentz=strain_lorentz, zeeman_ho=zho,
+                                    pairs=user_pairs, trans_all=trans_all)
 
     # Grid symmetry and knots (discrete; detached)
     grid_sym = opt.GridSymmetry
@@ -608,25 +631,6 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
     use_perturb = (str(opt.Method).startswith('perturb') and sys.nElectrons == 1
                    and not strain_present and not needs_exact_boltz)
     all_B, all_I, all_P, all_Wl = [None] * n_orient, [None] * n_orient, [None] * n_orient, [None] * n_orient
-    # Options.QuadraticZeeman: lB = 2, 3 Sys.Ham terms in the matrix search (the
-    # implicit-function gradient at the Newton step then uses the full slope).
-    zho = None
-    if bool(getattr(opt, 'QuadraticZeeman', False)):
-        from torchspin.ham_ezho import field_nonlinear_zeeman_ops, has_field_nonlinear_zeeman
-        if has_field_nonlinear_zeeman(sys):
-            if str(opt.Method).startswith('perturb'):
-                raise NotImplementedError(
-                    f"pepper_autograd: Options.Method='{opt.Method}' does not support "
-                    f"Options.QuadraticZeeman=True with field-quadratic/cubic Sys.Ham terms; "
-                    f"use Method='matrix'.")
-            zho = tuple(None if g is None else g.to(device) for g in field_nonlinear_zeeman_ops(sys))
-    # Opt.Transitions (as in pepper): user level pairs replace the pre-selection;
-    # 'all' also switches the intensity post-selection off
-    user_tr = getattr(opt, 'Transitions', None)
-    if user_tr is not None and str(opt.Method).startswith('perturb'):
-        raise ValueError("Options.Transitions cannot be used with perturbation theory "
-                         f"(Options.Method='{opt.Method}'); use Method='matrix'.")
-    user_pairs, trans_all = _pep._user_transitions(user_tr, H0.shape[0]) if user_tr is not None else (None, False)
     post_thr = 0.0 if trans_all else float(opt.Threshold)
     if use_perturb:
         from torchspin.resfields_perturb import resfields_perturb_batch
@@ -781,13 +785,16 @@ def _lorentzian_bins_t(x: torch.Tensor, pos: torch.Tensor, fwhm: torch.Tensor, a
     return out
 
 
-def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, strain_lorentz=False):
+def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, strain_lorentz=False,
+                         zeeman_ho=None, pairs=None, trans_all=False):
     """``Exp.Orientations`` on the graph: the stick sum of
     ``pepper._pepper_single``'s orientation branch — χ-averaged resonances at the
     given molecular-frame field directions, amplitude I·4π·w, per-line templates
     (strain width or Sys.lw(1) Gaussian, else Sys.lw(2) Lorentzian), the rest of
-    Sys.lw convolved, harmonic as in pepper.  Differentiable in the spin-system
-    tensors, Sys.lw and the orientation weights."""
+    Sys.lw convolved, harmonic as in pepper.  ``zeeman_ho`` (Options.QuadraticZeeman)
+    and ``pairs`` (Opt.Transitions; ``trans_all``: 'all', Threshold 0) go to the
+    resonance search as in pepper.  Differentiable in the spin-system tensors,
+    Sys.lw and the orientation weights."""
     device = H0.device
     nPoints = x.shape[0]
     phi, theta, w = user_ori
@@ -813,10 +820,12 @@ def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, stra
             Bs.append(B_list[k][keep]); Is.append(I_list[k][keep])
             ks.append(torch.full((int(keep.sum()),), k, dtype=torch.long, device=device))
     else:
+        opt_rf = _dc_replace(opt, Threshold=0.0) if trans_all and opt.Threshold != 0 else opt
         batch = auto_batch_size(opt.BatchSize, H0.shape[0], n_orient)
         for s0 in range(0, n_orient, batch):
             e0 = min(s0 + batch, n_orient)
-            B_list, I_list, W_list = resfields_batch(H0, mux, muy, muz, phi[s0:e0], theta[s0:e0], exp, opt, sys=sys)
+            B_list, I_list, W_list = resfields_batch(H0, mux, muy, muz, phi[s0:e0], theta[s0:e0], exp, opt_rf, sys=sys,
+                                                     pairs=pairs, zeeman_ho=zeeman_ho)
             for j in range(e0 - s0):
                 b = B_list[j]
                 if b is None or b.numel() == 0:
