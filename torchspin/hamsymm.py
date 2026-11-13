@@ -849,7 +849,21 @@ def _strain_tensors(sys: SpinSystem) -> list:
         for e in range(min(nE, gS.shape[0])):
             if not bool(torch.any(gS[e] != 0)):
                 continue
-            M = torch.diag(gS[e] / g_rows[e])
+            g_e = g_rows[e]
+            if not bool(torch.any(g_e != 0)):
+                # g given as Ham110/Ham112 (SpinSystem sets g = 0): the
+                # g-equivalent principal values the strain widths use (B56)
+                # (diagonal in the g frame; the strain widths raise if it is
+                # not diagonal there, so no check here)
+                from torchspin.ham_ezho import ham_linear_g
+                gm = ham_linear_g(sys, e)
+                if gm is not None:
+                    gm = gm.detach().to(torch.float64)
+                    if bool(torch.any(gFrame[e] != 0)):
+                        R = erot(gFrame[e].tolist()).to(torch.float64)   # molecular -> g
+                        gm = R @ gm @ R.T
+                    g_e = torch.diagonal(gm)
+            M = torch.diag(gS[e] / g_e)
             if bool(torch.any(gFrame[e] != 0)):
                 R = erot(gFrame[e].tolist()).to(torch.float64)
                 M = R.T @ M @ R
