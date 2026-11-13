@@ -96,6 +96,9 @@ class SpinSystem:
     D:
         Zero-field splitting tensors (MHz).  Shape ``(nElectrons, 3)`` for
         diagonal (Dxx, Dyy, Dzz) or ``(3*nElectrons, 3)`` for full tensors.
+        Shorthands: a scalar ``D`` or, for one electron spin, ``[D]`` (E = 0);
+        ``[D, E]``; ``(nElectrons, 1)`` or ``(nElectrons, 2)`` rows of D or
+        [D, E].  Any other shape raises ``ValueError``.
         Pass ``None`` (default) to omit ZFS entirely.
     DFrame:
         Euler angles for D-tensor frame.  Shape ``(nElectrons, 3)``.
@@ -372,7 +375,18 @@ class SpinSystem:
                 # (n_e, 1) column: one scalar D (E = 0) per electron
                 self.D = (self.D * torch.tensor([-1.0, -1.0, 2.0], dtype=torch.float64) / 3).clone()
             elif self.D.ndim == 1:
-                if self.D.shape[0] == 2:
+                if self.D.shape[0] == 1:
+                    # [D]: one D value (E = 0), as a scalar D. EasySpin
+                    # (validatespinsys.m:208-210) reads numel(Sys.D) == nElectrons
+                    # as one D per electron, so a single value is valid only for
+                    # one electron spin; for several it is 'Sys.D has wrong size.'
+                    if n_e != 1:
+                        raise ValueError(
+                            f'D has wrong size: a one-element D is one D value for one electron spin, '
+                            f'but the system has {n_e}. Give a scalar D (same D, E = 0 for every '
+                            f'electron) or one row per electron spin.')
+                    self.D = (self.D * torch.tensor([-1.0, -1.0, 2.0], dtype=torch.float64) / 3).unsqueeze(0).clone()
+                elif self.D.shape[0] == 2:
                     # EasySpin [D, E] shorthand: convert to [Dxx, Dyy, Dzz]
                     D_val, E_val = self.D[0], self.D[1]
                     Dxx = -D_val / 3 + E_val
@@ -383,9 +397,6 @@ class SpinSystem:
                 elif self.D.shape[0] == 3:
                     # [Dxx, Dyy, Dzz] for one electron
                     self.D = self.D.unsqueeze(0).expand(n_e, 3).clone()
-                elif self.D.shape[0] == 3 * n_e:
-                    # Full 3×3 matrices stacked as vector
-                    self.D = self.D  # keep as is
             elif self.D.ndim == 2 and self.D.shape[1] == 2:
                 # (n_e, 2) EasySpin [D, E] per electron: convert each row
                 D_vals = self.D[:, 0]
@@ -395,6 +406,11 @@ class SpinSystem:
                 Dzz = 2 * D_vals / 3
                 self.D = torch.stack([Dxx, Dyy, Dzz], dim=1).clone()
             # Otherwise assume correct 2D shape
+            if not (self.D.ndim == 2 and tuple(self.D.shape) in ((n_e, 3), (3 * n_e, 3))):
+                raise ValueError(
+                    f'D has wrong size {tuple(self.D.shape)} for {n_e} electron spin(s): expected a '
+                    f'scalar, [D, E], [Dxx, Dyy, Dzz], one row per electron spin ((nElectrons, 1), '
+                    f'(nElectrons, 2) or (nElectrons, 3)) or full tensors (3*nElectrons, 3).')
 
         # --- DFrame ---
         if self.DFrame is None:
@@ -1729,6 +1745,46 @@ def _reject_h0extra(sys, where: str) -> None:
             f"without torchspin.ham() and cannot include SpinSystem.H0Extra. Use a "
             f"solver that diagonalizes the full Hamiltonian (e.g. pepper with "
             f"Options(Method='matrix')), or remove H0Extra.")
+
+
+def _ham_linear_orders(sys) -> list:
+    """Keys of the nonzero ``Sys.Ham*`` terms of order lB <= 1 in the field.
+
+    These are the terms that ``ham()`` puts into H0 - B·μ and that every
+    solver diagonalizing it includes.  Terms of order lB >= 2 enter only with
+    ``Options.QuadraticZeeman`` and are dropped by default everywhere.
+    """
+    ham = getattr(sys, 'Ham', None)
+    if ham is None:
+        return []
+    out = []
+    for key, val in ham.items():
+        k = str(key)
+        k = k[3:] if k.startswith('Ham') else k
+        if (val is not None and bool(torch.any(torch.as_tensor(val) != 0))
+                and int(k[0]) <= 1):
+            out.append(str(key))
+    return out
+
+
+def _reject_ham(sys, where: str, alternative: str) -> None:
+    """Raise if *sys* carries ``Sys.Ham*`` terms that *where* (a
+    perturbation-theory solver) silently drops.
+
+    These solvers build the electron Zeeman term from ``Sys.g`` only.  With g
+    given as ``Ham110``/``Ham112``, ``Sys.g`` is zero, so they returned NaN
+    frequencies or an all-zero spectrum; other terms of order lB <= 1 were
+    ignored.  EasySpin's resfreqs_perturb rejects every ``Sys.Ham*``
+    (resfreqs_perturb.m:75-77).  Terms of order lB >= 2 are dropped by every
+    solver unless ``Options.QuadraticZeeman`` is on, which the perturbation
+    solvers reject separately (``check_quadratic_zeeman_unsupported``).
+    """
+    keys = _ham_linear_orders(sys)
+    if keys:
+        raise ValueError(
+            f"{where} does not support Sys.Ham* parameters (here {', '.join(keys)}): "
+            f"perturbation theory builds the Zeeman term from Sys.g only. Give the "
+            f"linear Zeeman term as Sys.g, or use {alternative}.")
 
 
 # ---------------------------------------------------------------------------
