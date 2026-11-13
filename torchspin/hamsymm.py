@@ -36,6 +36,9 @@ _EIG_GROUP_NAMES = [
 ]
 
 
+# The point group (and so the powder grid) is a discrete decision: no graph
+# through it, even when tensors or frame angles require grad.
+@torch.no_grad()
 def hamsymm(sys: SpinSystem, debug: bool = False) -> tuple[str, torch.Tensor]:
     """Determine point group symmetry of spin Hamiltonian.
 
@@ -199,7 +202,7 @@ def _candidate_frames(sys: SpinSystem) -> torch.Tensor:
     def _add(frames):
         if frames is None:
             return
-        f = torch.as_tensor(frames, dtype=torch.float64).reshape(-1, 3)
+        f = torch.as_tensor(frames, dtype=torch.float64).detach().reshape(-1, 3)
         for r in f:
             rows.append(r.numpy().copy())
 

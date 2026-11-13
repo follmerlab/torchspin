@@ -294,8 +294,8 @@ def compute_strain_widths_batch(
         AStrainMatrix = torch.diag(
             sys.AStrain.to(device=device, dtype=torch.float64)
         )
-        if sys.AFrame is not None and torch.any(sys.AFrame[0] != 0):
-            R_A2M = erot(sys.AFrame[0].tolist(), device=device).T.to(dtype=torch.float64)
+        if sys.AFrame is not None and (sys.AFrame.requires_grad or bool(torch.any(sys.AFrame[0] != 0))):
+            R_A2M = erot(sys.AFrame[0], device=device).T.to(dtype=torch.float64)
             AStrainMatrix = R_A2M @ AStrainMatrix @ R_A2M.T
 
     # DStrain: per-electron dH/dD and dH/dE operators (EasySpin getdstrainops;
@@ -430,8 +430,8 @@ def _strain_g_values(sys: SpinSystem, e: int, device) -> torch.Tensor:
     if gm is None:
         return g_values
     gm = gm.to(device=device)
-    if bool(torch.any(sys.gFrame[e] != 0)):
-        R_g2M = erot(sys.gFrame[e].tolist(), device=device).T.to(dtype=torch.float64)
+    if sys.gFrame.requires_grad or bool(torch.any(sys.gFrame[e] != 0)):
+        R_g2M = erot(sys.gFrame[e], device=device).T.to(dtype=torch.float64)
         gm = R_g2M.T @ gm @ R_g2M
     off = gm - torch.diag(torch.diagonal(gm))
     if float(off.detach().abs().max()) > 1e-9 * float(gm.detach().abs().max()):
@@ -459,8 +459,8 @@ def _gstrain_matrices(sys: SpinSystem, mwFreq: float, device) -> list:
             g_strain = sys.gStrain[e].to(device=device, dtype=torch.float64)
             g_values = _strain_g_values(sys, e, device)
             M = torch.diag((g_strain / g_values) * (mwFreq * 1e3))
-            if bool(torch.any(sys.gFrame[e] != 0)):
-                R_g2M = erot(sys.gFrame[e].tolist(), device=device).T.to(dtype=torch.float64)
+            if sys.gFrame.requires_grad or bool(torch.any(sys.gFrame[e] != 0)):
+                R_g2M = erot(sys.gFrame[e], device=device).T.to(dtype=torch.float64)
                 M = R_g2M @ M @ R_g2M.T
         mats.append(M)
     return mats
@@ -491,8 +491,8 @@ def _dstrain_operators(sys: SpinSystem, device, dtype) -> list:
             ops.append(None)
             continue
         Sx, Sy, Sz = _electron_spin_ops(sys, e, device, dtype)
-        if sys.DFrame is not None and bool(torch.any(sys.DFrame[e] != 0)):
-            R = erot(sys.DFrame[e].tolist(), device=device).to(dtype=dtype)  # molecular -> D frame
+        if sys.DFrame is not None and (sys.DFrame.requires_grad or bool(torch.any(sys.DFrame[e] != 0))):
+            R = erot(sys.DFrame[e], device=device).to(dtype=dtype)  # molecular -> D frame
             SxD = R[0, 0] * Sx + R[0, 1] * Sy + R[0, 2] * Sz
             SyD = R[1, 0] * Sx + R[1, 1] * Sy + R[1, 2] * Sz
             SzD = R[2, 0] * Sx + R[2, 1] * Sy + R[2, 2] * Sz

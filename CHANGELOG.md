@@ -218,6 +218,37 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - New `torchspin/tests/test_resfields_single_autograd.py` (44 tests; 42 fail on 0.9.13).
 
+## [0.9.17] — 2026-11-11
+
+### Fixed
+
+- **Euler frame angles stay on the autograd graph (B3).** A `gFrame`, `AFrame`, `DFrame`,
+  `QFrame`, `eeFrame`, `nnFrame`, `sigmaFrame` or `BFrame` tensor with `requires_grad=True`
+  used to get no gradient, without a warning: every call site read the angles with
+  `.tolist()` or `float()` before `erot`. `erot` now builds the matrix from torch operations
+  when an angle requires grad (same formula; otherwise the float path as before), and the
+  angles are passed as tensors in `ham_ez`, `ham_hf`, `ham_zf` (D and the Stevens `BFrame`
+  rotation, now a torch Wigner D), `ham_nq`, `ham_ee`, `ham_nn`, `ham_nz`, `strainwidth`
+  (gStrain, AStrain and DStrain frames), `resfields_perturb`, `resfreqs_perturb`,
+  `endorfrq_perturb`, `resfields_hybrid` and `salt`. The zero-angle check that skips the
+  rotation is made on detached values and does not skip a frame that requires grad. With a
+  nonzero `BFrame` the Stevens `B` coefficients were detached too; they are not any more.
+  `pepper` routes a system whose only grad tensor is a frame to `pepper_autograd`, `saffron`
+  switches to its differentiable time-domain accumulation for frames as it does for tensors,
+  and `salt`'s field-swept mode raises `NotImplementedError` for grad frames as it does for
+  g, A, D, Q and ee. Gradients equal central differences (`ham`, `levels`, batched strain
+  widths: 1e-8; `pepper_autograd` powder, perturbation and `Exp.Orientations`, `salt`
+  fixed-field, `saffron`: 1e-5), also at beta = 0 and beta = pi.
+- **`hamsymm` with a frame that requires grad.** The eigenvalue path (full tensors, Stevens
+  terms) called `.numpy()` on the frame and raised `RuntimeError`. `hamsymm` now runs without
+  a graph: the point group and grid frame are a discrete decision on the detached values.
+- Values without grad are unchanged: 466 arrays (`ham`, `H0`, `muz` for 150 random systems
+  with every frame type, 16 `pepper` spectra with strains) and 30 outputs of `ham`, `pepper`
+  (matrix and perturb), strain widths, `salt` and `saffron` with tilted frames were
+  bit-identical to 0.9.0. The test suite checks the property within the build: with a frame
+  that requires grad the same 30 configurations give the float path's values (bit-identical;
+  `ham` with `BFrame` within 4 ulp, `pepper_autograd` with a grad `gFrame` within 1e-11),
+  and a tensor frame without grad is bit-identical to a list.
 ## [0.9.16] — 2026-11-11
 
 ### Fixed
