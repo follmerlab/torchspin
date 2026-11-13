@@ -304,6 +304,133 @@ def _transition_slots(all_B, all_I, all_W, all_pairs, n_orient):
     return B_arrs, I_arrs, (W_arrs if have_widths else None)
 
 
+# Missing knots (B88, B75): the matrix resonance search covers Exp.Range only, so
+# a transition that leaves the sweep window at some orientations has NaN knots
+# there.  Those level pairs are searched again over a window padded by these
+# fractions of the sweep width (lower edge clamped at 0), widening while partly
+# missing pairs remain.
+_RESEARCH_PADS = (0.5, 1.0, 2.0, 4.0)
+
+
+def _pair_counts(all_B, all_pairs):
+    """``{(u, v): counts}``: number of resonances of each level pair at every
+    orientation (int array).  Empty without level pairs (perturbation path)."""
+    counts: dict = {}
+    if all_pairs is None or all(p is None for p in all_pairs):
+        return counts
+    n_orient = len(all_B)
+    for k in range(n_orient):
+        B, P = all_B[k], all_pairs[k]
+        if B is None or P is None or B.numel() == 0:
+            continue
+        uv, c = np.unique(P.detach().cpu().numpy().astype(np.int64), axis=0, return_counts=True)
+        for (u, v), n in zip(uv, c):
+            counts.setdefault((int(u), int(v)), np.zeros(n_orient, dtype=np.int64))[k] = n
+    return counts
+
+
+def _missing_resonances(all_B, all_pairs):
+    """``{(u, v): n}`` for the level pairs whose resonance count differs between
+    orientations; ``n`` is the number of resonances missing relative to the
+    orientation with the most (summed over orientations).
+
+    A slot is a level pair plus its occurrence index, so such a pair leaves NaN
+    knots in at least one of its slots (``_transition_slots``).  Index-matched
+    results without level pairs (perturbation path) give an empty dict.
+    """
+    return {uv: int((c.max() - c).sum()) for uv, c in sorted(_pair_counts(all_B, all_pairs).items())
+            if c.min() < c.max()}
+
+
+def _replace_pairs(lists, new, bad):
+    """Per orientation, replace the resonances of the level pairs ``bad`` in
+    ``lists = (B, I, W, pairs)`` by those of ``new`` (same layout; its other
+    pairs are ignored).  Slot assembly sorts by (pair, field) itself, so the
+    order does not matter.  Tensors stay on the autograd graph (masking and
+    concatenation only)."""
+    def _in_bad(P):
+        badt = torch.as_tensor(bad, dtype=P.dtype, device=P.device)
+        return (P[:, None, :] == badt[None]).all(-1).any(-1)
+
+    out = ([], [], [], [])
+    for k in range(len(lists[0])):
+        B1, I1, W1, P1 = (l[k] for l in lists)
+        B2, I2, W2, P2 = (l[k] for l in new)
+        keep = take = None
+        if P1 is not None and B1 is not None and B1.numel():
+            keep = ~_in_bad(P1)
+        if P2 is not None and B2 is not None and B2.numel():
+            take = _in_bad(P2)
+
+        def _cat(x1, x2):
+            parts = []
+            if x1 is not None and x1.numel() and keep is not None:
+                parts.append(x1[keep])
+            if x2 is not None and x2.numel() and take is not None:
+                parts.append(x2[take])
+            if parts:
+                return torch.cat(parts) if len(parts) > 1 else parts[0]
+            for x in (x1, x2):
+                if x is not None:
+                    return x[:0]
+            return None
+        Bk = _cat(B1, B2)
+        out[0].append(Bk)
+        out[1].append(_cat(I1, I2))
+        out[2].append(None if (W1 is None and W2 is None) else _cat(W1, W2))
+        out[3].append(None if (Bk is None or Bk.numel() == 0) else _cat(P1, P2))
+    return out
+
+
+def _research_missing_knots(lists, rng, search, verbose=False):
+    """Search again the level pairs that miss resonances at some orientations
+    (B88, B75).
+
+    ``lists = (B, I, W, pairs)`` per orientation from the search over
+    ``rng = Exp.Range``; ``search(window, pairs)`` repeats that search over
+    all orientations for the given level pairs and field window and returns
+    the same layout.  The partly missing pairs are searched over
+    Range ± f·W (W = sweep width, f in ``_RESEARCH_PADS``, lower edge clamped
+    at 0) and their resonances replaced wholesale, all orientations at once so
+    that the occurrence index of a looping transition means the same at every
+    knot.  A pair's new resonances are kept only if they leave fewer of its
+    resonances missing and none of its orientations loses one; pairs that improved but are still incomplete are
+    searched again over a doubled window, the others keep what they have
+    (what is still missing then does not resonate at those orientations at
+    any field nearby, e.g. a looping transition, and very wide windows make
+    the detection of its near-tangent resonances roundoff-sensitive).
+    Out-of-range positions are kept: projection and summation clip them to
+    the sweep window, and the interpolation sees the transition at every
+    knot.  Returns ``lists`` itself (same objects) when no
+    pair is partly missing, so such spectra are unchanged bit for bit.
+    """
+    missing = _missing_resonances(lists[0], lists[3])
+    if not missing:
+        return lists
+    W = float(rng[1]) - float(rng[0])
+    active = list(missing)
+    for f in _RESEARCH_PADS:
+        window = [max(0.0, float(rng[0]) - f * W), float(rng[1]) + f * W]
+        if verbose:
+            print(f"pepper: {len(active)} level pair(s) miss resonances at some knots; "
+                  f"searching them again over [{window[0]:.6g}, {window[1]:.6g}] mT")
+        found = search(window, active)
+        old = _pair_counts(lists[0], lists[3])
+        trial = _replace_pairs(lists, found, active)
+        trial = _pair_counts(trial[0], trial[3])
+        # the wider window contains the old one: a pair improves if it has no
+        # fewer resonances at any orientation and fewer missing
+        better = [uv for uv in active if uv in trial and (trial[uv] >= old[uv]).all()
+                  and int((trial[uv].max() - trial[uv]).sum()) < missing[uv]]
+        if better:
+            lists = _replace_pairs(lists, found, better)
+            missing = _missing_resonances(lists[0], lists[3])
+        active = [uv for uv in better if uv in missing]
+        if not active:
+            break
+    return lists
+
+
 def _filter_slots(B_arrs, I_arrs, W_arrs, threshold):
     """EasySpin transition pre-selection: keep a transition (slot) when its
     maximum |intensity| over the grid reaches ``threshold`` × the global maximum.
@@ -487,17 +614,25 @@ def _interp_l3(y: np.ndarray, N_f: int) -> np.ndarray:
 
 
 def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
-                 vecs_c: torch.Tensor, vecs_f: torch.Tensor, mode: str = 'pos', any_nan: bool = False):
+                 vecs_c: torch.Tensor, vecs_f: torch.Tensor, mode: str = 'pos'):
     """Interpolate one transition slot from the coarse to the fine grid.
 
     Closed-φ one-octant grids and Dinfh use :func:`_interp_sph` (structured
     G3 / meridional spline); open-φ grids use :func:`_interp_grid`. Returns
     ``None`` when fewer than three knots carry a value.
 
-    EasySpin pepper.m interpolation modes: positions ``G3`` (global cubic;
-    ``L3``/``L1`` when knots are missing), intensities and widths ``L3``
-    (local cubic, axial grids) or ``L1`` (linear, all other grids).  Pass
-    ``mode='val'`` for intensities/widths.
+    EasySpin pepper.m interpolation modes: positions ``G3`` (global cubic),
+    intensities and widths ``L3`` (local cubic, axial grids) or ``L1``
+    (linear, all other grids).  Pass ``mode='val'`` for intensities/widths.
+
+    Positions of a slot that still has knots without a resonance (after the
+    re-search of :func:`_research_missing_knots`, e.g. a looping transition)
+    are interpolated with ``L3`` (axial) / ``L1``, so the NaNs propagate and
+    the facets touching those knots are dropped instead of being filled from
+    neighboring knots.  This is decided per slot (B88): EasySpin switches the
+    positions of every transition to linear as soon as any one has a missing
+    knot (pepper.m:701, 763-772), which reproduces the coarse-grid facets for
+    all the others.
     """
     vals = np.asarray(vals, dtype=float)
     valid = ~np.isnan(vals)
@@ -507,16 +642,9 @@ def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
         if symmetry == 'Dinfh':
             return _interp_l3(vals, N_f)
         return _interp_grid(vals, symmetry, N_c, N_f, linear=True)
-    # EasySpin: NaN_in_Pdat is a global flag — if any transition lacks a
-    # resonance somewhere, all positions are interpolated with L3 (axial) / L1
-    if not valid.all() or any_nan:
-        # EasySpin: with NaNs in Pdat the interpolation switches to linear
-        # ('L1'/'L3' → linear here) so that the NaNs propagate and the facets
-        # touching knots without a resonance are dropped, instead of being
-        # filled from neighboring knots.
+    if not valid.all():
         if symmetry == 'Dinfh':
-            return _interp_l3(vals, N_f)          # EasySpin: 'L3' for axial grids with NaNs
-        # linear for every transition, also those resonant at all knots
+            return _interp_l3(vals, N_f)          # EasySpin 'L3' for axial grids with NaNs
         return _interp_grid(vals, symmetry, N_c, N_f, linear=True)
     if symmetry in _CLOSEDPHI_1OCT or symmetry == 'Dinfh':
         return _interp_sph(vecs_c, vecs_f, vals)
@@ -1768,6 +1896,31 @@ def _pepper_single(
             kw['hybrid'] = hybrid_info
         return resfields_batch(*_ham_ops(), phi_b, theta_b, exp_, opt_, ham_sys, **kw)
 
+    def _fill_missing_knots(lists):
+        """Field sweeps, matrix search: search again the level pairs that miss
+        resonances at some orientations over a padded window (B88, B75; see
+        :func:`_research_missing_knots`).  ``lists = (B, I, W, pairs)`` for the
+        coarse grid; returned unchanged when nothing is missing.  Frequency
+        sweeps need nothing (resfreqs_batch returns every level pair at every
+        orientation), and the hybrid line list is pruned per call, so it is
+        left as it is."""
+        if freq_sweep or hybrid_info is not None:
+            return lists
+
+        def _search(window, pairs_):
+            exp_w = _dc_replace(exp, Range=list(window), CenterSweep=None)
+            out = ([None] * n_orient, [None] * n_orient, [None] * n_orient, [None] * n_orient)
+            bs = _orientation_batch_size(n_orient)
+            for s0 in range(0, n_orient, bs):
+                e0 = min(s0 + bs, n_orient)
+                res = _resonances(phi_arr[s0:e0], theta_arr[s0:e0], exp_w, opt, sys, return_pairs=True,
+                                  init_state=init_state, photo_weights=_pw(s0, e0), opt_override=_opt_rf,
+                                  pairs=pairs_)
+                for col, vals in zip(out, res):
+                    col[s0:e0] = list(vals)
+            return out
+        return _research_missing_knots(lists, exp.Range, _search, verbose=opt.Verbosity >= 1)
+
     # -----------------------------------------------------------------------
     # Step 2: Spherical powder grid
     # -----------------------------------------------------------------------
@@ -2141,9 +2294,10 @@ def _pepper_single(
                 all_intens[s + j] = intens
                 all_widths[s + j] = widths
                 all_pairs[s + j] = prs
+        all_B_res, all_intens, all_widths, all_pairs = _fill_missing_knots(
+            (all_B_res, all_intens, all_widths, all_pairs))
         slot_B, slot_I, slot_W = _transition_slots(all_B_res, all_intens, all_widths, all_pairs, n_orient)
         slot_B, slot_I, slot_W = _filter_slots(slot_B, slot_I, slot_W, _post_thr)
-        _any_nan = any(np.isnan(b_).any() for b_ in slot_B)
         if slot_W is None:
             slot_W = [np.zeros(n_orient) for _ in slot_B]
 
@@ -2166,7 +2320,7 @@ def _pepper_single(
             B_c, I_c, W_c = slot_B[i_t], slot_I[i_t], slot_W[i_t]
             valid = ~np.isnan(B_c)
             if do_interp_s:
-                B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, any_nan=_any_nan)
+                B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s)
                 if B_f is None:
                     continue
                 if zero_field:
@@ -2253,6 +2407,8 @@ def _pepper_single(
                         all_pairs[s + j] = prs
                     if opt.Verbosity >= 1:
                         print(f"pepper: coarse grid {e}/{n_orient} orientations computed")
+                all_B_res, all_intens, all_widths, all_pairs = _fill_missing_knots(
+                    (all_B_res, all_intens, all_widths, all_pairs))
 
             # Build the fine grid
             phi_fine, theta_fine, weights_fine, vecs_fine_orig = sphgrid(grid_sym, nfKnots)
@@ -2314,12 +2470,11 @@ def _pepper_single(
                     all_B_res, all_intens, all_widths, all_pairs, n_orient
                 )
                 slot_B, slot_I, slot_W = _filter_slots(slot_B, slot_I, slot_W, _post_thr)
-                _any_nan = any(np.isnan(b_).any() for b_ in slot_B)
                 for i_t in range(len(slot_B)):
                     B_c = slot_B[i_t]
                     I_c = slot_I[i_t]
                     valid = ~np.isnan(B_c)
-                    B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, any_nan=_any_nan)
+                    B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f)
                     if B_f is None:
                         continue
                     if zero_field:
@@ -2439,6 +2594,8 @@ def _pepper_single(
                             all_B_d[s + j] = B_res
                             all_I_d[s + j] = intens
                             all_P_d[s + j] = prs
+                    all_B_d, all_I_d, _, all_P_d = _fill_missing_knots(
+                        (all_B_d, all_I_d, [None] * n_orient, all_P_d))
 
                 # Phase 2: project per-transition onto the spectrum
                 x_np_d = x.numpy()

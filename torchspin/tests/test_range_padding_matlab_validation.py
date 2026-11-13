@@ -112,17 +112,33 @@ def test_range_padding_vs_easyspin(cases, name, key):
 
 
 @pytest.mark.parametrize('fun', [pepper, pepper_autograd])
-def test_voigt_field_sweep_not_padded(cases, fun):
-    """Rhombic Voigt field sweep cut by the range (lw = [0.5 1.5] mT): the spectrum
-    before the Lorentzian convolution is zero at both ends in EasySpin (its result
-    does not depend on Opt.PaddingMultiplier) and at the 1e-14 round-off floor in
-    torchspin, which the 1e-9 relative tolerance of the decision treats as zero.
-    An exact ``~= 0`` test would pad here and move the end points to 1.69x."""
+def test_voigt_field_sweep_padded_since_b88(cases, fun):
+    """Rhombic Voigt field sweep cut by the range (lw = [0.5 1.5] mT).
+
+    In EasySpin (and torchspin up to 0.9.27) the spectrum before the convolution
+    is zero at both ends, because the triangles that cross the range ends are
+    dropped (B75), so it is not padded and does not depend on
+    Opt.PaddingMultiplier.  Since 0.9.28 (B88) those triangles are clipped, the
+    ends carry intensity, and the padding applies.  Against the same system swept
+    60 mT wider on both sides without interpolation (D2h [121 1], cropped): cosine
+    0.994571 padded vs 0.908229 unpadded and 0.856951 for EasySpin."""
     c = cases['pepper_V_h1']
     assert np.array_equal(np.asarray(c['spc'], float), np.asarray(c['spc_pm0'], float))
     _, y3 = _pepper(c, 3, fun)
     _, y0 = _pepper(c, 0, fun)
-    assert np.array_equal(y3, y0)
+    assert not np.array_equal(y3, y0)
+    s, e = _pepper_inputs(c)
+    r0, r1 = e.Range
+    n = e.nPoints
+    dx = (r1 - r0) / (n - 1)
+    k = int(round(60 / dx))
+    wide = Experiment(mwFreq=e.mwFreq, Range=[r0 - k * dx, r1 + k * dx], nPoints=n + 2 * k, Harmonic=e.Harmonic)
+    ref = np.asarray(pepper(s, wide, Options(GridSymmetry='D2h', GridSize=[121, 1]))[1], float)[k:k + n]
+
+    def cos(a):
+        return float(a @ ref / np.linalg.norm(a) / np.linalg.norm(ref))
+    assert cos(y3) > 0.9945, cos(y3)
+    assert cos(y3) > cos(y0) and cos(y3) > cos(np.asarray(c['spc'], float))
 
 
 # ── decision and count ─────────────────────────────────────────────────────

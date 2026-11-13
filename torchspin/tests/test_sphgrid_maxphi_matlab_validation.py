@@ -17,7 +17,19 @@ gridparam, so
 
 Also: EasySpin's ``sphgrid`` knots and weights for all 14 groups, and
 pepper_autograd gradients vs central differences on a D4h grid.
+
+Since 0.9.28 (B88) the four cases whose ranges cut transitions (d4h_*_wide,
+oh_auto) deliberately differ from EasySpin: the level pairs that leave the
+range are searched again over a padded window and only slots that still miss
+knots are interpolated linearly, where EasySpin interpolates every slot
+linearly and keeps the NaNs.  Their EasySpin comparisons are strict xfails
+with the measured numbers; against converged references (no interpolation,
+GridSize [181 1], wide sweep cropped; tests/data/ref_missing_knots.npz) the
+EasySpin-identical 0.9.27 spectra were 1 - cosine / max|dev| (interior)
+2.24e-2 / 0.158 (D4h grid, auto and explicit), 4.34e-2 / 0.236 (D2h grid),
+0.579 / 0.899 (Oh); now 4.59e-5 / 0.0070, 9.61e-5 / 0.0135, 2.02e-3 / 0.064.
 """
+import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -31,7 +43,25 @@ from torchspin.pepper_autograd import pepper_autograd
 from torchspin.spinsystem import SpinSystem
 from torchspin.sphgrid import sphgrid
 
-REF = Path(__file__).resolve().parents[2] / 'tests' / 'data' / 'ref_sphgrid_maxphi.mat'
+DATA = Path(__file__).resolve().parents[2] / 'tests' / 'data'
+REF = DATA / 'ref_sphgrid_maxphi.mat'
+CONVERGED = DATA / 'ref_missing_knots.npz'
+
+_spec = importlib.util.spec_from_file_location('_gen_missing_knots', DATA / 'generate_missing_knots_refs.py')
+gen = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gen)
+
+# Ranges that cut transitions (B88, 0.9.28): measured vs EasySpin
+# (1 - cosine, amplitude ratio), and the converged reference with bounds on
+# (1 - cosine, max|dev|) against it (interior; measured x 1.05)
+DEVIATION = {
+    'd4h_auto_wide': (2.17e-2, 1.0251), 'd4h_explicit_wide': (2.17e-2, 1.0251),
+    'd4h_d2hgrid_wide': (4.13e-2, 1.0082), 'oh_auto': (0.540, 1.3435),
+}
+CONV = {
+    'd4h_auto_wide': ('case3', 4.82e-5, 7.34e-3), 'd4h_explicit_wide': ('case3', 4.82e-5, 7.34e-3),
+    'd4h_d2hgrid_wide': ('case3', 1.01e-4, 1.42e-2), 'oh_auto': ('oh_auto', 2.13e-3, 6.72e-2),
+}
 
 # Measured with the fix (pepper and pepper_autograd, all 9 cases): cosine
 # >= 0.999935 (Oh; D4h and D2h grid 1 - 3e-8, D3d 0.9999976, D6h 0.9999916, C6h grid
@@ -83,8 +113,24 @@ def _inputs(c):
     return _system(c.Sys), exp, Options(**kw)
 
 
+def _params():
+    out = []
+    for n in _case_names():
+        if n in DEVIATION:
+            c, a = DEVIATION[n]
+            reason = (f'B88 (0.9.28): the range cuts transitions; torchspin searches them again over a '
+                      f'padded window and interpolates only slots with missing knots linearly, EasySpin '
+                      f'interpolates every slot linearly (pepper.m:701, 763-772). Measured 1 - cosine '
+                      f'{c:.3g}, amplitude {a:.4f}; torchspin is closer to the converged reference '
+                      f'(test_spectrum_vs_converged)')
+            out.append(pytest.param(n, marks=pytest.mark.xfail(strict=True, reason=reason), id=n))
+        else:
+            out.append(n)
+    return out
+
+
 @pytest.mark.parametrize('func', ['pepper', 'pepper_autograd'])
-@pytest.mark.parametrize('name', _case_names())
+@pytest.mark.parametrize('name', _params())
 def test_spectrum_vs_easyspin(ref, name, func):
     c = {str(c.name): c for c in np.atleast_1d(ref['cases'])}[name]
     sys, exp, opt = _inputs(c)
@@ -99,6 +145,23 @@ def test_spectrum_vs_easyspin(ref, name, func):
     print(f'{name} {func}: cosine {cs:.7f}, amplitude ratio {amp:.5f}')
     assert cs > COS_MIN, (name, func, cs)
     assert amp == pytest.approx(1.0, abs=AMP_TOL), (name, func, amp)
+
+
+@pytest.mark.parametrize('func', ['pepper', 'pepper_autograd'])
+@pytest.mark.parametrize('name', list(CONV))
+def test_spectrum_vs_converged(ref, name, func):
+    """The EasySpin cases whose ranges cut transitions, against converged
+    references."""
+    c = {str(c.name): c for c in np.atleast_1d(ref['cases'])}[name]
+    sys, exp, opt = _inputs(c)
+    rn, cmax, dmax = CONV[name]
+    x, spc = (pepper if func == 'pepper' else pepper_autograd)(sys, exp, opt)
+    x = x.detach().numpy(); spc = spc.detach().numpy()
+    r = np.load(CONVERGED)
+    assert np.allclose(x, r[rn + '_x'], rtol=0, atol=1e-9)
+    cs, d = gen.metrics(spc, r[rn], gen.interior(x, sys))
+    print(f'{name} {func}: 1 - cosine {cs:.3e}, max dev {d:.3e}')
+    assert cs <= cmax and d <= dmax, (name, func, cs, d)
 
 
 @pytest.mark.parametrize('k', range(14))

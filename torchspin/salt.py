@@ -285,8 +285,8 @@ def _project_powder(
         nfKnots = (N_coarse - 1) * N_interp + 1
         _, theta_f, _, _ = sphgrid(grid_sym, nfKnots)
         N_final, theta_final = nfKnots, theta_f
-        P_f = _interp_slots_t(Pdat, grid_sym, N_coarse, nfKnots, 'pos', False)
-        I_f = _interp_slots_t(Idat, grid_sym, N_coarse, nfKnots, 'val', False)
+        P_f = _interp_slots_t(Pdat, grid_sym, N_coarse, nfKnots, 'pos')
+        I_f = _interp_slots_t(Idat, grid_sym, N_coarse, nfKnots, 'val')
     else:
         N_final, theta_final = N_coarse, theta_sym
         P_f, I_f = Pdat, Idat
