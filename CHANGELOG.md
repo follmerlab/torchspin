@@ -321,6 +321,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   sweeps, strain, several electrons). Terms of order lB ≥ 2 (dropped unless
   `Options.QuadraticZeeman`) still pass. Results with `g`, and every matrix and hybrid
   result, are unchanged.
+## [0.9.7] — 2026-11-11
+
+### Fixed
+
+- **Resonance positions on axial (Dinfh) grids are interpolated with EasySpin's spline**
+  (gridinterp.m:77-78, `esspline1d(y, 1, iphi)`): a cubic spline over the θ knot index with
+  zero first derivatives at both ends (esspline1d.m `EndCon = 1`). torchspin fitted a
+  not-a-knot cubic spline in cos θ, which bends differently next to both poles. Axial g
+  (g = [2 2 2.4], lw 0.3 mT, GridSize [10 10]) was cosine 0.99863 and amplitude 1.029; a
+  Cu(II)-like system (g = [2.05 2.05 2.25], 63Cu A = [50 500] MHz) on the default grid was
+  cosine 0.99380 and amplitude 1.034 (0.93891 / 1.045 at GridSize [10 10]). All are now
+  cosine ≥ 1 − 1e-10 and amplitude within 3e-6. This changes every interpolated Dinfh
+  spectrum without missing resonances in `pepper`, `pepper_autograd` (the cached linear
+  interpolation map is rebuilt from the same rule, so it stays differentiable) and the
+  fixed-field `salt` path that interpolates. Intensities and widths (`L3`) and Dinfh grids
+  with missing resonances (`L3` for positions) are unchanged. EasySpin references:
+  tests/data/ref_pepper_dinfh_interp.mat.
 ## [0.9.6] — 2026-11-11
 
 ### Fixed
