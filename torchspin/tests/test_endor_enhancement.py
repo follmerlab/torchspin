@@ -57,7 +57,8 @@ def _frame(phi, theta):
 
 
 def _brute_endor(sys, B, phi, theta):
-    """NumPy: all intra-block level pairs, frequency and chi-averaged |<i|mu_perp|j>|^2."""
+    """NumPy: all intra-block level pairs (1-based keys, as endorfrq), frequency and chi-averaged
+    |<i|mu_perp|j>|^2."""
     H0, mux, muy, muz = (m.detach().numpy() for m in ham(sys))
     mu = (mux, muy, muz)
     x, y, z = _frame(phi, theta)
@@ -69,7 +70,7 @@ def _brute_endor(sys, B, phi, theta):
     for i in range(len(E)):
         for j in range(i + 1, len(E)):
             if i // nnuc == j // nnuc:
-                out[(i, j)] = (E[j] - E[i], (abs(Mx[i, j]) ** 2 + abs(My[i, j]) ** 2) / 2)
+                out[(i + 1, j + 1)] = (E[j] - E[i], (abs(Mx[i, j]) ** 2 + abs(My[i, j]) ** 2) / 2)
     return out
 
 
@@ -124,12 +125,13 @@ def test_endorfrq_enhanced_matches_brute_force(mk, B, phi, theta):
 
 
 def test_endorfrq_enhanced_selection_uses_nuclear_rates():
-    """Same transitions as the default minus electronic pairs; only intensities change."""
+    """Same transitions as the default (electronic pairs excluded in both since 0.9.14); only
+    intensities change."""
     s = _sys_14N_1H()
     nnuc = 6
     f0, I0, t0 = endorfrq(s, 340.0, 0.3, 0.7, threshold=1e-3)
     f1, I1, t1 = endorfrq(s, 340.0, 0.3, 0.7, threshold=1e-3, opt=ON)
-    keep0 = {tuple(t) for t in t0.tolist() if t[0] // nnuc == t[1] // nnuc}
+    keep0 = {tuple(t) for t in t0.tolist() if (t[0] - 1) // nnuc == (t[1] - 1) // nnuc}   # 1-based levels
     assert keep0 == {tuple(t) for t in t1.tolist()}
     d0 = {tuple(t): (f, i) for t, f, i in zip(t0.tolist(), f0.tolist(), I0.tolist())}
     d1 = {tuple(t): (f, i) for t, f, i in zip(t1.tolist(), f1.tolist(), I1.tolist())}
@@ -326,7 +328,7 @@ def test_endorfrq_vs_easyspin():
     assert len(refs) == 12
     for r in refs:
         s = _sys_from(r['Sys'])
-        tr = np.atleast_2d(r['Tr']) - 1
+        tr = np.atleast_2d(r['Tr'])          # 1-based, as endorfrq (0.9.2)
         for opt, P_ref, I_ref in ((Options(), r['Poff'], r['Ioff']), (ON, r['Pon'], r['Ion'])):
             f, I, t = endorfrq(s, float(r['Field']), float(r['phi']), float(r['theta']), threshold=0.0, opt=opt)
             got = {tuple(x): (fi, ii) for x, fi, ii in zip(t.tolist(), f.tolist(), I.tolist())}
@@ -334,6 +336,45 @@ def test_endorfrq_vs_easyspin():
             ours = np.array([got[(u, v)] for u, v in tr])
             np.testing.assert_allclose(ours[:, 0], P_ref, rtol=0, atol=1e-9)
             assert np.abs(ours[:, 1] - I_ref).max() < 1e-10 * I_ref.max()
+
+
+def test_endorfrq_vs_easyspin_default_threshold():
+    """Companion of test_endorfrq_vs_easyspin at the default threshold (1e-4, as the reference):
+    exactly EasySpin's level pairs, not a superset (0.9.14, B41: the per-orientation threshold kept
+    14 of EasySpin's 16 pairs for 14N+1H and 34-97 vs 81 for 63Cu+14N)."""
+    for r in _refs()["endorfrq"]:
+        s = _sys_from(r['Sys'])
+        tr = np.atleast_2d(r['Tr'])
+        for opt, P_ref, I_ref in ((Options(), r['Poff'], r['Ioff']), (ON, r['Pon'], r['Ion'])):
+            f, I, t = endorfrq(s, float(r['Field']), float(r['phi']), float(r['theta']), opt=opt)
+            got = {tuple(x): (fi, ii) for x, fi, ii in zip(t.tolist(), f.tolist(), I.tolist())}
+            assert set(got) == {tuple(int(v) for v in x) for x in tr.tolist()}
+            ours = np.array([got[(u, v)] for u, v in tr.tolist()])
+            np.testing.assert_allclose(ours[:, 0], np.atleast_1d(P_ref), rtol=0, atol=1e-9)
+            I_ref = np.atleast_1d(I_ref)
+            assert np.abs(ours[:, 1] - I_ref).max() < 1e-10 * I_ref.max()
+
+
+def test_endorfrq_level_pairs_are_easyspin_transitions():
+    """endorfrq level pairs are 1-based [u, v], u < v, as EasySpin's Transitions output (0.9.2; 0-based
+    before).  With threshold 0 and Enhancement on (electronic pairs excluded, as in EasySpin) every pair
+    EasySpin selects is returned under the same numbers with the same frequency; for 1H EasySpin keeps
+    all intra-manifold pairs and the sets are equal.  (EasySpin's lists are at threshold 1e-4, so they
+    are a subset of the threshold-0 lists in general; test_endor_tps_selection.py compares the
+    selection at EasySpin's thresholds.)"""
+    for r in _refs()["endorfrq"]:
+        s = _sys_from(r['Sys'])
+        tr = np.atleast_2d(r['Tr']).astype(int)
+        f, _, t = endorfrq(s, float(r['Field']), float(r['phi']), float(r['theta']), threshold=0.0, opt=ON)
+        t = t.numpy()
+        assert t.dtype.kind == 'i' and (t[:, 0] < t[:, 1]).all()
+        assert t.min() >= 1 and t.max() <= s.nStates
+        got = {(int(u), int(v)): fi for (u, v), fi in zip(t, f.tolist())}
+        assert {tuple(x) for x in tr.tolist()} <= set(got), f"EasySpin pairs {tr.tolist()} not in {sorted(got)}"
+        P = np.atleast_1d(r['Pon'])
+        np.testing.assert_allclose([got[(u, v)] for u, v in tr.tolist()], P, rtol=0, atol=1e-9)
+        if r['Sys']['Nucs'] == '1H':
+            assert set(got) == {(1, 2), (3, 4)} == {tuple(x) for x in tr.tolist()}
 
 
 def test_salt_vs_easyspin():
@@ -352,6 +393,9 @@ def test_salt_vs_easyspin():
             scales[enh] = sc
             if enh or 'Q' in S:     # matrix path (the default 1H path is first-order perturbation theory)
                 assert cos > 0.99995, (S['Nucs'], enh, cos)
-                assert np.abs(sc * y - yref).max() / np.abs(yref).max() < 1e-2
+                # 1e-2 before 0.9.14: 14N+1H with Enhancement was 4.6e-3 (zero-quantum pairs near
+                # 0 MHz kept by the per-orientation selection, B57), 3.4e-6 without; all matrix-path
+                # cases are now <= 5e-12 (EasySpin's TPS-grid selection).
+                assert np.abs(sc * y - yref).max() / np.abs(yref).max() < 1e-9
         if 'Q' in S:   # both settings on the matrix path: on/off intensity scale as in EasySpin
-            assert abs(scales[True] / scales[False] - 1) < 1e-3
+            assert abs(scales[True] / scales[False] - 1) < 1e-9

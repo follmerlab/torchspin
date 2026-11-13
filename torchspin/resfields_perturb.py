@@ -32,6 +32,27 @@ from torchspin.constants import PLANCK, BMAGN, BOLTZMANN
 from torchspin.rotations import erot
 
 
+def _check_nonzero_hyperfine(sys: SpinSystem, iNuc: int, A_mat: torch.Tensor) -> None:
+    """Second-order terms need inv(A): raise as EasySpin for a zero principal value.
+
+    EasySpin resfields_perturb.m:120-127 raises 'All hyperfine coupling
+    constants must be non-zero.' for any zero entry of a diagonal ``Sys.A``;
+    torchspin raised torch's ``LinAlgError`` from ``inv`` instead (B65).  A
+    singular full ``Sys.A`` raises the same error.  EasySpin checks at every
+    perturbation order; torchspin only where the inverse is used (second
+    order), as the first-order fields do not need it.
+    """
+    if sys.fullA:
+        singular = bool(torch.linalg.matrix_rank(A_mat.detach()) < 3)
+    else:
+        singular = bool((sys.A[iNuc, :].detach() == 0).any())
+    if singular:
+        raise ValueError(
+            f"resfields_perturb: All hyperfine coupling constants must be non-zero "
+            f"(nucleus {iNuc + 1}, {sys.Nucs[iNuc]}): second-order perturbation theory "
+            "needs inv(A). Use a small non-zero value, or matrix diagonalization.")
+
+
 def resfields_perturb_batch(
     sys: SpinSystem,
     phi_batch: torch.Tensor,
@@ -82,8 +103,10 @@ def resfields_perturb_batch(
     if opt is None:
         opt = Options()
 
-    from torchspin.spinsystem import _reject_h0extra
+    from torchspin.spinsystem import _reject_h0extra, _reject_ham
     _reject_h0extra(sys, 'resfields_perturb (perturbation theory)')
+    _reject_ham(sys, 'resfields_perturb (perturbation theory)',
+                "resfields or pepper with Options(Method='matrix')")
 
     from torchspin.ham_ezho import check_quadratic_zeeman_unsupported
     check_quadratic_zeeman_unsupported(sys, opt, 'resfields_perturb_batch')
@@ -216,6 +239,7 @@ def resfields_perturb_batch(
             nK_batch_list.append(nK_b)
             k_batch_list.append(k_b)
             if order >= 2:
+                _check_nonzero_hyperfine(sys, iNuc, A_mat)
                 invA_list_prep.append(torch.linalg.inv(A_mat))   # once
                 tr_AA_list_prep.append((A_mat @ A_mat).trace())  # once (tensor: on the graph)
                 det_A_list_prep.append(torch.linalg.det(A_mat))  # once (tensor: on the graph)
@@ -462,8 +486,10 @@ def resfields_perturb(
     check_quadratic_zeeman_unsupported(sys, opt, 'resfields_perturb')
 
     # Validate system
-    from torchspin.spinsystem import _reject_h0extra
+    from torchspin.spinsystem import _reject_h0extra, _reject_ham
     _reject_h0extra(sys, 'resfields_perturb (perturbation theory)')
+    _reject_ham(sys, 'resfields_perturb (perturbation theory)',
+                "resfields or pepper with Options(Method='matrix')")
     if sys.nElectrons != 1:
         raise ValueError(
             f"Perturbation theory requires exactly 1 electron, system has {sys.nElectrons}."
@@ -599,6 +625,7 @@ def resfields_perturb(
             k_list.append(k)
 
             if order >= 2:
+                _check_nonzero_hyperfine(sys, iNuc, A_mat)
                 invA_list.append(torch.linalg.inv(A_mat))
                 tr_AA_list.append((A_mat @ A_mat).trace())
                 det_A_list.append(torch.linalg.det(A_mat))

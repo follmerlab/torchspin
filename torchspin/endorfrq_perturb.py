@@ -124,8 +124,10 @@ def endorfrq_perturb(
             "endorfrq_perturb: Options.Enhancement=True (hyperfine enhancement) is not "
             "implemented in perturbation theory; use endorfrq (matrix diagonalization)."
         )
-    from torchspin.spinsystem import _reject_h0extra
+    from torchspin.spinsystem import _reject_h0extra, _reject_ham
     _reject_h0extra(sys, 'endorfrq_perturb (perturbation theory)')
+    _reject_ham(sys, 'endorfrq_perturb (perturbation theory)',
+                'endorfrq (matrix diagonalization)')
     if sys.nElectrons != 1:
         raise ValueError(
             f"endorfrq_perturb: nElectrons must be 1, got {sys.nElectrons}."
