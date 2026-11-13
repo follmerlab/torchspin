@@ -353,8 +353,24 @@ def salt(
     Raises
     ------
     ValueError
-        If the spin system contains no nuclei, or a set of equivalent
-        nuclei (``Sys.n > 1``), as in EasySpin.
+        If the spin system contains no nuclei, a set of equivalent
+        nuclei (``Sys.n > 1``) or orbital angular momenta (``Sys.L``), as in
+        EasySpin; or if ``Sys.Ham`` is combined with an explicit perturbation
+        method (``Options.Method='perturb'``, ``'perturb1'``, ``'perturb2'``).
+
+    Notes
+    -----
+    **Deliberate deviation (Sys.Ham).** EasySpin's salt rejects every
+    ``Sys.Ham*`` term (salt.m:132).  torchspin simulates them: a spin system
+    with any ``Sys.Ham`` entry is always sent to the matrix paths (resonance
+    fields by ``resfields_batch`` in the field-swept mode, ENDOR transitions by
+    diagonalizing ``ham()``), which include the zero-field (lB = 0) and
+    linear-in-field (lB = 1, e.g. ``Ham110``/``Ham112``) terms exactly.  The
+    first-order perturbation paths build the Zeeman term from ``Sys.g`` alone,
+    which is zero when the linear Zeeman term is given as ``Ham110``/``Ham112``.
+    Field-quadratic and cubic terms (lB >= 2) are dropped, as in
+    :func:`pepper` with the default ``Options.QuadraticZeeman=False``
+    (``QuadraticZeeman=True`` raises).  See KNOWN_LIMITATIONS.md.
     """
     if sys.nNuclei == 0:
         raise ValueError("salt: spin system must contain at least one nucleus.")
@@ -363,6 +379,22 @@ def salt(
     if any(int(k) > 1 for k in (sys.n or [])):
         raise ValueError(
             "salt does not support sets of equivalent nuclei (Sys.n>1).")
+    # EasySpin salt.m:133 rejects orbital angular momenta. The first-order
+    # path ignores Sys.L entirely (B45), and the matrix ENDOR path is not
+    # validated for spin-orbit systems.
+    if sys.L is not None and any(float(l) != 0.0 for l in sys.L):
+        raise ValueError("salt does not support Sys.L.")
+    # Higher-order Zeeman terms (Sys.Ham, EasySpin's MO_present: any Ham entry
+    # given). EasySpin salt.m:132 rejects them; torchspin routes such systems to
+    # the matrix paths, which use ham() (zero-field and linear-in-B Ham terms
+    # included). The first-order ENDOR path and the field-swept perturbation
+    # resonance search build the Zeeman term from Sys.g only, which is zero
+    # when Ham110/Ham112 carry it (B35), so they are bypassed.
+    ham_present = bool(sys.Ham)
+    if ham_present and str(getattr(opt, 'Method', 'matrix')).startswith('perturb'):
+        raise ValueError(
+            f"salt: Options.Method='{opt.Method}' cannot treat Sys.Ham terms (perturbation "
+            "theory uses Sys.g only); use the default Method='matrix'.")
     # salt treats single-electron systems without quadrupole coupling by
     # perturbation theory (EPR fields and ENDOR), built from the tensors.
     if (getattr(sys, 'H0Extra', None) is not None and sys.nElectrons == 1):
@@ -484,7 +516,7 @@ def salt(
         if grid_sym != 'O3' and n_orient > 2:
             _perturb_ok = (sys.nElectrons == 1
                            and (sys.Q is None or not torch.any(sys.Q.abs() > 0))
-                           and not enhancement)
+                           and not enhancement and not ham_present)
             if zero_field:
                 if enhancement:
                     raise NotImplementedError(
@@ -537,10 +569,13 @@ def salt(
         B_res_all  = [B_fixed] * n_orient
         intens_all = [orisel_w[k:k + 1] for k in range(n_orient)]
     elif any(t is not None and torch.is_tensor(t) and t.requires_grad
-             for t in (sys.g, sys.A, sys.D, sys.Q, getattr(sys, 'ee', None))):
+             for t in (sys.g, sys.A, sys.D, sys.Q, getattr(sys, 'ee', None),
+                       *(sys.Ham or {}).values())):
+        # Sys.Ham coefficients count too: a Ham system takes this path (B35)
+        # and would otherwise return a silently partial gradient.
         raise NotImplementedError('salt: the field-swept (Experiment.Range) ENDOR mode bins sticks and is not '
                                   'differentiable; use the fixed-field mode (Experiment.Field) for gradients.')
-    elif sys.nElectrons == 1:
+    elif sys.nElectrons == 1 and not ham_present:
         B_res_all, intens_all = resfields_perturb_batch(
             sys, phi_arr, theta_arr, exp, opt
         )
@@ -550,6 +585,18 @@ def salt(
         batch_size = auto_batch_size(opt.BatchSize, H0.shape[0], n_orient)
         B_res_all  = [None] * n_orient
         intens_all = [None] * n_orient
+        # Infinite temperature: the polarization is shared among the nuclear
+        # sublevels, 1/prod(2I+1), as in EasySpin (resfields.m:1265-1266) and in
+        # resfields_perturb_batch (B44).  resfields_batch applies it only when
+        # given sys, which would also compute (and validate) strain widths that
+        # salt does not use, so it is applied here.  At finite temperature the
+        # Boltzmann populations over the full space already include it.
+        if exp.Temperature is not None and exp.Temperature > 0:
+            nuc_pol = 1.0
+        else:
+            nuc_pol = 1.0
+            for I in getattr(sys, 'I', []):
+                nuc_pol /= (2 * I + 1)  # 1/prod(2I+1)
         for batch_idx in range((n_orient + batch_size - 1) // batch_size):
             s = batch_idx * batch_size
             e = min(s + batch_size, n_orient)
@@ -558,7 +605,8 @@ def salt(
             )
             for j, (B_res, intens_epr) in enumerate(zip(B_list, I_list)):
                 B_res_all[s + j]  = B_res
-                intens_all[s + j] = intens_epr
+                intens_all[s + j] = (intens_epr * nuc_pol
+                                     if intens_epr is not None else None)
 
     # ── Phase 2: ENDOR computation ─────────────────────────────────────────
     # For single-electron systems without quadrupole coupling, use fast
@@ -570,7 +618,7 @@ def salt(
     _use_perturb_endor = (sys.nElectrons == 1
                           and (sys.Q is None
                                or not torch.any(sys.Q.abs() > 0))
-                          and not enhancement)
+                          and not enhancement and not ham_present)
 
     if _use_perturb_endor:
         # Fully vectorized first-order perturbation theory ENDOR.

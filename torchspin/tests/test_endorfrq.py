@@ -85,15 +85,15 @@ class TestEndorfrqBasic:
         assert (intens >= 0).all(), "Negative intensities found"
 
     def test_transitions_are_valid_pairs(self):
-        """transition[k] = [i, j] with i < j and both in [0, nStates)."""
+        """transition[k] = [u, v] with u < v, 1-based (1..nStates) as EasySpin (0.9.2)."""
         sys = SpinSystem(S=0.5, g=2.0, Nucs='1H', A=[[10.0, 10.0, 10.0]])
         B = free_electron_resonance_mT(9.5)
         nStates = sys.nStates
         _, _, trans = endorfrq(sys, B_field=B)
 
         if trans.numel() > 0:
-            assert (trans[:, 0] >= 0).all()
-            assert (trans[:, 1] < nStates).all()
+            assert (trans[:, 0] >= 1).all()
+            assert (trans[:, 1] <= nStates).all()
             assert (trans[:, 0] < trans[:, 1]).all(), "i >= j in some pair"
 
     def test_freq_range_filter(self):

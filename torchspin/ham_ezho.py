@@ -193,29 +193,43 @@ def _ham_ezho_at_field(sys, B, eSpins, lB_list, dtype, device):
                     if i0 >= params.shape[0]:
                         continue
 
-                    Z_row = params[i0].detach().cpu().numpy()
-                    if not np.any(Z_row):
+                    # The coefficients stay on the autograd graph (B53): the
+                    # values are computed from the tensor row Z, the detached
+                    # copy Z_np decides which terms are skipped.  When Z
+                    # requires grad, a skipped term enters as (a - a.detach())·T
+                    # (exactly zero, but with its gradient), so that a
+                    # coefficient that is zero still gets one.
+                    Z = params[i0]
+                    Z_np = Z.detach().cpu().numpy()
+                    need_grad = bool(Z.requires_grad)
+                    if not np.any(Z_np) and not need_grad:
                         continue
 
                     l = l_val
 
                     # Convert Z (Stevens convention) to spherical tensor coefficients a
                     # Z has 2l+1 elements for q = l, l-1, ..., -l
-                    a = np.zeros(2 * l + 1, dtype=np.complex128)
+                    a_np = np.zeros(2 * l + 1, dtype=np.complex128)
+                    a = [None] * (2 * l + 1)
 
                     for m_pos in range(l, 0, -1):
                         lp = l - m_pos   # index for q = +m_pos
                         lm = l + m_pos   # index for q = -m_pos
-                        a[lp] = Glb * (-1)**m_pos * (Z_row[lp] - 1j * Z_row[lm])
-                        a[lm] = Glb * (Z_row[lp] + 1j * Z_row[lm])
+                        a_np[lp] = Glb * (-1)**m_pos * (Z_np[lp] - 1j * Z_np[lm])
+                        a_np[lm] = Glb * (Z_np[lp] + 1j * Z_np[lm])
+                        a[lp] = Glb * (-1)**m_pos * torch.complex(Z[lp], -Z[lm])
+                        a[lm] = Glb * torch.complex(Z[lp], Z[lm])
 
                     # m = 0
-                    a[l] = Glb * math.sqrt(2) * Z_row[l]
+                    a_np[l] = Glb * math.sqrt(2) * Z_np[l]
+                    a[l] = Glb * math.sqrt(2) * torch.complex(Z[l], torch.zeros_like(Z[l]))
 
                     # Sum contributions
                     for iq in range(2 * l + 1):
-                        if abs(a[iq]) < 1e-15:
+                        skip = abs(a_np[iq]) < 1e-15
+                        if skip and not need_grad:
                             continue
+                        a_iq = a[iq] - a[iq].detach() if skip else a[iq]
                         m = l - iq
 
                         pre_m = (-1)**m * math.sqrt(2 * l + 1)
@@ -236,8 +250,8 @@ def _ham_ezho_at_field(sys, B, eSpins, lB_list, dtype, device):
                                 spins, lS, mS, iSpin, dtype, device
                             )
 
-                            coeff = complex(a[iq] * pre_m * w3j * TlBmB[mB])
-                            H = H + coeff * TlSmS
+                            coeff = a_iq * pre_m * w3j * complex(TlBmB[mB])
+                            H = H + coeff.to(dtype=dtype, device=device) * TlSmS
 
     return H
 
@@ -440,8 +454,8 @@ def field_nonlinear_zeeman_ops(
     equals ``ham(sys, B)``.  For a field ``B n`` along the unit vector ``n`` the
     nonlinear part is ``B² n·G2·n + B³ G3[n, n, n]``.  Raises
     ``NotImplementedError`` for terms of order lB >= 4, which the decomposition
-    of :func:`ham_ezho` does not provide.  The ``Ham`` coefficients are constants
-    (not on the autograd graph), as in :func:`ham_ezho`.
+    of :func:`ham_ezho` does not provide.  The ``Ham`` coefficients stay on the
+    autograd graph, as in :func:`ham_ezho`.
     """
     orders = _ham_orders_present(sys)
     if not any(lB >= 2 for lB in orders):
@@ -485,3 +499,49 @@ def check_quadratic_zeeman_unsupported(sys: SpinSystem, opt, where: str) -> None
             f"Sys.Ham terms (lB >= 2). Use pepper with Options.Method='matrix', or set "
             f"QuadraticZeeman=False to drop these terms as before."
         )
+
+
+# ---------------------------------------------------------------------------
+# g-equivalent of the linear Zeeman terms Ham110/Ham112
+# ---------------------------------------------------------------------------
+
+def ham_linear_g(sys: SpinSystem, e: int) -> Optional[torch.Tensor]:
+    """g matrix equivalent to the ``Ham110``/``Ham112`` terms of electron *e* (0-based).
+
+    Returns the symmetric 3×3 matrix g (molecular frame) for which
+    μB B·g·S_e/h equals the ``Ham110`` + ``Ham112`` part of ``ham_ezho``, or
+    ``None`` when electron *e* has no nonzero such term.  Other terms (also
+    lB = 1 terms with lS = 3, 5, …) are not part of g and are left out.  The
+    result stays on the autograd graph of the ``Ham`` coefficients.
+    """
+    from types import SimpleNamespace
+    from torchspin.constants import BMAGN, PLANCK
+    from torchspin.spinops import sop
+    if sys.Ham is None:
+        return None
+    sub = {}
+    for key, val in sys.Ham.items():
+        k = str(key)
+        k = k[3:] if k.startswith('Ham') else k
+        if k not in ('110', '112') or val is None:
+            continue
+        v = torch.as_tensor(val, dtype=torch.float64)
+        if v.ndim == 1:
+            v = v.unsqueeze(0)
+        if e < v.shape[0] and bool(torch.any(v[e] != 0)):
+            sub[k] = v[e:e + 1]
+    if not sub:
+        return None
+    S = float(sys.S[e])
+    n = int(round(2 * S + 1))
+    one = SimpleNamespace(Spins=[S], nStates=n, nElectrons=1, Ham=sub)
+    _, G1, _, _ = ham_ezho(one, B0=None)
+    ops = [sop([S], [[1, c]]) for c in (1, 2, 3)]
+    # G1[i] = dH/dB_i = (μB/h) Σ_j g[i, j] S_j (MHz/mT); project on S_j.
+    fac = BMAGN / PLANCK * 1e-9
+    rows = []
+    for i in range(3):
+        rows.append(torch.stack([
+            torch.real(torch.trace(G1[i] @ ops[j])) / torch.real(torch.trace(ops[j] @ ops[j]))
+            for j in range(3)]))
+    return torch.stack(rows) / fac

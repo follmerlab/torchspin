@@ -412,22 +412,30 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
         ln += dlen
     z[N_c - 1, :] = np.concatenate([y[idx:idx + ln], y[idx:idx + 1]]) if periodic else y[idx:idx + ln]
     if full:
+        # C1 lower hemisphere: sphgrid stores each of these rows as a reversed
+        # upper row (sphgrid.m:320-325), i.e. with phi decreasing; put it back
+        # in phi-increasing order before resampling it on the common phi
+        # columns (B74). EasySpin's gridinterp.m:211-219 reads the rows as
+        # increasing: a lower knot at phi gets the value from -phi - dphi.
         idx += ln
         ln -= dlen
         for ir in range(N_c, 2 * N_c - 2):
-            z[ir, :] = _row(y[idx:idx + ln], periodic)
+            z[ir, :] = _row(y[idx:idx + ln][::-1], periodic)
             idx += ln
             ln += -dlen
         z[2 * N_c - 2, :] = y[idx]
 
     phi_f, theta_f, _, _ = sphgrid(symmetry, N_f)
     phi_f = phi_f.numpy(); theta_f = theta_f.numpy()
+    # 1-based as in gridinterp.m:121-125, then shifted (exactly) to 0-based:
+    # the ``1 +`` rounds away ulp-level excess at integer knots, which decides
+    # whether a NaN neighbor gets a zero weight.
     if full:
-        iphi = 4 * (N_c - 1) * (phi_f / maxPhi)
-        ithe = 2 * (N_c - 1) * (theta_f / math.pi)
+        iphi = (1 + 4 * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + 2 * (N_c - 1) * (theta_f / math.pi)) - 1
     else:
-        iphi = nOct * (N_c - 1) * (phi_f / maxPhi)
-        ithe = (N_c - 1) * (theta_f / (math.pi / 2))
+        iphi = (1 + nOct * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + (N_c - 1) * (theta_f / (math.pi / 2))) - 1
     iphi = np.clip(iphi, 0, nc - 1); ithe = np.clip(ithe, 0, nr - 1)
     if cubic:
         spl = RectBivariateSpline(np.arange(nr), np.arange(nc), z, kx=3, ky=3, s=0)
@@ -435,8 +443,13 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
     # bilinear with NaN propagation (EasySpin interp2 'linear')
     r0 = np.minimum(np.floor(ithe).astype(int), nr - 2); c0 = np.minimum(np.floor(iphi).astype(int), nc - 2)
     fr = ithe - r0; fc = iphi - c0
-    return ((1 - fr) * (1 - fc) * z[r0, c0] + (1 - fr) * fc * z[r0, c0 + 1]
-            + fr * (1 - fc) * z[r0 + 1, c0] + fr * fc * z[r0 + 1, c0 + 1])
+    # MATLAB interp2 'linear' (gridinterp.m:129) ignores corners with zero
+    # weight, so a NaN neighbor does not propagate to fine knots lying on a
+    # coarse row or column (0*NaN would be NaN here).
+    def _term(w, zz):
+        return np.where(w == 0.0, 0.0, w * zz)
+    return (_term((1 - fr) * (1 - fc), z[r0, c0]) + _term((1 - fr) * fc, z[r0, c0 + 1])
+            + _term(fr * (1 - fc), z[r0 + 1, c0]) + _term(fr * fc, z[r0 + 1, c0 + 1]))
 
 
 def _interp_l3(y: np.ndarray, N_f: int) -> np.ndarray:
@@ -490,7 +503,8 @@ def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
         # filled from neighboring knots.
         if symmetry == 'Dinfh':
             return _interp_l3(vals, N_f)          # EasySpin: 'L3' for axial grids with NaNs
-        return _interp_grid(vals, symmetry, N_c, N_f)
+        # linear for every transition, also those resonant at all knots
+        return _interp_grid(vals, symmetry, N_c, N_f, linear=True)
     if symmetry in _CLOSEDPHI_1OCT or symmetry == 'Dinfh':
         return _interp_sph(vecs_c, vecs_f, vals)
     return _interp_grid(vals, symmetry, N_c, N_f)
@@ -816,9 +830,14 @@ def _user_transitions(transitions, n_states):
 
 def _zf_const_pos(B_f, B_c):
     """Zero field: a transition has the same position at every orientation.
-    Restore that exactly after interpolation, whose round-off would otherwise
-    give near-zero-width triangles that straddle a bin edge, where the
-    projection formulas cancel catastrophically (a few % of the line area)."""
+    Give every interpolated vertex the coarse position exactly, so the line
+    goes into one bin as in EasySpin. Interpolation round-off scatters the
+    fine-grid positions by a few ulp; for a line exactly on a bin edge
+    (bin k covers [x_k, x_k + dx)) the vertices then straddle the edge and the
+    projection puts part of the line into the lower bin (5-39 % per line for
+    S = 1, D = [-700 -1300 2000] MHz on a 10 MHz axis, GridSize [19 4]; test
+    test_pepper_zerofield_edge.py). The projection itself is exact for such
+    near-zero-width triangles since 0.8.4 (B18); this is about which bin."""
     fin = B_c[np.isfinite(B_c)]
     if fin.size == 0:
         return B_f
@@ -1337,6 +1356,15 @@ def pepper(sys_or_list, exp: Experiment, opt: Optional[Options] = None):
             f"solver is second order: use 'perturb' or 'perturb2' for second order, "
             f"'perturb1' for first order, or 'hybrid'/'matrix'."
         )
+    # Perturbation theory takes the electron Zeeman term from Sys.g only: with
+    # g given as Ham110/Ham112 (g = 0) the spectrum was all zero, and other
+    # Sys.Ham terms were dropped.  EasySpin's pepper does the same silently;
+    # its resfreqs_perturb raises (resfreqs_perturb.m:75-77).
+    if _method.startswith('perturb'):
+        from torchspin.spinsystem import _reject_ham
+        for _s in components:
+            _reject_ham(_s, f"pepper with Options.Method='{_method}'",
+                        "Options(Method='matrix')")
     # Inputs on the autograd graph: run the differentiable forward path, as
     # garlic does, instead of returning a silently detached spectrum.
     from torchspin.autograd import inputs_require_grad
@@ -1447,7 +1475,18 @@ def _pepper_single(
         g = sys.g.detach().cpu().numpy()
         gvals = np.linalg.eigvalsh(g) if sys.fullg else g.reshape(-1)
         gmax, gmin = float(np.max(gvals)), float(np.min(gvals))
-        minB = PLANCK * (float(exp.mwFreq) * 1e9 - hf) / BMAGN / gmax / 1e-3
+        if gmin == 0.0 or gmax == 0.0:
+            # B55: g = 0 when the linear Zeeman term is given as Ham110/Ham112.
+            # EasySpin's pepper.m (241-272) takes the range from Sys.g alone
+            # too and then fails with an index error (pepper.m:324).
+            from torchspin.spinsystem import _ham_linear_orders
+            _keys = _ham_linear_orders(sys)
+            why = (f"the linear Zeeman term is given as Sys.Ham* ({', '.join(_keys)}) "
+                   f"and Sys.g is zero" if _keys else 'a principal g value is zero')
+            raise ValueError(
+                f'Cannot automatically determine field range: it is computed from '
+                f'Sys.g, and {why}. Please provide Exp.CenterSweep or Exp.Range.')
+        minB =PLANCK * (float(exp.mwFreq) * 1e9 - hf) / BMAGN / gmax / 1e-3
         maxB = PLANCK * (float(exp.mwFreq) * 1e9 + hf) / BMAGN / gmin / 1e-3
         lw_max = float(max(sys.get_lw()))
         center = (maxB + minB) / 2
@@ -2118,6 +2157,7 @@ def _pepper_single(
                 if B_f is None:
                     continue
                 if zero_field:
+                    # one position for all orientations: single-bin deposit on a bin edge
                     B_f = _zf_const_pos(B_f, B_c)
                 I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, mode='val')
                 W_f = _interp_slot(W_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, mode='val')
@@ -2270,6 +2310,7 @@ def _pepper_single(
                     if B_f is None:
                         continue
                     if zero_field:
+                        # one position for all orientations: single-bin deposit on a bin edge
                         B_f = _zf_const_pos(B_f, B_c)
                     I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
 
