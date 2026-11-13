@@ -185,9 +185,24 @@ def _spectrum(fn, c, h, **override):
             np.asarray(y.detach() if torch.is_tensor(y) else y, float))
 
 
+_CU63_DEVIATION = pytest.mark.xfail(strict=True, reason=(
+    "Deliberate deviation since 0.9.28 (B88): the 63Cu range [290 350] mT cuts transitions; "
+    "torchspin searches them again and interpolates per slot, EasySpin interpolates every "
+    "transition linearly. Cosine vs EasySpin h0 0.997448, h1 0.946325; vs the converged "
+    "reference (test_cu63_vs_converged_reference) torchspin is closer than EasySpin."))
+
+
+def _spectra_vs_easyspin_params():
+    out = []
+    for name in ['N14', 'H1', 'Cu63', 'N14_gS', 'N14_gSm']:
+        marks = [_CU63_DEVIATION] if name == 'Cu63' else []
+        out.append(pytest.param(name, marks=marks, id=name))
+    return out
+
+
 @pytest.mark.parametrize("fn", [pepper, pepper_autograd], ids=['pepper', 'pepper_autograd'])
 @pytest.mark.parametrize("h", [0, 1])
-@pytest.mark.parametrize("name", ['N14', 'H1', 'Cu63', 'N14_gS', 'N14_gSm'])
+@pytest.mark.parametrize("name", _spectra_vs_easyspin_params())
 def test_spectra_vs_easyspin(refs, name, h, fn):
     """Observed (both paths): cosine >= 0.999996, amplitude within 0.12 %."""
     c = refs[name]
@@ -199,6 +214,33 @@ def test_spectra_vs_easyspin(refs, name, h, fn):
     amp = np.abs(y).max() / np.abs(ref).max()
     assert cs > 0.99999, f"{name} h{h}: cosine {cs:.6f}"
     assert abs(amp - 1) < 0.002, f"{name} h{h}: amplitude {amp:.5f}"
+
+
+# 1 - cosine of the default-grid spectrum vs the converged reference (measured,
+# both paths): h0 4.971e-4, h1 1.348e-2; EasySpin's: 1.867e-3, 3.748e-2.
+_CU63_CONV = {0: (5.2e-4, 1.867e-3), 1: (1.42e-2, 3.748e-2)}
+
+
+@pytest.mark.parametrize("fn", [pepper, pepper_autograd], ids=['pepper', 'pepper_autograd'])
+@pytest.mark.parametrize("h", [0, 1])
+def test_cu63_vs_converged_reference(refs, h, fn):
+    """The 63Cu case cuts transitions at 290 mT (B88). Reference: the same system
+    without interpolation on a 1-D Dinfh grid [721 1] (axial, untilted strain),
+    swept 80 mT wider on both sides and cropped (agrees with Ci [121 1] to
+    1 - cos 7e-7 / 1.7e-5). torchspin is closer to it than EasySpin."""
+    c = refs['Cu63']
+    _, y = _spectrum(fn, c, h)
+    r0, r1 = (float(v) for v in c.Range)
+    n = int(c.nPoints)
+    dx = (r1 - r0) / (n - 1)
+    k = int(round(80 / dx))
+    wide = Experiment(mwFreq=9.5, Range=[r0 - k * dx, r1 + k * dx], nPoints=n + 2 * k, Harmonic=h)
+    _, ref = pepper(sys_from_mat(c.Sys), wide, Options(GridSymmetry='Dinfh', GridSize=[721, 1]))
+    ref = np.asarray(ref, float)[k:k + n]
+    bound, easyspin = _CU63_CONV[h]
+    d = 1 - _cosine(y, ref)
+    assert d < bound, f"Cu63 h{h}: 1 - cos {d:.3e}"
+    assert 1 - _cosine(np.asarray(getattr(c, f'spc{h}'), float), ref) == pytest.approx(easyspin, rel=1e-2)
 
 
 @pytest.mark.xfail(strict=True, reason=(

@@ -212,32 +212,99 @@ reads the same table. Spectra on these grids changed:
 - Now (tests/data/ref_sphgrid_maxphi.mat, 9 cases, pepper and pepper_autograd): cosine
   ≥ 0.99993, amplitude within 5e-4; EasySpin's `sphgrid` knots and weights for all 14 groups
   agree to 1e-13.
-- With missing knots, positions of all transitions are interpolated linearly (EasySpin `L1`),
+- With missing knots, positions of all transitions were interpolated linearly (EasySpin `L1`),
   also for transitions that resonate at every knot, on every grid (the D4h system on a D2h
-  grid: cosine 0.959 before, 1.0000000 now).
+  grid: cosine 0.959 before, 1.0000000 with EasySpin in 0.9.3-0.9.27). Since 0.9.28 the
+  transitions that leave the range are searched again and the cases whose ranges cut
+  transitions (`d4h_*_wide`, `oh_auto`) deliberately differ from EasySpin; see § Field sweeps
+  whose range cuts transitions.
 - `Options.GridSymmetry` accepts all 14 EasySpin grid symmetries, `'auto'` and `''` (before
   0.9.3 only Dinfh, D2h, C2h, Ci, C1, O3 and `'auto'`).
 
-## Powder grid interpolation when resonances are missing (fixed 0.9.4)
+## Field sweeps whose range cuts transitions (fixed 0.9.28; was § Powder grid interpolation when resonances are missing, 0.9.4)
 
-When any transition has no resonance at some knot of the coarse grid (it leaves the sweep range,
-or the level pair does not resonate there), EasySpin interpolates the positions of every
-transition linearly (`L1`, 2-D grids) or with the local cubic `L3` (axial grids)
-(pepper.m:701, 763-772). Up to 0.9.3 `pepper` switched only the slots that carried NaNs and
-splined the rest with `G3`; `pepper_autograd` and `salt` were already right. S = 5/2 with
-D = 300 MHz and a B4 term on an explicit D2h grid (Range [200 480] mT) was cosine 0.9587 at
-Harmonic 1.
+The matrix resonance search (`resfields_batch`) covers `Exp.Range` only, so a transition that
+leaves the sweep window at some orientations has knots without a resonance (NaN) there. Up to
+0.9.27 pepper and pepper_autograd then, as EasySpin does,
 
-- EasySpin agreement (tests/data/ref_pepper_nanlinear.mat), closed-φ grids (D2h explicit and
-  from hamsymm): cosine ≥ 1 − 3e-8, amplitude within 4e-5, pepper and pepper_autograd.
-- **Open-φ grids with missing resonances are not exact.** The same S = 5/2 system on an explicit
-  C2h grid is cosine 0.9964 and amplitude 1.053 of EasySpin (Ci: 0.9986, 1.017), in `pepper`
-  and `pepper_autograd` alike (before 0.9.4 `pepper` was 0.9395 / 0.9478). Without
-  interpolation (GridSize [19 1]) or without missing resonances (Range [0 800] mT) the same
-  grid agrees to 2e-8 / 2e-6, so the residual is in the linear interpolation or projection of
-  open-φ grids with NaN knots, most likely EasySpin's `L1` rectify of periodic rows (B58, see
-  § Powder grid interpolation next to knots without a resonance; unchanged by the 0.9.10 fix).
-  The C2h case is an `xfail(strict=True)` in `test_pepper_nanlinear_matlab_validation.py`.
+1. interpolated the positions of **every** transition linearly (`L1` on 2-D grids, `L3` on
+   axial grids; pepper.m:701, 763-772) as soon as one transition had a missing knot (0.9.4,
+   B31: before that `pepper` switched only the slots that carried NaNs, which disagreed with
+   EasySpin and with `pepper_autograd`, B91). Linear position interpolation reproduces the
+   coarse-grid facets for all transitions, so a narrow range made the default `GridSize [19 4]`
+   no better than `[19 1]`;
+2. dropped every triangle (or axial zone) with a NaN vertex, so the triangles crossing the range
+   ends were lost even without interpolation and spectra converged only O(h) near the ends
+   (B75; EasySpin too).
+
+Since 0.9.28 (B88), after the first search the level pairs whose resonance count differs
+between orientations are searched again over Range ± 0.5 W (W = sweep width; lower edge
+clamped at 0), all orientations at once so that the occurrence index of a looping transition
+means the same at every knot, and their resonances are replaced wholesale. A pair's new
+resonances are kept only if fewer are missing and no orientation loses one; pairs that improved
+but are still incomplete are searched again over a doubled window, up to ± 4 W. (Pairs that
+stop improving do not resonate at some orientations at any field nearby, e.g. looping
+transitions; searching them over ever wider windows only made the detection of their
+near-tangent resonances roundoff-sensitive: S = 5/2 parallel mode differed by 4.9 % between
+torch 2.10 and 2.15 with an unconditional ± 4 W round, 5e-13 now.) Out-of-range positions are kept: projection
+(`_projecttriangles`, `_projectzones`) and the strain summation clip them to the window, and
+the interpolation sees the transition at every knot. Only slots that still miss knots after
+that (transitions that genuinely do not resonate at some orientations, e.g. looping ones) are
+interpolated linearly; all others keep the global cubic `G3`. This is decided per slot in
+`pepper._interp_slot` and `pepper_autograd._interp_slots_t`; the global switch is gone.
+
+- **Converged references** (no interpolation, GridSize [181 1], on an aligned sweep wide enough
+  that no transition leaves it, cropped; tests/data/ref_missing_knots.npz,
+  generate_missing_knots_refs.py). 1 − cosine / max|dev| relative to the maximum, on the
+  interior of the range (ends ± 5 FWHM dropped, see the next bullet), 0.9.27 → 0.9.28, pepper
+  and pepper_autograd alike:
+  - 63Cu, A = [50 50 500] MHz with AFrame [0 0.4 0], lw 0.3 mT, [290 350] mT (B88), auto C2h
+    grid [19 4]: 0.201 / 0.62 → 0.0525 / 0.33 (cosine 0.7987 → 0.9475; the rest is the C2h
+    grid at [19 4], B88 part 3: a wide sweep gives the same spectrum to 3e-11);
+  - 91Zr, A = 780 MHz, D2h [19 4], [300 400] mT (B91): 6.7e-4 / 0.050 → 4.4e-6 / 0.0049;
+  - S = 5/2 with D and B4, D2h [19 4], [200 480] mT (B31): 0.0434 / 0.236 → 9.6e-5 / 0.0135;
+  - the 16 EasySpin cases of test_pepper_nanlinear_, test_interp_nan_edges_,
+    test_sphgrid_maxphi_ and test_pepper_parallel_matlab_validation.py whose ranges cut
+    transitions all move closer, e.g. the Oh system at [250 430] mT 0.579 / 0.90 → 2.0e-3 /
+    0.064, the B48 stick spectrum without interpolation (B75) 8.7e-3 / 0.27 → 1.9e-5 / 0.022,
+    S = 5/2 parallel mode (with looping pairs that stay partly missing) 5.1e-3 / 0.130 →
+    7.0e-4 / 0.036.
+  - A narrow sweep now equals the crop of a wide sweep at the same GridSize to 3e-11 (interior;
+    stick and strain spectra, which have no final convolution, on the whole range but the first
+    bin); 0.9.27: 0.04-0.6.
+- **Range ends.** Lines centered outside the range enter the final `Sys.lw` convolution only
+  through the spectrum itself; the edge padding of `Options.PaddingMultiplier` (0.9.6) handles
+  that. With it the full-range numbers equal the interior ones (Cu [19 4] cosine 0.94750,
+  91Zr 0.999865 / max dev 0.077, the Cu no-interpolation [181 1] spectrum 0.99569 → 1.000000 /
+  3e-4); without it the first and last few FWHM of a harmonic spectrum still deviate.
+  Transitions that leave the range at every orientation are not searched; their Lorentzian
+  tails inside the range are missing, as before (91Zr: the 0.077 above).
+- **pepper vs pepper_autograd** agree to 4e-12..1.3e-11 of the maximum on these cases (B91;
+  they were already equal since 0.9.4). Gradients through the re-searched slots (d/dA, d/dg,
+  d/dlw on the Cu case on a Ci grid and the 91Zr case) agree with converged central
+  differences to 1e-6 / 4e-8 / 1e-8.
+- **Unchanged when nothing is missing.** If every level pair has the same number of resonances
+  at every orientation the re-search is not run and no slot goes linear: 29 spectra (9 grid
+  symmetries, Cu with and without strain, high spin, perturbation theory, frequency sweeps,
+  pepper and pepper_autograd) are bit-identical to 0.9.27.
+- **Cost.** One extra search, over the partly missing pairs only, per doubling: case 3 at
+  [19 4] 0.04 → 0.2 s, the Cu case at [181 1] 6 → 12 s.
+- **Deliberate deviation from EasySpin.** EasySpin keeps the NaNs, interpolates every slot
+  linearly (pepper.m:701, 763-772) and drops the triangles that cross the range ends. For the
+  EasySpin references above this gives 1 − cosine up to 0.06 (Oh: 0.54, amplitude 1.34),
+  always farther from the converged reference than torchspin. Those EasySpin comparisons are
+  `xfail(strict=True)` with the measured numbers; the 0.9.4 C2h case (EasySpin's open-φ `L1`
+  rows, B58) is one of them.
+- **Frequency sweeps** are not affected: `resfreqs_batch` returns every level pair at every
+  orientation (no window), so out-of-range knots do not occur, and the missing-knot handling
+  there is unchanged.
+- **Perturbation theory** (`Options.Method='perturb*'`) searches Range ± 20 % (EasySpin's
+  `SearchRange`) and has no level pairs to re-search; slots that still miss knots there go
+  linear per slot, the others stay cubic.
+- **Hybrid** (`Options.Method='hybrid'`): the nuclear sub-lines are pruned per solver call, so
+  the hybrid line list is not re-searched; per-slot linear as above.
+- `salt` (ENDOR) has its own rule and is unchanged: with any missing knot it skips the
+  interpolation altogether.
 
 ## Powder grid interpolation next to knots without a resonance (fixed 0.9.10)
 
@@ -254,6 +321,9 @@ fine knot lay exactly on a coarse column.
   without interpolation). tests/data/ref_interp_nan_edges.mat.
 - `sphgrid` φ and θ equal EasySpin's bitwise (12 groups, GridSize 7 and 73). Spectra with a
   resonance at every knot change by roundoff only (≤ 1.3e-13).
+- **EasySpin spectra (0.9.28).** The seven spectra here cut transitions at the range ends; since
+  0.9.28 they are re-searched (§ Field sweeps whose range cuts transitions) and are checked
+  against converged references instead of EasySpin (strict xfails with the measured numbers).
 - **Open-φ grids with missing knots still deviate (B58, not fixed).** For periodic θ rows
   EasySpin's `L1` rectify samples the wrapped row (len + 1 values) at `linspace(1, len, nc)`
   (gridinterp.m:188, 217), i.e. it stretches the row over the first len knots and leaves out the
@@ -1143,9 +1213,11 @@ intensities agree with EasySpin perturb2 at 0.988 (`septrans_CuN_matrix` xfail).
 (2) For S=5/2 in parallel mode torchspin and EasySpin agree exactly on the coarse
 grid. With the default [19 4] interpolation they differed (cosine 0.9959) because
 torchspin splined the positions of transitions that resonate everywhere while EasySpin
-interpolates all of them linearly once any transition misses a knot; fixed in 0.9.4
-(cosine 0.99989, see § Powder grid interpolation when resonances are missing). The test
-threshold is 0.9998 (was 0.995).
+interpolates all of them linearly once any transition misses a knot; matched in 0.9.4
+(cosine 0.99989, threshold 0.9998). Since 0.9.28 the range-cut transitions are searched again
+and only the slots that never resonate at some orientations go linear (B88): cosine 0.99582
+with EasySpin (strict xfail), but 1 − cosine 7.0e-4 against a converged reference, where
+0.9.27 and EasySpin were 5.1e-3 (see § Field sweeps whose range cuts transitions).
 
 Internals aligned with EasySpin in the process: global transition pre-/post-
 selection (`Opt.Threshold`) instead of per-orientation thresholds, a

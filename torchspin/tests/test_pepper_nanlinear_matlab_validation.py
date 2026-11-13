@@ -1,18 +1,33 @@
-"""Position interpolation when a transition has no resonance at some knots,
-against EasySpin (B31; tests/data/ref_pepper_nanlinear.mat,
-generate_pepper_nanlinear_refs.m).
+"""Position interpolation when a transition has no resonance at some knots
+(B31, B88): against converged references, and the documented deviation from
+EasySpin (tests/data/ref_pepper_nanlinear.mat, generate_pepper_nanlinear_refs.m).
 
 EasySpin sets one flag when any transition lacks a resonance somewhere and
 then interpolates the positions of every transition with ``L1`` (2-D grids)
-or ``L3`` (axial grids) instead of the global cubic ``G3``
-(pepper.m:701, 763-772).  Up to 0.9.3 ``pepper`` switched only the slots
-that carried NaNs and still splined the others (``pepper_autograd`` was
-already right): S = 5/2 with B4 on an explicit D2h grid was cosine 0.9587.
+or ``L3`` (axial grids) instead of the global cubic ``G3`` (pepper.m:701,
+763-772).  0.9.4 copied that (S = 5/2 with B4 on D2h was cosine 0.9587 with
+EasySpin before, 1 - 2e-10 after).  In all four cases here every missing knot
+is a transition that leaves Exp.Range, and the all-linear mode reproduces the
+coarse-grid facets: against a converged reference (no interpolation,
+GridSize [181 1], wide sweep cropped; tests/data/ref_missing_knots.npz) the
+EasySpin-identical spectra were 1 - cosine 0.0434 / 1.25e-3 / 0.0434 / 3.2e-4.
 
-Measured with the fix (pepper and pepper_autograd agree): the three closed-phi
-cases have cosine >= 1 - 3e-8 and amplitude within 4e-5.  On main they were
-cosine 0.95870 / 0.99882 / 0.99971 and amplitude 1.0082 / 0.9841 / 0.9953.
+Since 0.9.28 the level pairs that leave the range are searched again over a
+padded window and only slots that still miss knots go linear (B88), so these
+spectra deliberately differ from EasySpin.  Measured (1 - cosine / max|dev|
+relative to the maximum, interior of the range, pepper and pepper_autograd
+alike), 0.9.27 -> 0.9.28:
+
+* s52_b4_D2h_h1: vs converged 4.34e-2 / 0.236 -> 9.61e-5 / 0.0135;
+  vs EasySpin 2.3e-10 -> 4.13e-2 (amplitude 1.0082);
+* s52_b4_D2h_h0: 1.25e-3 / 0.0863 -> 2.33e-6 / 0.0033; EasySpin 8e-11 -> 1.18e-3;
+* s52_b4_C2h_h1: 4.34e-2 / 0.236 -> 9.71e-5 / 0.0135; EasySpin 3.6e-3 -> 6.05e-2
+  (was a strict xfail before: B58, EasySpin's open-phi L1 rows);
+* s52_rhombic_h1: 3.21e-4 / 0.0256 -> 1.16e-6 / 0.0017; EasySpin 3e-11 -> 2.9e-4.
+
+The EasySpin comparisons are strict xfails with these numbers.
 """
+import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -23,17 +38,32 @@ from scipy.io import loadmat
 from torchspin import SpinSystem, Experiment, Options, pepper
 from torchspin.pepper_autograd import pepper_autograd
 
-REF = Path(__file__).resolve().parents[2] / 'tests' / 'data' / 'ref_pepper_nanlinear.mat'
+DATA = Path(__file__).resolve().parents[2] / 'tests' / 'data'
+REF = DATA / 'ref_pepper_nanlinear.mat'
+CONVERGED = DATA / 'ref_missing_knots.npz'
+
+_spec = importlib.util.spec_from_file_location('_gen_missing_knots', DATA / 'generate_missing_knots_refs.py')
+gen = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gen)
 
 COS_MIN = 1 - 1e-7
 AMP_TOL = 1e-4
 
-# Open-phi grid (C2h): the fix makes pepper agree with pepper_autograd
-# (cosine 0.93949 -> 0.99635), but both stay off EasySpin (amplitude 1.053).
-# Without interpolation (GridSize [19 1]) or without NaNs (Range [0 800]) the
-# same system agrees to 2e-8 / 2e-6, so the residual is in the L1 interpolation
-# or projection of open-phi grids with missing knots.  Not traced.
-OPEN_PHI = {'s52_b4_C2h_h1'}
+# EasySpin case -> converged reference, and bounds on (1 - cosine, max|dev|)
+# against it (interior; measured x 1.05, see the module docstring)
+CONV = {
+    's52_b4_D2h_h1': ('case3', 1.01e-4, 1.42e-2),
+    's52_b4_D2h_h0': ('case3_h0', 2.45e-6, 3.47e-3),
+    's52_b4_C2h_h1': ('case3_c2h', 1.02e-4, 1.42e-2),
+    's52_rhombic_h1': ('case3r', 1.22e-6, 1.81e-3),
+}
+# measured vs EasySpin since 0.9.28 (1 - cosine, amplitude ratio)
+DEVIATION = {
+    's52_b4_D2h_h1': (4.13e-2, 1.0082),
+    's52_b4_D2h_h0': (1.18e-3, 0.9841),
+    's52_b4_C2h_h1': (6.05e-2, 1.0617),
+    's52_rhombic_h1': (2.86e-4, 0.9953),
+}
 
 
 def _load():
@@ -79,15 +109,37 @@ def _params():
     out = []
     for n in _case_names():
         for f in ('pepper', 'pepper_autograd'):
-            marks = ()
-            if n in OPEN_PHI:
-                marks = pytest.mark.xfail(strict=True, reason='open-phi L1 residual (not traced)')
-            out.append(pytest.param(n, f, marks=marks, id=f'{n}-{f}'))
+            c, a = DEVIATION[n]
+            reason = (f'B88 (0.9.28): the range cuts transitions; torchspin searches them again over a '
+                      f'padded window and interpolates only slots with missing knots linearly, EasySpin '
+                      f'interpolates every slot linearly (pepper.m:701, 763-772). Measured 1 - cosine '
+                      f'{c:.3g}, amplitude {a:.4f}; torchspin is closer to the converged reference '
+                      f'(test_nanlinear_vs_converged)')
+            out.append(pytest.param(n, f, marks=pytest.mark.xfail(strict=True, reason=reason), id=f'{n}-{f}'))
     return out
+
+
+@pytest.mark.parametrize('func', ['pepper', 'pepper_autograd'])
+@pytest.mark.parametrize('name', list(CONV))
+def test_nanlinear_vs_converged(cases, name, func):
+    """The four EasySpin cases against converged references (no
+    interpolation, GridSize [181 1], wide sweep cropped)."""
+    sys, exp, opt = _inputs(cases[name])
+    rn, cmax, dmax = CONV[name]
+    fn = pepper if func == 'pepper' else pepper_autograd
+    x, spc = fn(sys, exp, opt)
+    x = x.detach().cpu().numpy().ravel(); spc = spc.detach().cpu().numpy().ravel()
+    r = np.load(CONVERGED)
+    assert np.allclose(x, r[rn + '_x'], rtol=0, atol=1e-9)
+    c, d = gen.metrics(spc, r[rn], gen.interior(x, sys))
+    print(f'{name} {func}: 1 - cosine {c:.4e}, max dev {d:.4e}')
+    assert c <= cmax and d <= dmax, (name, func, c, d)
 
 
 @pytest.mark.parametrize('name,func', _params())
 def test_nanlinear_vs_matlab(cases, name, func):
+    """EasySpin bit-compatibility of the all-linear mode (0.9.4-0.9.27); a
+    documented deviation since 0.9.28 (strict xfails, see _params)."""
     c = cases[name]
     sys, exp, opt = _inputs(c)
     fn = pepper if func == 'pepper' else pepper_autograd
@@ -104,7 +156,7 @@ def test_nanlinear_vs_matlab(cases, name, func):
 
 @pytest.mark.parametrize('name', _case_names())
 def test_pepper_matches_autograd(cases, name):
-    """Both implementations take the same interpolation path, open-phi included."""
+    """Both implementations take the same re-search and interpolation path, open-phi included."""
     sys, exp, opt = _inputs(cases[name])
     _, y1 = pepper(sys, exp, opt)
     _, y2 = pepper_autograd(sys, exp, opt)
