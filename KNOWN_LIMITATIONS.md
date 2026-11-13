@@ -587,6 +587,8 @@ work from this decomposition (pepper's resonance search, `levels`, `endorfrq`, `
   `ref_ham_gstrain.mat`). If the g-equivalent matrix is not diagonal in `Sys.gFrame`,
   torchspin raises `ValueError`, as for gStrain with a full g matrix. Other lB = 1
   terms (`Ham13x`, …) are not part of this g.
+- **`salt` (0.9.5).** EasySpin's salt rejects every `Sys.Ham*` (salt.m:132); torchspin
+  simulates them on its matrix paths (§ ENDOR (`salt`)).
 
 ## Simulator — field-quadratic Zeeman terms, `Options.QuadraticZeeman` (0.7.1)
 
@@ -772,9 +774,9 @@ projection / convolution shared with `pepper_autograd`; gradients vs finite
 differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swept
 (multi-field) mode is not and raises for grad tensors.
 
-- **Method choice.** `salt` ignores `Options.Method`. For one electron without Q it uses
-  first-order perturbation theory (EasySpin `Opt.Method='perturb1'`), otherwise the matrix
-  path; EasySpin's default is always `'matrix'`. Since 0.8.1 both give the same intensity
+- **Method choice.** `salt` ignores `Options.Method`. For one electron without Q and without
+  `Sys.Ham` it uses first-order perturbation theory (EasySpin `Opt.Method='perturb1'`),
+  otherwise the matrix path; EasySpin's default is always `'matrix'`. Since 0.8.1 both give the same intensity
   scale (|⟨i|μ⊥|j⟩|² in (MHz/mT)²); the first-order path matches EasySpin `perturb1` to
   round-off and EasySpin's default to the first-order error (0.3 % in area for 1H and
   1H+14N with |A| ≤ 7 MHz at 326.5 mT, about 1 % for 1H with |A| up to 16 MHz).
@@ -796,6 +798,29 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
 - **Equivalent nuclei.** `salt` raises for `Sys.n > 1`, as EasySpin does (salt.m:135-136).
   Before 0.8.10 it ignored `n` and returned the spectrum of a single nucleus. Give equivalent
   nuclei as separate entries of `Nucs`.
+- **Higher-order Zeeman terms (`Sys.Ham*`), deliberate deviation (0.9.5).** EasySpin's salt
+  rejects them (salt.m:132). torchspin sends every system with a `Sys.Ham` entry to the matrix
+  paths: resonance fields by `resfields_batch` in the field-swept mode, ENDOR transitions by
+  diagonalizing `ham()` (zero-field and linear-in-B Ham terms included exactly), also for one
+  electron without Q. The first-order paths build the Zeeman term from `Sys.g` only, which is
+  zero when `Ham110`/`Ham112` carry it; before 0.9.5 such a system gave a fixed-field spectrum
+  12.8x too large with Larmor-only lines (8.9x with `ExciteWidth`) and an all-zero field-swept
+  spectrum (B35). Now Ham110/112 equal to g gives the g spectrum of the matrix path to 2e-12
+  (test_salt_ham.py). Field-quadratic and cubic terms (lB >= 2) are dropped, as in pepper with
+  `Options.QuadraticZeeman=False`; `QuadraticZeeman=True` raises. An explicit
+  `Options.Method='perturb*'` with `Sys.Ham` raises `ValueError`. In 0.9.5 Ham coefficients
+  carry no gradient (`ham_ezho` detaches them; § Higher-order Zeeman terms); B53 keeps them on
+  the graph, after which fixed-field `salt` gives d spc/d Ham110 equal to a central difference
+  (-1.46337e-9 vs -1.46399e-9 for the 1H case above). The field-swept mode is not
+  differentiable: a Ham coefficient that requires grad raises `NotImplementedError` there, as
+  for g, A, D, Q and ee. In the field-swept mode the Ham spectrum comes from
+  `resfields_batch` and the same system given with `g` from `resfields_perturb_batch`; in
+  0.9.5 their scales differ (Ham 1.99x the g spectrum for the 1H case above, 6.0x with an
+  added 14N; B44). With the B44 fix (0.9.9, 1/prod(2I+1) nuclear-sublevel polarization) they
+  agree to the first-order error: amplitude 0.994, cosine 0.99989 (1H); 0.992, 0.99997 (1H +
+  14N). Fixed-field spectra are not affected.
+- **Orbital angular momentum.** `salt` raises for `Sys.L`, as EasySpin does (salt.m:133).
+  Before 0.9.5 the first-order path ignored it (B45).
 - **Line width (0.8.11).** `lw_mhz` is a Gaussian FWHM, applied as EasySpin's salt.m applies
   `Sys.lwEndor(1)` (salt.m:899-911): a width of at most two rf increments is not convolved,
   as the line is delta-like. Before 0.8.11 torchspin convolved it, which lowered peaks of

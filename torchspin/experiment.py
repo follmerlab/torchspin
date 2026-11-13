@@ -300,8 +300,10 @@ class Options:
         :func:`salt` ignores ``Method``: it always finds resonance fields by
         diagonalization and the ENDOR frequencies by first-order perturbation
         theory for one electron without quadrupole couplings, and by matrix
-        diagonalization otherwise or when ``Enhancement=True``.  Both
-        ENDOR paths give |<i|mu_perp|j>|^2 intensities in (MHz/mT)^2 (the
+        diagonalization otherwise, when ``Enhancement=True`` or when
+        ``Sys.Ham`` is given (0.9.5; with ``Sys.Ham`` an explicit
+        ``'perturb*'`` method raises).  Both ENDOR paths give
+        |<i|mu_perp|j>|^2 intensities in (MHz/mT)^2 (the
         first-order one since 0.8.1), so the scale does not depend on the path;
         EasySpin's default is always ``'matrix'``.
     HybridCoreNuclei:
