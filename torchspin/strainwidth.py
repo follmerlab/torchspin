@@ -430,8 +430,8 @@ def _strain_g_values(sys: SpinSystem, e: int, device) -> torch.Tensor:
     if gm is None:
         return g_values
     gm = gm.to(device=device)
-    if bool(torch.any(sys.gFrame[e] != 0)):
-        R_g2M = erot(sys.gFrame[e].tolist(), device=device).T.to(dtype=torch.float64)
+    if sys.gFrame.requires_grad or bool(torch.any(sys.gFrame[e] != 0)):
+        R_g2M = erot(sys.gFrame[e], device=device).T.to(dtype=torch.float64)
         gm = R_g2M.T @ gm @ R_g2M
     off = gm - torch.diag(torch.diagonal(gm))
     if float(off.detach().abs().max()) > 1e-9 * float(gm.detach().abs().max()):
