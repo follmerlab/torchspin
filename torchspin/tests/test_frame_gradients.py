@@ -424,7 +424,10 @@ def test_frame_on_graph_gives_float_path_values():
     ``gFrame`` 3.2e-13, ``AFrame`` 7e-14 to 8e-14 here (torch 2.10, 2.15) and
     up to 3.0e-13 on CI (torch 2.14.1, 2.15.0), ``QFrame`` 3.0e-13,
     ``DFrame`` 1.9e-14, ``AFrame+AStrain`` (matrix and perturb) 1.4e-14;
-    single-threaded these four are bit-identical.
+    single-threaded these four are bit-identical.  ``eeFrame`` (on the explicit
+    Ci grid since 0.9.26) is bit-identical on macOS (torch 2.10, 2.15, 1 and 8
+    threads) and differs by 4.2e-14 to 5.6e-14 on Linux/Windows CI (Python
+    3.12/3.13, torch 2.15.0).
 
     That this PR leaves non-grad results unchanged was checked against main
     0.9.0 when it was written: 466 arrays (150 random systems with every frame
@@ -441,7 +444,8 @@ def test_frame_on_graph_gives_float_path_values():
             np.testing.assert_allclose(out[k], ref[k], rtol=0, atol=4 * np.spacing(scale), err_msg=k)
         elif k in ('pepper_matrix_gFrame', 'pepper_matrix_gFrame+gStrain', 'pepper_perturb_gFrame+gStrain',
                    'pepper_matrix_DFrame+DStrain', 'pepper_matrix_AFrame', 'pepper_matrix_AFrame+AStrain',
-                   'pepper_perturb_AFrame+AStrain', 'pepper_matrix_DFrame', 'pepper_matrix_QFrame'):
+                   'pepper_perturb_AFrame+AStrain', 'pepper_matrix_DFrame', 'pepper_matrix_QFrame',
+                   'pepper_matrix_eeFrame'):
             np.testing.assert_allclose(out[k], ref[k], rtol=0, atol=1e-11 * scale, err_msg=k)
         else:
             assert np.array_equal(out[k], ref[k]), f'{k}: differs by {np.abs(out[k] - ref[k]).max() / scale:.1e} (rel)'
