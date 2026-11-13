@@ -14,6 +14,80 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.28] — 2026-11-12
+
+### Fixed
+
+- **Field sweeps whose range cuts transitions at some orientations were far from converged
+  (B88, B75, B91).** The matrix resonance search covers `Exp.Range` only, so such transitions
+  have knots without a resonance (NaN). pepper and pepper_autograd then interpolated the
+  positions of every transition linearly, as EasySpin does (pepper.m:701, 763-772; 0.9.4, B31),
+  which reproduces the coarse-grid facets, and dropped every triangle with a NaN vertex, so
+  triangles crossing the range ends were lost even without interpolation (B75; EasySpin too).
+  Now the level pairs whose resonance count differs between orientations are searched again
+  over Range ± 0.5 W (W = sweep width, lower edge clamped at 0; all orientations, so looping
+  transitions keep consistent occurrence indices) and replaced wholesale
+  (`pepper._research_missing_knots`); a pair's new resonances are kept only if fewer are
+  missing and no orientation loses one, and pairs that improved but are still incomplete are
+  searched again over a doubled window, up to ± 4 W; projection stays on `Exp.Range` and
+  clips their out-of-range vertices. Only slots that still miss knots are interpolated linearly
+  (`L1`; `L3` on axial grids), all others keep the global cubic `G3`; the global switch in
+  `pepper._interp_slot` and `pepper_autograd._interp_slots_t` is gone. Against converged
+  references (no interpolation, GridSize [181 1], wide sweep cropped;
+  tests/data/ref_missing_knots.npz), 1 − cosine / max|dev| relative to the maximum on the
+  interior of the range (ends ± 5 FWHM dropped), pepper and pepper_autograd alike:
+  - 63Cu with A = [50 50 500] MHz tilted by AFrame [0 0.4 0], lw 0.3 mT, [290 350] mT, auto C2h
+    [19 4]: 0.201 / 0.62 → 0.0525 / 0.33 (cosine 0.7987 → 0.9475; the rest is the C2h grid
+    at [19 4], a wide sweep gives the same spectrum to 3e-11);
+  - 91Zr, A = 780 MHz, D2h [19 4], [300 400] mT: 6.7e-4 / 0.050 → 4.4e-6 / 0.0049;
+  - S = 5/2 with D and B4, D2h [19 4], [200 480] mT: 0.0434 / 0.236 → 9.6e-5 / 0.0135;
+  - B75: a narrow sweep without interpolation (Cu, [31 1]) vs the crop of a wide one at the
+    same grid 0.044 → 2.6e-11 (stick spectrum, whole range but the first bin: 0.059 → 1.6e-11).
+
+  With the range-edge padding of 0.9.6 (`Options.PaddingMultiplier`) the full-range numbers
+  equal the interior ones: Cu [19 4] cosine 0.7987 → 0.9475, Cu [181 1] 0.99569 → 1.000000
+  (max dev 0.18 → 3e-4), 91Zr 0.94289 → 0.99987, S = 5/2 0.95664 → 0.99990. pepper and
+  pepper_autograd agree to 1.3e-11 (B91); gradients through the re-searched slots (d/dA, d/dg,
+  d/dlw) agree with converged central differences to 1e-6 / 4e-8 / 1e-8. Spectra in which every
+  level pair resonates equally often at every orientation take the old path unchanged
+  (29-spectrum sweep over 9 grid symmetries, strain, perturbation theory, frequency sweeps,
+  pepper and pepper_autograd: bit-identical). Frequency sweeps are not affected
+  (`resfreqs_batch` has no window). Cost: one extra search of the partly missing pairs per
+  doubling (S = 5/2 [19 4] 0.04 → 0.2 s). **Deliberate deviation from EasySpin**, which keeps
+  the NaNs, interpolates every slot linearly and drops range-edge triangles: on its references
+  whose ranges cut transitions 1 − cosine up to 0.06 (Oh grid 0.54), each farther from the
+  converged reference than torchspin (Oh 0.579 → 2.0e-3; S = 5/2 parallel mode, whose looping
+  pairs still miss knots, 5.1e-3 → 7.0e-4). See KNOWN_LIMITATIONS § Field sweeps
+  whose range cuts transitions.
+
+### Tests
+
+- `test_missing_knots.py` (new): the three cases against converged references (interior bounds
+  at measured × 1.05), narrow vs wide-crop at the same grid (B75 with and without
+  interpolation, stick and HStrain), pepper vs pepper_autograd, gradients vs central
+  differences, the re-search window and per-slot interpolation, and that a range holding every
+  resonance never re-searches. References `tests/data/ref_missing_knots.npz` from
+  `tests/data/generate_missing_knots_refs.py` (torchspin, no interpolation, wide sweep;
+  checked to need no re-search).
+- `test_pepper_nanlinear_matlab_validation.py` (4 cases), `test_interp_nan_edges_matlab_validation.py`
+  (7 spectra), `test_sphgrid_maxphi_matlab_validation.py` (4 cases) and
+  `test_pepper_parallel_matlab_validation.py` (S52_parallel): the EasySpin
+  comparisons of spectra whose ranges cut transitions are strict xfails with the measured
+  deviation; each case is now checked against a converged reference (bounds measured × 1.05),
+  which it is closer to than the EasySpin-identical 0.9.27 spectrum.
+  `test_interp_nan_edges_...::test_autograd_vs_central_differences[b50_D]`: d/dE at E = 0 is
+  0 by x ↔ y symmetry (AD −1.8e-14, CD −8e-11, ≤ 3.3e-10 of d/dD) and is now asserted to be 0;
+  0.9.27 gave −1.07e-3 in both because its missing-knot interpolation broke the symmetry.
+- Tests merged in after #53 (range padding, 0.9.6) and #72 (AStrain mI model, 0.9.25): the
+  63Cu AStrain case of `test_astrain_mi_model.py` cuts transitions at 290 mT, so its EasySpin
+  comparison is a strict xfail (cosine h0 0.997448, h1 0.946325) and
+  `test_cu63_vs_converged_reference` checks it against a wide-sweep no-interpolation reference
+  (1 − cos 4.97e-4 / 1.35e-2; EasySpin 1.87e-3 / 3.75e-2). `test_voigt_field_sweep_not_padded`
+  became `test_voigt_field_sweep_padded_since_b88`: with clipped range-end triangles the
+  padding applies (cosine vs a wide sweep 0.9946 padded, 0.908 unpadded, 0.857 EasySpin).
+  The B48 gradient test runs with `PaddingMultiplier=0` (padding copies the clipped end bins
+  225 times and limits central differences to ~1e-6; without it they converge to 1e-8).
+
 ## [0.9.27] — 2026-11-12
 
 ### Fixed
@@ -34,6 +108,533 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   <= 0 now raises `ValueError` (ModAmp = 0 switches off field modulation; the spectrum is not
   continuous there). Only ModAmp was affected: every other float-read input raises on all
   three torch versions, and `torch.special` is used nowhere else.
+## [0.9.25] — 2026-11-12
+
+### Fixed
+
+- **AStrain widths use EasySpin's effective nuclear mI (B68).** EasySpin (`resfields.m`
+  766-788) labels every level once with the mI of the first nucleus: eigenvectors of
+  `H0 - mean(Exp.Range)*muz` with the field along the molecular z axis, levels sorted by
+  energy, `mI = <Iz>`; a transition uses the mean over its two levels at every orientation
+  (`resfields.m` 1297-1306). torchspin took `<Iz>` at each orientation's own resonance
+  field (strainwidth.py:201-214, 256 on 0.9.20), which vanishes for the field
+  perpendicular to a large A, so perpendicular lines got no AStrain width: 14N,
+  A = [20 20 90] MHz, AStrain 10 MHz, φ = 0.3, θ = 90°: 0.000 mT against EasySpin's
+  0.357 mT (an explicit ensemble with A sampled gives 0.32-0.38 mT). New
+  `strainwidth.astrain_level_mI`; `resfields_batch` computes it once per call and passes
+  it to `compute_strain_widths_batch(..., mI_levels=...)`. Differentiable
+  (degeneracy-safe eigendecomposition). **Every field-sweep result with AStrain changes**
+  (pepper, pepper_autograd, `Opt.Method='hybrid'`, esfit, `resfields`,
+  `resfields_batch`): spectra vs EasySpin (Harmonic 1, cosine / amplitude, before →
+  after) 14N 0.923 / 1.46 → 0.999999 / 0.9995; 1H 0.9987 / 1.024 → 1.000000 / 1.0001;
+  63Cu A = [50 50 500], AStrain [10 10 50] 0.972 / 0.945 → 0.999996 / 1.0000;
+  14N + gStrain 0.920 / 0.616 → 1.000000 / 1.0004; the same with `gAStrainCorr = -1`
+  0.926 / 1.027 → 1.000000 / 0.9989. Per-transition widths agree with EasySpin's
+  `resfields` to 1e-5 relative. Frequency sweeps are unchanged (EasySpin's
+  `resfreqs_matrix` uses a different AStrain model, without mI).
+- **Zero strain widths give finite gradients.** `compute_strain_widths_batch` took
+  `sqrt(lw2)` with an infinite derivative at `lw2 = 0` (e.g. HStrain = [h h 0] along z;
+  strainwidth.py:271 on 0.9.20), and pepper_autograd's facet smoothing computed
+  `gam = 1/sqrt(c1 Λ² + c2 Λ⁴)` = inf for a facet with zero mean width (Λ = 0;
+  pepper_autograd.py:685), then `0 * inf`: NaN spectra or gradients. Both now use a double
+  `torch.where`; the value at zero width is unchanged (`gam = 0`, as pepper's NumPy path
+  and EasySpin).
+
+### Changed
+
+- `compute_strain_widths_batch` raises `ValueError` for AStrain without the new
+  `mI_levels` argument (callers outside the package: pass
+  `astrain_level_mI(sys, H0, muz, mean(Range))`); without AStrain nothing changes.
+  `compute_strain_widths` (single orientation) takes optional `Range` and `mI_levels`;
+  without either it labels the levels at `B0`.
+
+### Tests
+
+- New `torchspin/tests/test_astrain_mi_model.py` (51 tests; 38 fail on 0.9.20, 2 strict
+  xfail) with EasySpin references `tests/data/ref_astrain_mi.mat`
+  (`generate_astrain_mi_refs.m`): per-orientation widths incl. θ = 90° (6 systems, one with
+  a tilted AFrame), single-orientation `compute_strain_widths`, pepper and pepper_autograd
+  spectra (Harmonic 0 and 1, 5 systems), zero-width facets, and gradients in AStrain, A
+  and gStrain vs converged central differences.
+- Tightened: `test_pepper_matlab_validation_ext2.py` `pt_broadenings_matrix` /
+  `pt_broadenings_perturb2` (cosine 0.9888 → 1.000000; threshold 0.985 → 0.99999,
+  amplitude 2 % → 0.2 %); `test_strain_validation.py` `gstrain_astrain` (RMS 0.0308 →
+  0.0002; tolerance 0.10 → 0.001, peak ratio 20 % → 0.2 %).
+  `test_resfields_single_autograd.py::test_compute_strain_widths_equals_batch` passes the
+  mI labels to the batch call (same tolerance).
+
+## [0.9.21] — 2026-11-12
+
+### Fixed
+
+- **C1 powder grids interpolated the lower hemisphere mirrored (B74).** `sphgrid` builds the
+  lower hemisphere of the C1 grid from the upper knots in reverse order (as EasySpin's
+  sphgrid.m:320-325 does), so each lower θ row is stored with φ decreasing. The rectify step of
+  the grid interpolation (`pepper._interp_grid`, port of private/gridinterp.m:204-224) read
+  those rows as φ increasing, so a lower knot at φ took the value from −φ − Δφ (mirrored and shifted by one
+  coarse φ step Δφ of that row); through the global bicubic spline (`G3`) this also disturbed the
+  upper hemisphere.
+  Each lower row is now reversed at the rectify step; the `sphgrid` order is unchanged
+  (`grid_triangulation` depends on it). This reaches `pepper`, `pepper_autograd` and `salt`
+  whenever a C1 grid is interpolated (`GridSize(2) > 1`): by default for low-symmetry systems
+  with `Sys.tdm` (photoselection), or with `Options.GridSymmetry='C1'`. Only C1 has lower rows;
+  the other grids are unchanged bit for bit. Interpolating f = 12x + 15y + 8z + 4xy − 3yz + 2xz
+  (mT) from C1 [19 4]: max error 32.5 → 0.52 mT (linear, `L1`) and 35.7 → 0.064 mT (cubic,
+  `G3`). Spectra on C1 [19 4] against the same fine knots without interpolation (C1 [73 1]),
+  max deviation of the maximum: Cu(II) with non-coaxial g and A 0.342 → 0.0075 (a Ci grid of
+  the same size: 0.0078); a photoselection triplet (default grid C1) 0.069 → 0.0018; `salt` 1H
+  ENDOR 0.021 → 0.00054. The rhombic-invariance test (C1 vs D2h, [20 4]) 2.4e-3 → 3.6e-4; its
+  C1 tolerance is tightened from 2.5e-3 to 1e-3. **Deliberate deviation from EasySpin**, which
+  has the same defect (gridinterp.m:211/213/217/219 read `y(idx:idx+len-1)`); torchspin now
+  follows the exact, uninterpolated result (KNOWN_LIMITATIONS.md). The EasySpin-reference cases
+  on interpolated C1 grids (9 photoselection cases, `fullsphere_C1`) therefore move away from
+  EasySpin by up to 9e-3 of the maximum (cosine ≥ 0.999989, amplitude within 0.85 %); against
+  the same fine grid without interpolation `fullsphere_C1` goes from 9.0e-3 to 6.0e-4. Tests:
+  `torchspin/tests/test_c1_lower_rows.py`.
+
+### Tests
+
+- Those 10 EasySpin-reference cases on interpolated C1 grids are no longer compared with
+  EasySpin (a known-wrong reference there) but with torchspin on the same fine knots without
+  interpolation, at bounds just above the measured deviations (3.7e-4 to 4.3e-3 of the
+  maximum). The check that the other open-φ grids (Ci, C2h, C4h) are unchanged uses error
+  bounds against exact symmetric test functions and the NaN pattern instead of output hashes.
+## [0.9.20] — 2026-11-12
+
+### Fixed
+
+- **Single-orientation `resfields` and `compute_strain_widths` are differentiable (B76).**
+  Both had their own per-orientation code with a Python-float Brent search and `.item()`
+  (resfields.py:117-118, 124, 148, 174-184, 228; strainwidth.py:168, 552, 608, 665, 669),
+  so fields, intensities and widths carried no gradient. For S = 1 with DStrain + HStrain
+  the widths kept a partial graph through the eigenvectors and returned a wrong gradient
+  without warning (dW/dg0: +0.771 against -0.807 from finite differences). They are now
+  thin wrappers over `resfields_batch` and `compute_strain_widths_batch` with one
+  orientation; public signatures and return types are unchanged. Gradients with respect
+  to g, A, D, J, gStrain, AStrain, HStrain, the angles and B0 match 4-point central
+  differences to 1e-6 relative above their round-off floor.
+- **gStrain with a full g matrix raises in the single-orientation path (B5).**
+  `compute_strain_widths` read `Sys.g[0, :]` (the first row of the full matrix) and returned
+  an infinite width (strainwidth.py:619 on 0.9.13). It now raises `ValueError` ("gStrain and AStrain are not supported
+  when full g matrices are given!"), as `resfields_batch`, pepper and EasySpin do.
+- **Looping transitions return all their resonances in `resfields` (single orientation).**
+  The two-point bracket at the range ends found at most one resonance per level pair.
+  Example: S = 1, D = 10 GHz, 9.5 GHz, θ = 0.3, 5-1000 mT: the lowest pair now gives both
+  lines (18.8 and 622.8 mT); before, only 18.8 mT.
+
+### Changed
+
+- `resfields` (single orientation): resonance fields move by up to 2e-6 mT (the old Brent
+  tolerance was 1e-5 mT; S = 1/2 6e-14 mT), intensities and widths by ≤ 3e-8 relative.
+  `Exp.mwMode` is now honored (it was ignored), and `Options.Threshold` is applied to
+  `|I|` relative to the largest `|I|`, as in `resfields_batch`. With strains but no
+  resonance in range the widths are an empty tensor instead of `None`.
+- `strainwidth.compute_strain_widths`: the `dtype` argument is accepted but unused (the
+  arithmetic follows `H0`). The per-orientation helpers `_compute_hstrain_width_squared`,
+  `_compute_gstrain_astrain_width_squared`, `_compute_dstrain_width_squared`,
+  `_orientation_vector` and `resfields._brent`/`_nuc_states` are removed.
+
+### Tests
+
+- New `torchspin/tests/test_resfields_single_autograd.py` (44 tests; 42 fail on 0.9.13).
+
+## [0.9.15] — 2026-11-11
+
+### Fixed
+
+- **SpinSystem input shapes follow EasySpin's validatespinsys.m** (B62, B63). Many shapes were
+  kept unnormalized by the constructor and failed later in `pepper` with an `IndexError` or
+  `RuntimeError` (some ran silently with the wrong tensor), and a 1-D `gStrain`, `HStrain` or
+  `AStrain` of one or two values raised although EasySpin expands them. A 1-D list is read as a
+  MATLAB row vector. Now:
+  - **Expanded as in EasySpin** (were late errors or `ValueError`): `g = [g_perp, g_par]` for one
+    electron spin and `(nElectrons, 2)` axial rows; one `g` per electron in any shape; `A` as
+    `(nNuclei, nElectrons)` isotropic (e.g. `[[10.]]` for one nucleus, `[A1, A2]` for one nucleus
+    and two electrons), `(nNuclei, 2*nElectrons)` axial (e.g. `[A_perp, A_par]`) and a 1-D
+    `3*nElectrons` row for one nucleus; a scalar `A_`; a 1x6 `AFrame` row; empty `gFrame`,
+    `DFrame`, `AFrame` (zeros); `ee` as an `(nPairs, 1)` column of isotropic values; `lw`/`lwpp` as
+    `[[G, L]]`; `gStrain` rows of 1 or 2 values (`[x]` -> `[x x x]`, `[x y]` -> `[x x y]`,
+    validatespinsys.m:822-823); `HStrain`/`AStrain` with 1, 2 or 3 values in any shape; empty
+    `gStrain`, `HStrain`, `AStrain`, `DStrain` (no strain). Each gives the same tensor and a
+    bit-identical spectrum as the explicit form, and against EasySpin (`ref_spinsystem_shapes.mat`,
+    5 cases in the short form) cosine >= 0.9999990, amplitude within 0.0009.
+  - **`ValueError` at construction, as EasySpin errors**: `g` that is not one of those forms (e.g.
+    `[2.0]` or `[[2.0]]` for two electrons, a 6-vector, `(3, 3)` for two electrons); `gFrame`,
+    `DFrame`, `QFrame`, `eeFrame`, `AFrame` that are not one row per tensor (e.g. `[0.1]`);
+    `D_` without one `[D, E/D]` pair per electron (e.g. `[300.]`, was a `RuntimeError`); `A`
+    inconsistent with the numbers of nuclei and electrons (e.g. `[10.]` for two nuclei, `[10.]`
+    or `[Ax, Ay, Az]` for two electrons); `Q` that does not give `(nNuclei, 3)`; `ee` that does
+    not give `(nPairs, 3)` or `(3*nPairs, 3)`; `lw`/`lwpp` with 0 or 3+ values (a third value was
+    ignored); `gStrain` without one row per electron; `HStrain`/`AStrain` with 4+ values; and
+    `A`, `AFrame`, `Q` or a nonzero `QFrame` without `Nucs` (were silently ignored).
+  - **Unchanged:** every input that worked before, including torchspin's own shorthands (scalar
+    `g`, `A`, `gStrain`, `DStrain`; `[x, y, z]` for every electron, nucleus or pair), except the
+    flat `D` below.
+  Gradients flow through the expanded forms.
+
+### Changed
+
+- **A flat `D` of 2 or 3 values for two or more electron spins raises `ValueError`** (B61;
+  behavior change, deliberate deviation from EasySpin). `SpinSystem(S=[1, 1], D=[a, b])` was
+  read as one `[D, E]` shared by both electrons and `S=[1, 1, 1], D=[a, b, c]` as shared
+  principal values, while EasySpin reads both as one D value per electron
+  (`numel(Sys.D) == nElectrons`, validatespinsys.m:208-210). The same lists with a different
+  number of electrons (e.g. `[D, E]` for three or four) were also read as shared. Neither
+  reading is adopted: the error asks for the explicit form, one row per electron spin
+  (`D=[[D1, E1], [D2, E2]]`, `D=[[Dxx, Dyy, Dzz], ...]`, `D=[[D1], [D2]]` or `D_`). The old
+  meaning is `D=[[D, E]] * nElectrons`. Unchanged: a scalar `D` (same D, E = 0 for every
+  electron, as EasySpin), a flat list of one D per electron for four or more electron spins,
+  `[D]`, `[D, E]` and `[Dxx, Dyy, Dzz]` for one electron spin, and every 2-D form. `D_` has
+  no shared shorthand and is unchanged. No test, example or document in the repository used
+  the ambiguous form.
+## [0.9.14] — 2026-11-11
+
+### Fixed
+
+- **`resfields_perturb` raises a clear `ValueError` for a zero hyperfine principal value at second
+  order (B65).** The second-order terms invert A; `Sys.A = [0 5 10]` raised torch's raw
+  `LinAlgError` from `inv`. As EasySpin (resfields_perturb.m:120-127) the message is now "All
+  hyperfine coupling constants must be non-zero" (a singular full A too). First order still
+  runs (EasySpin rejects it at every order). Test in `test_resfields_perturb.py`.
+- **ENDOR transition selection as EasySpin endorfrq, in one place for `endorfrq` and every `salt`
+  matrix path (B57/B41, B40, B59).** EasySpin selects the level pairs once (endorfrq.m:258-341):
+  on the coarse grid `sphgrid(Opt.TPSGridSymm, Opt.TPSGridSize)` (`'D2h'`, 4) it sums the
+  nuclear-moment rates with the grid weights, drops pairs whose frequency never enters the range,
+  always removes electronic pairs, and keeps a pair if its rate is `> Threshold * max`.
+  `Enhancement` changes intensities only. torchspin now does the same
+  (`endorfrq._endor_tps_select`, run without autograd; positions and intensities keep their
+  gradients), so the selection no longer depends on `GridSize` or on the orientation.
+  - *salt, fixed field (B57):* a pair was kept if it was strong at any orientation of the
+    simulation grid. For 14N+1H with `Enhancement` (endor_enhancement_refs.mat) the zero-quantum
+    pairs (8,9), (10,11) at an anticrossing near 0 MHz passed (4.3e-4 > 1e-4; EasySpin's summed
+    rates 1.3e-9, 2.1e-9): 23 pairs instead of EasySpin's 16, and a spike at 0 MHz. Residual vs
+    EasySpin 4.6e-3 → 1.8e-12 (without `Enhancement` 3.4e-6 → 1.9e-12). The 14N, 1H-enhanced
+    and 14N+1H references now all agree to ≤ 5e-12 (the test tolerance is tightened from 1e-2
+    to 1e-9).
+  - *endorfrq (B41):* thresholded each orientation against its own maximum and filtered the
+    range per orientation: 14 pairs vs EasySpin's 16 (14N+1H), 34-97 vs 81 (63Cu+14N) at
+    Threshold 1e-4. Now EasySpin's `Transitions` exactly, at every orientation, and
+    `freq_range` acts on the selection only: the selected pairs are returned even where their
+    frequency at this orientation is outside it, as in EasySpin. The threshold is now strict
+    (`>`), so at `threshold=0` pairs of exactly zero rate are dropped, as in EasySpin.
+  - *Electronic pairs (B40):* were kept without `Enhancement`: 6 pairs vs EasySpin's 2 for
+    S = 1/2 + 1H at threshold 0 in endorfrq; in salt, 63Cu (A = [60 60 600], Q) on the default
+    0-2·mwFreq axis had EPR lines near 8.9 GHz (0.05 % of the integral, 3e-4 of the maximum).
+    Now always removed.
+  - *salt, field sweep (B59):* the threshold was applied per (orientation, field) entry against
+    the maximum of each memory batch (≤ 512 entries), so the spectrum depended on the batch size
+    (14N+1H, Threshold 1e-2: 2.4e-3 of the maximum between batch caps 1 and 512, 0.19 with
+    `Enhancement`). The pairs are now selected once per sweep at 5 fields spanning the
+    resonance fields (kept if selected at any) and every entry of a kept pair is binned. The
+    spectrum is identical for any batch size; at Threshold 0.01 (0-40 MHz) 2.57 % of the
+    integral is dropped, as the fixed-field rule drops 2.56 % (0.60 % before).
+  - *Zero field* (`Options.ZeroField`): the same rule on cluster pairs, without the
+    electronic-pair removal.
+  - **New options:** `Options.TPSGridSymm` / `TPSGridSize` (EasySpin's undocumented options,
+    defaults `'D2h'`, 4). `Options.Transitions` is read by `endorfrq` and `salt` (as EasySpin's
+    `Opt.Transitions`): the pairs replace the selection, with no threshold; `salt` then uses the
+    matrix path; with `ZeroField` it raises.
+  - **Results that change:** every `endorfrq` result with a `freq_range` or a pair that was
+    below/above the per-orientation threshold; `salt` matrix-path spectra by the pairs that
+    EasySpin drops (e.g. 14N+1H fixed field above); field-swept matrix-path spectra (the
+    threshold is now EasySpin's). The first-order perturbation path (one electron, no Q, no
+    `Enhancement`) is unchanged. In `test_zero_field.py` the B → 0+ continuity check now
+    passes `Options(Transitions='all')`: at 1e-5 mT the electronic-pair rule cuts through the
+    Kramers doublets (the default spectrum is 0.48 of the zero-field one).
+  - Tests: `test_endor_tps_selection.py` with `tests/data/endor_tps_selection_refs.mat`
+    (`generate_endor_tps_selection_refs.m`: 18 endorfrq cases, 3 salt cases with
+    `info.Transitions`), batch-cap independence, gradients vs central differences (14N+1H with
+    `Enhancement`); `test_endor_enhancement.py` gains a default-threshold companion of
+    `test_endorfrq_vs_easyspin`. 15 of the new or tightened tests fail on the 0.9.2 base.
+## [0.9.13] — 2026-11-11
+
+### Added
+
+- **Gradients with respect to `Sys.Ham` coefficients (B53).** `ham_ezho` detached the `Ham`
+  coefficients, so `ham`, `levels`, `pepper_autograd` and `pepper` gave no gradient for them
+  (`Ham110`, `Ham112`, and with `Options.QuadraticZeeman` `Ham2xx`/`Ham3xx`). The coefficients
+  now stay on the autograd graph; a coefficient that is zero also gets its gradient. `pepper`
+  sends a system whose `Ham` coefficient requires grad to its differentiable path
+  (`autograd.inputs_require_grad` now looks into `Sys.Ham`). Values are bit-identical (1188
+  matrices compared against 0.9.12 for S = 1/2 to 5/2 and two electrons); `ham(Sys)` and
+  `pepper` take the same time. Gradients match central differences to 1e-8 (crystal
+  orientations, all six `Ham110`/`Ham112` coefficients) and the chain rule through the
+  g-equivalent matrix to 1e-9 (powder).
+- `ham_ezho.ham_linear_g(Sys, e)`: the g matrix equivalent to the `Ham110`/`Ham112` terms of
+  electron e.
+
+### Fixed
+
+- **`chili`, `cardamom` and `fastmotion` now raise for `Sys.Ham` (B54).** They build the
+  Zeeman term from `Sys.g` only and ignored `Sys.Ham` without an error; for g given as
+  `Ham110`/`Ham112` they ran with g = 0. They now raise `ValueError` for any `Sys.Ham`
+  entry, as EasySpin's chili does (chili.m:160) and torchspin's garlic already did.
+  EasySpin's cardamom and fastmotion do not check.
+- **pepper's automatic field range raises a clear error for g = 0 (B55).** With no
+  `Exp.Range`/`Exp.CenterSweep` and the linear Zeeman term given as `Ham110`/`Ham112`, the
+  range computation divided by g = 0 and raised `ZeroDivisionError`. EasySpin takes the
+  range from `Sys.g` too and fails with an index error (pepper.m:324). torchspin now raises
+  `ValueError` and asks for `Exp.Range` or `Exp.CenterSweep`.
+- **`gStrain` with a `Ham110`/`Ham112` Zeeman term no longer gives an all-zero spectrum
+  (B56).** The strain widths divided gStrain by g = 0, and `pepper` (matrix) returned zero
+  without an error (S = 1/2, g ≡ [2.01 2.005 1.998], gStrain [0.01 0.005 0.002]: max 0 against
+  327.7 for the same g as `Sys.g`). EasySpin's pepper does the same. gStrain is now taken
+  relative to the g-equivalent of the `Ham` terms in `Sys.gFrame` (in `pepper`,
+  `pepper_autograd` and `resfields`); the spectrum equals the `Sys.g` one to 1e-13 and
+  EasySpin's spectrum of that g system at cosine > 0.9999999 (`ref_ham_gstrain.mat`, three
+  cases incl. a `gFrame` and a 1H). A g-equivalent matrix that is not diagonal in
+  `Sys.gFrame` raises `ValueError`, as gStrain with a full g matrix does.
+
+## [0.9.12] — 2026-11-11
+
+### Fixed
+
+- **A one-element `D` is one D value with E = 0, as in EasySpin** (B52). `SpinSystem(S=[2.5],
+  D=[300.])` was accepted with D left as a length-1 vector, and `pepper` then failed in `ham_zf`
+  with `IndexError: too many indices for tensor of dimension 1`. EasySpin reads
+  `numel(Sys.D) == nElectrons` as one D per electron (validatespinsys.m:208-210), so for one
+  electron spin `[D]` is now the same as the scalar `D`: identical tensor and spectrum, and for
+  S = 3/2, D = 300 MHz and S = 1, D = 400 MHz (`ref_pepper_ext2.mat`) `D = [D]` matches EasySpin
+  to cosine 1.0000000, amplitude 1.00000 / 1.00001 (was an `IndexError`). For several electrons a single value is EasySpin's
+  'Sys.D has wrong size.' and now raises `ValueError` (torchspin's scalar `D`, which is applied to
+  every electron, is unchanged). Any other `D` that does not normalize to `(nElectrons, 3)` or
+  `(3*nElectrons, 3)`, such as `[[D]]` for two electrons or a length-6 vector, now raises
+  `ValueError` in the constructor instead of an `IndexError` later. Valid inputs are unchanged.
+## [0.9.11] — 2026-11-11
+
+### Fixed
+
+- **Bins that no SOPHE triangle or zone reaches are exactly 0 in `pepper` and `pepper_autograd`,
+  as in EasySpin** (projecttriangles.c:98-100, 123-125; projectzones.c). The vectorised
+  projections fill the interior bins of wide ramps and zones through running sums `c1·k + c0`;
+  past the last ramp the `+s`/`−s` pairs did not cancel exactly and the residual was multiplied by
+  the bin index. Empty bins therefore held a roundoff floor: for the rhombic stick spectrum
+  g = [2 2.05 2.1], 9.5 GHz, Range [325 337] mT, 601 points, the minimum was −5.3e-14 of the maximum
+  at GridSize [31 1] (pepper; −4.7e-14 in pepper_autograd) and −1.6e-14 at [31 4], −3.9e-14 for the
+  corresponding frequency sweep, and positive residuals up to 2.9e-13 appeared in a Cu hyperfine
+  stick spectrum. An integer coverage count built with the same scatter now leaves those bins at
+  exactly 0; it carries no graph, so pepper_autograd stays differentiable. Bins inside an interior
+  are bit-identical; a whole spectrum changes by less than 1e-12 of its maximum (the residual
+  removed, also from bins another pass fills, then convolved), and spectra without a residual
+  (the Dinfh zone cases checked) are bit-identical. Applies to field, frequency and zero-field
+  sweeps and to salt, which uses the same torch projections. EasySpin references:
+  tests/data/ref_pepper_exactzero.mat.
+## [0.9.10] — 2026-11-11
+
+### Fixed
+
+- **Powder spectra whose field range leaves some orientations without a resonance lost or
+  distorted the facets next to the missing knots (B48, B50).** With missing knots pepper
+  interpolates linearly, as EasySpin does (gridinterp `L1`, private/gridinterp.m:129,
+  `interp2(...,'linear')`). torchspin's bilinear interpolation (`pepper._interp_grid`) multiplied
+  every corner by its weight, so a missing coarse knot (NaN) with zero weight still gave
+  `0 * NaN = NaN` and removed the fine knots on the neighboring coarse row or column; MATLAB's
+  interp2 ignores zero-weight corners (`interp2([1 NaN; 2 3], 1, 1.5) = 1.5`). Each corner term
+  is now 0 when its weight is 0. Which fine knots lie exactly on a coarse row or column also
+  depended on ulp-level differences: `sphgrid` built φ as `k * dPhi`, EasySpin as
+  `linspace(0, maxPhi, nPhi)` (sphgrid.m:298,307), and the fractional knot indices were
+  0-based where gridinterp.m:121-125 adds 1 first (which rounds away an excess of a few ulp).
+  `sphgrid`'s φ is now EasySpin's bit for bit (all 12 φ-sweeping groups, GridSize 7 and 73), and
+  the indices are formed 1-based and shifted. S = 1/2, g = [2 2.05 2.1] over [325 337] mT
+  (GridSize [31 4], the range cuts the g = 2.1 edge): the stick spectrum deviated from
+  EasySpin by up to 5.6 % of its maximum, with lw = 1.5 mT 2.4 % (Harmonic 0) and 7.1 %
+  (Harmonic 1); now 5e-7, 2e-8 and 1e-7. S = 5/2, D = 300 MHz, tetragonal B4 on a D2h grid over
+  [290 390] mT: 0.54 % (Harmonic 1) and 0.96 % (stick); now 4e-5, the deviation of the same
+  system without interpolation. `pepper_autograd` takes its NaN pattern from the same numpy
+  interpolation and changes identically; its gradients are unaffected in form and agree with
+  central differences (B48 d/dg ≤ 2e-7, B50 d/dD, d/dE ≤ 6e-7 relative). Spectra with a resonance
+  at every knot change only by roundoff (≤ 1.3e-13 of the maximum, from the φ values). Open-φ
+  grids (Ci, C2h, C4h, C6h, S6, C1) with missing knots keep a separate deviation from EasySpin
+  (B58, see KNOWN_LIMITATIONS.md). EasySpin references: tests/data/ref_interp_nan_edges.mat.
+## [0.9.9] — 2026-11-11
+
+### Fixed
+
+- **Field-swept `salt` (`Experiment.Range`) has the same scale on both EPR solvers** (B44). At
+  infinite temperature EasySpin shares the polarization among the nuclear sublevels, 1/prod(2I+1),
+  in both `resfields` and `resfields_perturb` (resfields.m:1265-1266, resfields_perturb.m:486-487),
+  and torchspin's `resfields_perturb_batch` does too, but salt called `resfields_batch` without the
+  spin system, which skips that division. The matrix path (several electrons; also `Sys.Ham`
+  systems once those are routed there) was therefore prod(2I+1) times too large: S = 1/2 with
+  g = [2.01 2.005 1.998], 330-345 mT, GridSize 7, matrix/perturbation ratio of the spectrum sums
+  2.0000 for 1H (A = [3 5 12] MHz) and 6.0000 for 1H + 14N (A = [1 1.5 2] MHz); now 1.0000
+  (cosine 0.99978 / 0.99998, unchanged). The division is applied in salt rather than by passing the
+  spin system, which would also compute strain widths that salt does not use. Finite temperature
+  is unchanged (the Boltzmann populations already include it). Fixed-field salt (EasySpin's mode)
+  and one-electron field-swept spectra are bit-identical. EasySpin's salt has no field-swept mode,
+  so there is no direct reference.
+## [0.9.8] — 2026-11-11
+
+### Fixed
+
+- **Perturbation-theory solvers now raise for `Sys.Ham` instead of returning NaN or zero
+  (B46, B49).** They build the electron Zeeman term from `Sys.g` only, and with g given as
+  `Ham110`/`Ham112` `Sys.g` is zero: `endorfrq_perturb` and `resfreqs_perturb` returned NaN
+  frequencies, `resfields_perturb`/`resfields_perturb_batch` found no resonances, and
+  `pepper`/`pepper_autograd` with `Options.Method='perturb'`, `'perturb1'` or `'perturb2'`
+  returned an all-zero spectrum (S = 1/2 + 1H: max 0 against 456 for the same `g`), all
+  without an error. Other nonzero `Ham` terms of order lB ≤ 1 were dropped. These entry
+  points now raise `ValueError` for any nonzero `Ham` term of order lB ≤ 1 and point to
+  `Sys.g` or the matrix method (new `spinsystem._reject_ham`). EasySpin's
+  resfreqs_perturb rejects `Sys.Ham*` (resfreqs_perturb.m:75-77); its resfields_perturb,
+  endorfrq_perturb and pepper perturbation path do not and give zero, which torchspin
+  deliberately does not follow. pepper raises for every `'perturb*'` call with such a
+  system, also where it used to switch to the matrix solver without saying so (frequency
+  sweeps, strain, several electrons). Terms of order lB ≥ 2 (dropped unless
+  `Options.QuadraticZeeman`) still pass. Results with `g`, and every matrix and hybrid
+  result, are unchanged.
+## [0.9.7] — 2026-11-11
+
+### Fixed
+
+- **Resonance positions on axial (Dinfh) grids are interpolated with EasySpin's spline**
+  (gridinterp.m:77-78, `esspline1d(y, 1, iphi)`): a cubic spline over the θ knot index with
+  zero first derivatives at both ends (esspline1d.m `EndCon = 1`). torchspin fitted a
+  not-a-knot cubic spline in cos θ, which bends differently next to both poles. Axial g
+  (g = [2 2 2.4], lw 0.3 mT, GridSize [10 10]) was cosine 0.99863 and amplitude 1.029; a
+  Cu(II)-like system (g = [2.05 2.05 2.25], 63Cu A = [50 500] MHz) on the default grid was
+  cosine 0.99380 and amplitude 1.034 (0.93891 / 1.045 at GridSize [10 10]). All are now
+  cosine ≥ 1 − 1e-10 and amplitude within 3e-6. This changes every interpolated Dinfh
+  spectrum without missing resonances in `pepper`, `pepper_autograd` (the cached linear
+  interpolation map is rebuilt from the same rule, so it stays differentiable) and the
+  fixed-field `salt` path that interpolates. Intensities and widths (`L3`) and Dinfh grids
+  with missing resonances (`L3` for positions) are unchanged. EasySpin references:
+  tests/data/ref_pepper_dinfh_interp.mat.
+## [0.9.6] — 2026-11-11
+
+### Fixed
+
+- **`pepper`, `pepper_autograd` and `salt` now pad the sweep range with the edge values before the
+  final line-width convolution when the spectrum reaches an end of the range, as EasySpin does**
+  (pepper.m:1171-1193, salt.m:858-882; B34). The convolution used to zero-extend, so the points
+  within about two widths of such an end were wrong. Fixed-field salt, 1H, g = [2 2.05 2.1],
+  A = [5 8 12] MHz, 10–19 MHz, lw 0.2 MHz: end points 0.562 and 0.552 of EasySpin's (max |diff|
+  0.44 of the peak); 1H + 14N with Q (matrix path), 1.5–19 MHz, lw 0.3 MHz: 0.454 and 0.562; pepper
+  frequency sweep, Lorentzian lw 40 MHz, Harmonic 1, 9.3–9.55 GHz: 0.538 and 0.548; pepper field
+  sweep with HStrain and a Gaussian lw 1 mT, Harmonic 1: 2.94 and 3.21. All now 1.0000 (max |diff|
+  3e-13 of the peak; 1.8e-4 for the matrix-path salt and the HStrain case, the same as without
+  padding). Spectra that are zero at both ends are bit-identical. An end counts as nonzero above
+  1e-9 of the row maximum, not at exact `~= 0` as in EasySpin, because torchspin's projections
+  leave a ~1e-14 round-off floor in empty bins (KNOWN_LIMITATIONS.md); a rhombic Voigt field sweep
+  that EasySpin does not pad stays unpadded. Gradients flow through the edge copies (checked
+  against central differences). EasySpin references: tests/data/range_padding_refs.mat.
+
+### Added
+
+- **`Options.PaddingMultiplier`** (EasySpin `Opt.PaddingMultiplier`, default 3): the number of
+  line widths by which the range is padded before the convolution; 0 switches padding off. Used by
+  `pepper`, `pepper_autograd` and `salt`; a negative, non-finite or non-numeric value raises
+  `ValueError`.
+## [0.9.5] — 2026-11-11
+
+### Fixed
+
+- **`salt` simulates `Sys.Ham` systems on the matrix paths** (B35). A linear Zeeman term given
+  as `Ham110`/`Ham112` sets `g = 0`, but salt's first-order ENDOR path (fixed field, one
+  electron without Q) and the field-swept mode's perturbation resonance search build the
+  Zeeman term from `Sys.g` alone. For S = 1/2 + 1H, A = [3 5 12] MHz at 338 mT with Ham110/112
+  equal to g = [2.01 2.005 1.998], the fixed-field spectrum was 12.77x the amplitude of the g
+  spectrum with lines at the bare 1H Larmor frequency (cosine 0.00); 8.90x with orientation
+  selection (`ExciteWidth` 30 MHz); the field-swept spectrum was all zero. Any system with a
+  `Sys.Ham` entry (EasySpin's `MO_present`) now always takes the matrix paths (resonance fields
+  by `resfields_batch`, ENDOR by diagonalizing `ham()`), and the Ham spectrum equals the g
+  spectrum on that path to 2e-12 (fixed field, with and without orientation selection) and
+  2e-14 (field swept); against the default first-order g spectrum: cosine 0.99999, amplitude
+  0.994. **Deliberate deviation:** EasySpin's salt rejects every `Sys.Ham*` (salt.m:132).
+  Field-quadratic and cubic terms (lB >= 2) are dropped, as in pepper with the default
+  `Options.QuadraticZeeman=False` (True raises). An explicit `Options.Method='perturb'`,
+  `'perturb1'` or `'perturb2'` with `Sys.Ham` now raises `ValueError` (salt still ignores
+  `Method` otherwise). The field-swept mode, which is not differentiable, now also raises
+  `NotImplementedError` when a `Sys.Ham` coefficient requires grad (as for g, A, D, Q, ee),
+  instead of returning a partial gradient once Ham coefficients are differentiable (B53).
+  Results change only for systems with `Sys.Ham`; nothing else is routed differently.
+- **`salt` raises for `Sys.L`, as EasySpin does** (B45; salt.m:133, 'salt does not support
+  Sys.L.'). The first-order path ignored orbital angular momenta (S = 1/2, L = 1, soc = 100 MHz
+  gave the spectrum without L exactly); the matrix path included them through `ham()` but was
+  never validated (EasySpin has no reference).
+## [0.9.4] — 2026-11-11
+
+### Fixed
+
+- **`pepper` interpolates the positions of every transition linearly once any transition lacks
+  a resonance somewhere, as EasySpin does** (pepper.m:701, 763-772: one global `NaN_in_Pdat`
+  flag switches `InterpMode` to `L1` on 2-D grids). torchspin switched only the slots that
+  carried NaNs and kept the global cubic spline for the others, so the two kinds of slot were
+  interpolated differently. S = 5/2 with D = 300 MHz and a B4 term on an explicit D2h grid,
+  Range [200 480] mT, was cosine 0.9587 (Harmonic 1) and 0.9988 (Harmonic 0); a rhombic
+  S = 5/2 (D = 400, E = 100 MHz) with a truncated range 0.99971. All are now ≥ 1 − 3e-8 with
+  amplitude within 4e-5. `pepper_autograd` and `salt` already did this; `pepper` now gives the
+  same spectra. Only non-axial field and frequency sweeps with interpolation in which some
+  transition leaves the range (or has no resonance) at some knots change. EasySpin references:
+  tests/data/ref_pepper_nanlinear.mat. On open-φ grids (C2h, Ci) a residual remains in both
+  implementations; see KNOWN_LIMITATIONS.md.
+
+## [0.9.3] — 2026-11-11
+
+### Fixed
+
+- **Wrong φ range of the D3d, D4h, D6h, Oh, C6h and S6 powder grids (B36), and `Options`
+  rejected these grid symmetries (B51).** `sphgrid` covered φ = 0..π/2 for D6h, D4h, Oh, D3d
+  and C6h and 0..π for S6. EasySpin (private/gridparam.m) and torchspin's own `gridparam`, used
+  by pepper's grid interpolation and by `grid_triangulation`, use π/6, π/4, π/4, π/3, π/3 and
+  2π/3. With orientations without resonances, pepper interpolated the coarse knots in
+  gridparam's layout although they came from the other grid: S = 5/2 with D and a tetragonal
+  B4 (hamsymm D4h) over [200 480] mT had cosine 0.673 with EasySpin, a cubic B4 (Oh) over
+  [250 430] mT 0.491. Even with resonances at all knots, the D3d, C6h and S6 grids held a
+  non-integer number of symmetry wedges, which affected every `sphgrid` caller: a trigonal B4
+  (D3d) over [0 800] mT had cosine 0.964; the same system on an explicit S6 grid 0.901, a
+  hexagonal B6 (D6h) on a C6h grid 0.735 (amplitude 1.83). The sphere average of a D3d-, S6- or
+  C6h-invariant function was 2-4 % off. `sphgrid` now takes all grid parameters from one table
+  (`sphgrid._GRIDPARAM`, EasySpin's values; `_SYM_PARAMS` is gone), and all nine EasySpin
+  cases agree to cosine ≥ 0.99993 and amplitude within 5e-4, for `pepper` and
+  `pepper_autograd`. The knot counts do not change. With missing knots, pepper now also
+  interpolates the positions of transitions that resonate at every knot linearly, as EasySpin
+  does once any transition misses a knot (its `L1` mode); before, those were bicubic (Oh case
+  with only the grid fixed: cosine 0.463). This part applies to every grid: the D4h system
+  above on an explicit D2h grid goes from cosine 0.959 to 1.0000000 with EasySpin. `Options`
+  accepted only Dinfh, D2h, C2h, Ci, C1, O3 and `'auto'`; it now accepts EasySpin's 14 grid
+  symmetries, `'auto'` and `''` (same as `'auto'`, as in pepper and EasySpin). The D2h, Th,
+  C4h, C2h, Ci, C1, Dinfh and O3 grids are unchanged, and so are their spectra unless some
+  orientations have no resonance.
+
+## [0.9.2] — 2026-11-11
+
+### Changed
+
+- **API: `endorfrq` returns 1-based level pairs, as EasySpin and `Options.Transitions`.** The third
+  output `transitions` was 0-based (`[i, j]` indexing the eigenvalues), unlike every other level
+  pair in torchspin (`Options.Transitions`, experiment.py; pepper's `_user_transitions`) and
+  EasySpin's `endorfrq` (`[u,v] = find(keepidx)`, endorfrq.m:331-332). It is now `[u, v]`, 1-based
+  levels in ascending energy, `u < v`; for S = 1/2 + 1H at high field the pairs are `[1, 2]` and
+  `[3, 4]` as in EasySpin. Rows still follow the returned frequencies (ascending); EasySpin orders
+  them by descending selection rate (endorfrq.m:339-341). Frequencies and intensities are unchanged,
+  and `salt` does not use the indices. **Migration:** subtract 1 (`transitions - 1`) where the pairs
+  index eigenvalues or eigenvectors. Tests: the EasySpin comparison in
+  `test_endor_enhancement.py` now uses `endor_enhancement_refs.mat`'s `Tr` without the `- 1`
+  offset; one new test checks the pairs against EasySpin's (fails on main).
+
+## [0.9.1] — 2026-11-11
+
+### Tests
+
+- **EasySpin reference for zero-field lines exactly on bin edges with an interpolated grid.**
+  S = 1, D = [-700 -1300 2000] MHz puts its lines (0.6, 2.7, 3.3 GHz) on points of a 10 MHz
+  axis, i.e. on bin edges. With GridSize [19 4] or [10 8] the positions are interpolated, and
+  `pepper._zf_const_pos` gives every fine-grid vertex the coarse position, so each line goes into
+  one bin as in EasySpin. Without it, interpolation round-off moves 5-39 % of each line into the
+  lower bin (sticks: 1 - cosine 0.069-0.079; Gaussian 30 MHz: 1.0e-2-1.2e-2; Gaussian 300 MHz:
+  max difference 1.9e-2). With it, torchspin matches EasySpin to max |difference| / max
+  6.9e-15 for sticks and both widths (`ref_pepper_zerofield_edge.mat`, 8 new tests; all 8 fail
+  with `_zf_const_pos` replaced by the identity). Which of the two bins a line on an edge lands
+  in depends on the last bit of the eigenvalues (B19), so the tests accept bin k or k - 1 and
+  rebuild the reference from EasySpin's single-pair spectra (`Opt.Transitions`) at torchspin's
+  bins; the tolerance (1e-12) holds either way. No code change.
+
+### Changed
+
+- `pepper._zf_const_pos` docstring and call-site comments give its current purpose (single-bin
+  deposit of a zero-field line on a bin edge). The near-zero-width triangle cancellation it was
+  written for was fixed in the projection in 0.8.4 (B18).
 
 ## [0.9.0] — 2026-11-11
 
@@ -82,6 +683,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - **Results that change:** every `orisel` result. No other torchspin function called `orisel`;
     `salt` spectra are bit-identical (checked with and without HStrain, S = 1, two electron
     spins, 14N with Q, and zero field), and saffron keeps its own selection.
+
 ## [0.8.13] — 2026-11-11
 
 ### Fixed
@@ -95,6 +697,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (torchspin extension; Ham-given g reproduces g to 1e-11 on both); the error message points to
   them. No other result changes. Supporting `Ham` on the S = 1/2 fast path is left open (see
   KNOWN_LIMITATIONS.md).
+
 ## [0.8.12] — 2026-11-11
 
 ### Fixed
@@ -113,6 +716,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Spectra with `D_` now equal those with the same `D` (1e-10); no other result changes. The
   constructor is unchanged: calling `dataclasses.replace` directly on such a system still raises
   (see KNOWN_LIMITATIONS.md for the workaround).
+
 ## [0.8.11] — 2026-11-11
 
 ### Fixed
@@ -129,6 +733,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   on the default 512-point axis. A skipped width that requires grad has zero gradient. EasySpin
   references: tests/data/salt_narrowlw_refs.mat. A Lorentzian ENDOR width and `Exp.Harmonic` are
   still not supported in salt (KNOWN_LIMITATIONS.md § ENDOR).
+
 ## [0.8.10] — 2026-11-11
 
 ### Fixed
@@ -140,6 +745,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   in `salt`, on every path (first-order, matrix, several electrons, field-swept, zero field), and
   also catches `n` assigned after construction. Results with `n = 1` are bit-identical. Give
   equivalent nuclei as separate entries of `Nucs` instead.
+
 ## [0.8.9] — 2026-11-11
 
 ### Fixed
@@ -163,6 +769,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   exact (`pepper_autograd` vs central differences to 1e-6 for d/d g_z). Spectra without
   interpolation, on axial (Dinfh) grids and on open-φ grids are bit-identical. EasySpin references:
   tests/data/ref_closedphi_interp.mat.
+
 ## [0.8.8] — 2026-11-11
 
 ### Fixed
@@ -397,6 +1004,7 @@ published separately.
   ignored. EasySpin has no counterpart; validated against EasySpin crystal
   spectra summed over two rotations about B0 (an exact χ average). The
   default (`None`) is unchanged.
+
 ## [0.7.5] — 2026-11-10
 
 ### Added
@@ -421,6 +1029,7 @@ published separately.
   `Method='perturb*'` raises when `Transitions` is set (EasySpin ignores the
   option there). Validated against EasySpin on 9 cases
   (`tests/data/ref_pepper_transitions.mat`).
+
 ## [0.7.4] — 2026-11-10
 
 ### Added
@@ -443,6 +1052,7 @@ published separately.
   (mT).")` is raised when `pepper`, `salt`, `garlic`, `chili` or
   `resfreqs_perturb` is called. A negative field still raises in the
   constructor.
+
 ## [0.7.3] — 2026-11-10
 
 ### Added
@@ -462,6 +1072,7 @@ published separately.
   against EasySpin `endorfrq`/`salt` with `Opt.Enhancement='on'`
   (`tests/data/endor_enhancement_refs.mat`), a NumPy brute force, the
   first-order factor (ν_ENDOR/ν_I)² and gradients (reverse and forward mode).
+
 ## [0.7.2] — 2026-11-10
 
 ### Added
