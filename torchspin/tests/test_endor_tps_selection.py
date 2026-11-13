@@ -155,11 +155,13 @@ def _salt_ref_case(r, enh, **opt_kw):
     return y.numpy()
 
 
-@pytest.mark.parametrize("k", [0, 1])
+@pytest.mark.parametrize("k", [0, 1, 2])
 def test_salt_vs_easyspin(k):
-    """Fixed-field salt 14N+1H, Enhancement off and on, against EasySpin at GridSize [31 6] and [13 4].
-    Residual of the scaled spectrum relative to the maximum: [31 6] on 4.6e-3 on the 0.9.2 base
-    (zero-quantum pairs near 0 MHz kept), now ~2e-12."""
+    """Fixed-field salt, Enhancement off and on, against EasySpin: 14N+1H at GridSize [31 6] and
+    [13 4] (k = 0, 1), axial 63Cu A = [60 60 600] MHz, 0-19400 MHz at [19 4] (k = 2, B67).
+    Residual of the scaled spectrum relative to the maximum: 14N+1H [31 6] on 4.6e-3 on the 0.9.2
+    base (zero-quantum pairs near 0 MHz kept), now ~2e-12; 63Cu 9.3e-3 / 3.2e-2 (off/on) before
+    the Dinfh index spline (0.9.7, B30), now 6.2e-14 / 2.5e-14."""
     r = _refs()["salt"][k]
     scales = {}
     for enh, yref in ((False, r['yoff']), (True, r['yon'])):
