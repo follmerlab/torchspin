@@ -99,9 +99,12 @@ def ham_ee(
             pass
 
         # Rotate J into molecular frame
-        ang = sys.eeFrame[iPair].tolist()
-        if any(a != 0.0 for a in ang):
-            R_M2ee = erot(ang, device=device)
+        # angles stay a tensor (differentiable erot); the detached list only
+        # decides whether to rotate
+        ang_t = sys.eeFrame[iPair]
+        ang = ang_t.detach().tolist()
+        if ang_t.requires_grad or any(a != 0.0 for a in ang):
+            R_M2ee = erot(ang_t, device=device)
             R_ee2M = R_M2ee.T
             J = R_ee2M.double() @ J @ R_ee2M.T.double()
 

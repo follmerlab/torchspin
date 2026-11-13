@@ -19,7 +19,7 @@ import torch
 
 from torchspin.constants import BMAGN, NMAGN, PLANCK, GFREE
 from torchspin.ham import ham as _ham_full
-from torchspin.hamsymm import hamsymm
+from torchspin.hamsymm import grid_symmetry, grid_angles_to_molecular
 from torchspin.lineshape import apowin
 from torchspin.nucdata import nucgval
 from torchspin.rotations import erot
@@ -621,7 +621,9 @@ def saffron(
     device = opt.device
     dtype = torch.complex128
     on_graph = any(t is not None and torch.is_tensor(t) and t.requires_grad
-                   for t in (sys.g, sys.A, sys.Q, sys.D, getattr(sys, 'ee', None), getattr(sys, 'nn', None)))
+                   for t in (sys.g, sys.A, sys.Q, sys.D, getattr(sys, 'ee', None), getattr(sys, 'nn', None),
+                             *(getattr(sys, f, None) for f in ('gFrame', 'AFrame', 'QFrame', 'DFrame',
+                                                               'eeFrame', 'nnFrame', 'sigmaFrame'))))
     if on_graph and not opt.TimeDomain and not opt.ProductRule:
         # The default frequency-domain accumulation bins every peak into a
         # frequency bin before the inverse FFT (EasySpin sf_peaks), which is not
@@ -939,15 +941,15 @@ def saffron(
         weights_arr = torch.full((ang_M2L.shape[0],), 4.0 * math.pi,
                                  dtype=torch.float64)
     else:
+        R_sym2mol = torch.eye(3, dtype=torch.float64)
         if opt.GridSymmetry == 'auto':
-            try:
-                result = hamsymm(sys)
-                grid_sym = result[0] if isinstance(result, tuple) else result
-            except (RuntimeError, ValueError):
-                grid_sym = 'C1'
+            # grid in hamsymm's symmetry frame, rotated into the molecular
+            # frame as in pepper (B83); hamsymm errors propagate
+            grid_sym, R_sym2mol = grid_symmetry(sys)
         else:
             grid_sym = opt.GridSymmetry
         phi_arr, theta_arr, weights_arr, _ = sphgrid(grid_sym, opt.GridSize)
+        phi_arr, theta_arr = grid_angles_to_molecular(phi_arr, theta_arr, R_sym2mol)
         chi_arr = None
     n_orient = phi_arr.shape[0]
 

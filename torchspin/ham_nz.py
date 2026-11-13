@@ -104,9 +104,12 @@ def ham_nz(
             sigma = torch.diag(sys.sigma[i0, :]).double().to(device=device)  # (3,3) diagonal
 
         # Rotate sigma into molecular frame
-        ang = sys.sigmaFrame[i0].tolist()
-        if any(a != 0.0 for a in ang):
-            R_M2CS = erot(ang, device=device)
+        # angles stay a tensor (differentiable erot); the detached list only
+        # decides whether to rotate
+        ang_t = sys.sigmaFrame[i0]
+        ang = ang_t.detach().tolist()
+        if ang_t.requires_grad or any(a != 0.0 for a in ang):
+            R_M2CS = erot(ang_t, device=device)
             R_CS2M = R_M2CS.T
             sigma = R_CS2M.double() @ sigma @ R_CS2M.T.double()
 

@@ -19,6 +19,7 @@ All energies are in **MHz** (matching EasySpin's convention).
 """
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import numpy as np
@@ -84,9 +85,12 @@ def ham_zf(
                 continue
 
             # Rotate D into molecular frame
-            ang = sys.DFrame[i0].tolist()
-            if any(a != 0.0 for a in ang):
-                R_M2D = erot(ang, device=device)
+            # angles stay a tensor (differentiable erot); the detached list only
+            # decides whether to rotate
+            ang_t = sys.DFrame[i0]
+            ang = ang_t.detach().tolist()
+            if ang_t.requires_grad or any(a != 0.0 for a in ang):
+                R_M2D = erot(ang_t, device=device)
                 R_D2M = R_M2D.T
                 D = R_D2M.double() @ D @ R_D2M.T.double()
 
@@ -135,7 +139,17 @@ def ham_zf(
                             tilt = bf_t if i0 == 0 else None
                         else:
                             tilt = bf_t[i0, :]
-                    if tilt is not None and bool(tilt.any()):
+                    on_graph = tilt is not None and (tilt.requires_grad or Bk_M.requires_grad)
+                    if on_graph and (tilt.requires_grad or bool(tilt.any())):
+                        # differentiable in the angles and in the coefficients;
+                        # no 1e-14 clean-up, which would cut the gradient of
+                        # entries that vanish at these angles (e.g. beta = 0)
+                        from torchspin.angmom import isto2stev
+                        Dk = _wignerd_torch(k_actual, tilt)
+                        Ck = torch.as_tensor(isto2stev(k_actual), dtype=torch.complex128)
+                        DB = Ck @ Dk.T @ torch.linalg.inv(Ck)
+                        Bk_M = (Bk_M.to(torch.complex128) @ DB).real
+                    elif tilt is not None and bool(tilt.any()):
                         from torchspin.angmom import wignerd, isto2stev
                         a_, b_, g_ = (float(tilt[0]), float(tilt[1]),
                                       float(tilt[2]))
@@ -150,7 +164,7 @@ def ham_zf(
 
                 for iq, q in enumerate(q_vals):
                     coeff = Bk_M[iq]
-                    if coeff == 0:
+                    if coeff == 0 and not coeff.requires_grad:
                         continue
                     O_kq = stev(all_spins, k_actual, q, i, dtype=dtype)
                     H = H + coeff.to(dtype) * O_kq
@@ -158,6 +172,41 @@ def ham_zf(
     # Hermitianise (guards against small imaginary noise on diagonal)
     H = (H + H.conj().T) / 2
     return H
+
+
+def _wignerd_torch(k: int, angles: torch.Tensor) -> torch.Tensor:
+    """Wigner D^k(alpha, beta, gamma) for integer ``k`` from torch operations.
+
+    Same convention, basis order (m = +k ... -k) and Wigner sum as
+    :func:`torchspin.angmom.wignerd` (phase ``'-'``), but differentiable in the
+    angles: every entry is a polynomial in cos(beta/2), sin(beta/2) times
+    exp(-i m alpha) and exp(-i m' gamma), so the gradient is finite at
+    beta = 0 and beta = pi too.
+    """
+    from torchspin.angmom import _logfact
+    a = angles.to(torch.float64).reshape(-1)
+    alpha, beta, gamma = a[0], a[1], a[2]
+    cb2, sb2 = torch.cos(beta / 2), torch.sin(beta / 2)
+    ms = list(range(k, -k - 1, -1))
+    rows = []
+    for m1 in ms:
+        row = []
+        for m2 in ms:
+            pre_ln = 0.5 * (_logfact(k + m1) + _logfact(k - m1) + _logfact(k + m2) + _logfact(k - m2))
+            d = torch.zeros((), dtype=torch.float64)
+            for t in range(max(0, m2 - m1), min(k + m2, k - m1) + 1):
+                e_cos, e_sin = 2 * k - 2 * t + m2 - m1, 2 * t + m1 - m2
+                c = (-1) ** (m2 - m1 + t) * math.exp(pre_ln - (_logfact(k - m1 - t) + _logfact(t)
+                                                              + _logfact(t + m1 - m2) + _logfact(k + m2 - t)))
+                term = torch.full((), c, dtype=torch.float64)
+                if e_cos > 0:
+                    term = term * cb2 ** e_cos
+                if e_sin > 0:
+                    term = term * sb2 ** e_sin
+                d = d + term
+            row.append(torch.polar(torch.ones((), dtype=torch.float64), -(m1 * alpha + m2 * gamma)) * d)
+        rows.append(torch.stack(row))
+    return torch.stack(rows)
 
 
 def zfsframes(sys: 'SpinSystem'):

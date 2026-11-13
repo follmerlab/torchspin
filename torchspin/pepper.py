@@ -31,7 +31,7 @@ from torchspin.isotopologues import expand_components
 from torchspin.experiment import (auto_batch_size, Experiment, Options,
                                   PEPPER_PERTURB_ORDER)
 from torchspin.ham import ham
-from torchspin.hamsymm import hamsymm
+from torchspin.hamsymm import grid_symmetry
 from torchspin.rotations import erot
 from torchspin.makespec import makespec
 from torchspin.resfields import resfields
@@ -1664,7 +1664,7 @@ def _pepper_single(
     R_sym2mol = torch.eye(3, dtype=torch.float64)  # symmetry → molecular frame rotation
     if grid_sym == 'auto' or grid_sym == '':
         # Automatic symmetry detection
-        grid_sym, R_sym2mol = hamsymm(sys)
+        grid_sym, R_sym2mol = grid_symmetry(sys)
         if opt.Verbosity >= 1:
             print(f"pepper: automatic symmetry detection → '{grid_sym}'")
     else:

@@ -34,12 +34,13 @@ import warnings
 from typing import Optional
 
 import numpy as np
+import torch
 import scipy.linalg as la
 
 from torchspin.spinsystem import SpinSystem
 from torchspin.saffron import PulseExperiment, SaffronOptions
 from torchspin.ham import ham
-from torchspin.hamsymm import hamsymm
+from torchspin.hamsymm import grid_symmetry, grid_angles_to_molecular
 from torchspin.sphgrid import sphgrid
 from torchspin.rotations import erot
 from torchspin.spinops import sop
@@ -170,15 +171,15 @@ def saffron_thyme(
             exp.SampleFrame, exp.CrystalSymmetry, exp.MolFrame), dtype=float)
         ori_weights = np.full(ang_M2L.shape[0], 4.0 * math.pi)
     else:
+        R_sym2mol = torch.eye(3, dtype=torch.float64)
         if opt.GridSymmetry == 'auto':
-            try:
-                result = hamsymm(sys)
-                grid_sym = result[0] if isinstance(result, tuple) else result
-            except (RuntimeError, ValueError):
-                grid_sym = 'C1'
+            # grid in hamsymm's symmetry frame, rotated into the molecular
+            # frame as in pepper (B83); hamsymm errors propagate
+            grid_sym, R_sym2mol = grid_symmetry(sys)
         else:
             grid_sym = opt.GridSymmetry
         phi_arr, theta_arr, weights_arr, _ = sphgrid(grid_sym, opt.GridSize)
+        phi_arr, theta_arr = grid_angles_to_molecular(phi_arr, theta_arr, R_sym2mol)
         phi_arr = np.asarray(phi_arr, dtype=float)
         theta_arr = np.asarray(theta_arr, dtype=float)
         # EasySpin powder: Exp.MolFrame = [-chi -theta -phi], and
