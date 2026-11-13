@@ -237,6 +237,52 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (tests/data/ref_pepper_isotropic.mat); gradients w.r.t. g, A, lw and HStrain match central
   differences of pepper. A powder grid that yields no usable facets now raises
   `RuntimeError` instead of returning zeros. pepper itself is unchanged.
+## [0.9.17] — 2026-11-11
+
+### Fixed
+
+- **Euler frame angles stay on the autograd graph (B3).** A `gFrame`, `AFrame`, `DFrame`,
+  `QFrame`, `eeFrame`, `nnFrame`, `sigmaFrame` or `BFrame` tensor with `requires_grad=True`
+  used to get no gradient, without a warning: every call site read the angles with
+  `.tolist()` or `float()` before `erot`. `erot` now builds the matrix from torch operations
+  when an angle requires grad (same formula; otherwise the float path as before), and the
+  angles are passed as tensors in `ham_ez`, `ham_hf`, `ham_zf` (D and the Stevens `BFrame`
+  rotation, now a torch Wigner D), `ham_nq`, `ham_ee`, `ham_nn`, `ham_nz`, `strainwidth`
+  (gStrain, AStrain and DStrain frames), `resfields_perturb`, `resfreqs_perturb`,
+  `endorfrq_perturb`, `resfields_hybrid` and `salt`. The zero-angle check that skips the
+  rotation is made on detached values and does not skip a frame that requires grad. With a
+  nonzero `BFrame` the Stevens `B` coefficients were detached too; they are not any more.
+  `pepper` routes a system whose only grad tensor is a frame to `pepper_autograd`, `saffron`
+  switches to its differentiable time-domain accumulation for frames as it does for tensors,
+  and `salt`'s field-swept mode raises `NotImplementedError` for grad frames as it does for
+  g, A, D, Q and ee. Gradients equal central differences (`ham`, `levels`, batched strain
+  widths: 1e-8; `pepper_autograd` powder, perturbation and `Exp.Orientations`, `salt`
+  fixed-field, `saffron`: 1e-5), also at beta = 0 and beta = pi.
+- **`hamsymm` with a frame that requires grad.** The eigenvalue path (full tensors, Stevens
+  terms) called `.numpy()` on the frame and raised `RuntimeError`. `hamsymm` now runs without
+  a graph: the point group and grid frame are a discrete decision on the detached values.
+- Values without grad are unchanged: 466 arrays (`ham`, `H0`, `muz` for 150 random systems
+  with every frame type, 16 `pepper` spectra with strains) and 30 outputs of `ham`, `pepper`
+  (matrix and perturb), strain widths, `salt` and `saffron` with tilted frames were
+  bit-identical to 0.9.0. The test suite checks the property within the build: with a frame
+  that requires grad the same 30 configurations give the float path's values (bit-identical;
+  `ham` with `BFrame` within 4 ulp, `pepper_autograd` with a grad `gFrame` within 1e-11),
+  and a tensor frame without grad is bit-identical to a list.
+## [0.9.16] — 2026-11-11
+
+### Fixed
+
+- **`pepper_autograd` with `Exp.Orientations` now honors `Options.QuadraticZeeman` and
+  `Options.Transitions`, as `pepper` does (B64).** Its orientation branch called
+  `resfields_batch` without the higher-order Zeeman operators and without the user's level
+  pairs, so the spectrum silently equaled the one without the option: for S = 1,
+  D = [300 30] MHz with `Sys.Ham220`/`Ham222` and `QuadraticZeeman=True` it differed from pepper
+  by 1.04 (one orientation) and 1.03 (five) of the maximum, and with `Transitions=[[1,2]]` by
+  1.00 and 0.39. Both now equal pepper to ≤ 5e-14. `Method='perturb'` with either option now
+  raises on this path too, as in pepper and on the powder path. The powder path, and every
+  spectrum without these options, is unchanged. EasySpin references:
+  tests/data/ref_pepper_orientations_qz.mat (crystal sums as the exact χ average; 2.5e-3 with
+  Ham2xx, which is EasySpin's linear-moment dB/dE, and 1.9e-4 for the level-pair selection).
 ## [0.9.15] — 2026-11-11
 
 ### Fixed

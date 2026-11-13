@@ -87,9 +87,12 @@ def ham_nn(
             continue
 
         # Rotate J into molecular frame
-        ang = sys.nnFrame[iPair].tolist()
-        if any(a != 0.0 for a in ang):
-            R_M2nn = erot(ang, device=device)
+        # angles stay a tensor (differentiable erot); the detached list only
+        # decides whether to rotate
+        ang_t = sys.nnFrame[iPair]
+        ang = ang_t.detach().tolist()
+        if ang_t.requires_grad or any(a != 0.0 for a in ang):
+            R_M2nn = erot(ang_t, device=device)
             R_nn2M = R_M2nn.T
             J = R_nn2M.double() @ J @ R_nn2M.T.double()
 

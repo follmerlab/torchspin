@@ -523,6 +523,8 @@ make pepper sum stick spectra over the given field directions with χ-averaged r
 - **pepper_autograd**: field sweeps only (no frequency sweeps, photoselection,
   `initState`, `mwPhase`, hybrid, `Opt.separate`, as for its powder path). Gradients
   w.r.t. the orientation angles flow through the resonance search but are not tested.
+  `Options.QuadraticZeeman` and `Options.Transitions` apply as in pepper (before 0.9.16
+  this path ignored both; B64).
 ## Simulator — transition selection, `Options.Transitions` (0.7.5)
 
 `Options.Transitions` (EasySpin `Opt.Transitions`) replaces pepper's automatic
@@ -753,7 +755,8 @@ terms are included as H(B) = H0 − B n·μ + B² n·G2·n + B³ G3[n,n,n], whic
 `ham(Sys, B·n)`.
 
 - **Supported:** `pepper` and `pepper_autograd` with `Method='matrix'` (powder
-  grids including O3, crystals, field and frequency sweeps, strains), `levels`,
+  grids including O3, crystals, `Exp.Orientations` (pepper_autograd from 0.9.16),
+  field and frequency sweeps, strains), `levels`,
   `resfreqs_matrix`, and `resfields_batch`/`resfreqs_batch` (keyword
   `zeeman_ho=`).
 - **Raise `NotImplementedError`** when the option is on and a nonzero lB ≥ 2 term
@@ -1457,7 +1460,13 @@ derivative), against 0.9998–1.0000 / 0.999 for `pepper`; the ripple only falls
 below 1 % of the signal around GridSize 91. Do not train models on their output.
 
 Strains are differentiable (HStrain, gStrain, AStrain; DStrain magnitudes
-are constants). Not yet differentiable (`pepper_autograd` raises
+are constants). Euler frame angles of the spin system (`gFrame`, `AFrame`,
+`DFrame`, `QFrame`, `eeFrame`, `nnFrame`, `sigmaFrame`, `BFrame`) are
+differentiable since 0.9.17 (before, they were detached silently); the
+automatic grid symmetry, which a frame can change, is chosen on the detached
+values, so a finite-difference check at a symmetric point must fix
+`GridSymmetry`. The crystal frames `Exp.SampleFrame` and `Exp.MolFrame` are
+not differentiable (crystals raise, below). Not yet differentiable (`pepper_autograd` raises
 `NotImplementedError`, `pepper()` itself is unchanged): `Exp.mwPhase`,
 partial ordering, photoselection, crystals, frequency sweeps, `Sys.initState`.
 `salt` (fixed-field mode) and `garlic` (all modes) are

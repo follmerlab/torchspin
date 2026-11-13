@@ -621,7 +621,9 @@ def saffron(
     device = opt.device
     dtype = torch.complex128
     on_graph = any(t is not None and torch.is_tensor(t) and t.requires_grad
-                   for t in (sys.g, sys.A, sys.Q, sys.D, getattr(sys, 'ee', None), getattr(sys, 'nn', None)))
+                   for t in (sys.g, sys.A, sys.Q, sys.D, getattr(sys, 'ee', None), getattr(sys, 'nn', None),
+                             *(getattr(sys, f, None) for f in ('gFrame', 'AFrame', 'QFrame', 'DFrame',
+                                                               'eeFrame', 'nnFrame', 'sigmaFrame'))))
     if on_graph and not opt.TimeDomain and not opt.ProductRule:
         # The default frequency-domain accumulation bins every peak into a
         # frequency bin before the inverse FFT (EasySpin sf_peaks), which is not
