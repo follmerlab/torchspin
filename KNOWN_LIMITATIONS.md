@@ -1551,7 +1551,8 @@ automatic grid follows the differentiated parameterization (0.9.26, § Automatic
 grid symmetry — differentiated parameters): with differentiated frame angles the
 symmetry frame moves with them, so the grid is Ci, and the spectrum can differ
 from the forward-only one (detached values, possibly a higher group) by the grid
-discretization error; fix `GridSymmetry` to compare the two. The crystal frames `Exp.SampleFrame` and `Exp.MolFrame` are
+discretization error; fix `GridSymmetry` to compare the two. The crystal frames
+`Exp.SampleFrame` and `Exp.MolFrame` are
 not differentiable (crystals raise, below). Not yet differentiable (`pepper_autograd` raises
 `NotImplementedError`, `pepper()` itself is unchanged): `Exp.mwPhase`,
 partial ordering, photoselection, crystals, frequency sweeps, `Sys.initState`.

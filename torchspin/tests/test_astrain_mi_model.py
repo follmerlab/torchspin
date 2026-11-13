@@ -267,6 +267,10 @@ def test_zero_width_facets_finite_value_and_gradient():
 
     pepper_autograd gave a NaN spectrum or NaN gradients there (gam = 1/0 and
     0 * inf for Lambda = 0, and d sqrt(lw2)/d lw2 at lw2 = 0); pepper sets gam = 0.
+    Explicit D2h: AStrain [10 10 10] with axial g is Dinfh (strains are symmetry
+    inputs since 0.9.24), the perturbed AStrain [10+h 10 10] D2h, and on Dinfh
+    d/dA_x is counted on the x-z meridian only (-0.016368 vs -0.008442 on D2h,
+    where AD and the central differences agree to 2e-10).
     """
     exp = Experiment(mwFreq=9.5, Range=[315.0, 345.0], nPoints=512)
     wts = torch.linspace(-1, 1, 512, dtype=F64) ** 3 + 0.3
