@@ -113,8 +113,12 @@ def _nuclear_operators(sys, i_nuc: int, dtype, device):
 def _tensor_in_molecular_frame(principal, frame_angles, device):
     """Rotate a principal-axis tensor into the molecular frame (as ham_hf/ham_nq)."""
     T = principal.double().to(device=device)
-    if any(float(a) != 0.0 for a in frame_angles):
-        R_A2M = erot(list(frame_angles), device=device).T
+    # a tensor of angles keeps its gradient (differentiable erot); the zero
+    # check only decides whether to rotate
+    on_graph = torch.is_tensor(frame_angles) and frame_angles.requires_grad
+    if on_graph or any(float(a) != 0.0 for a in frame_angles):
+        R_A2M = erot(frame_angles if torch.is_tensor(frame_angles) else list(frame_angles),
+                     device=device).T
         T = R_A2M.double() @ T @ R_A2M.T.double()
     return T
 
@@ -143,7 +147,7 @@ def _one_nucleus_sublines(sys, i_nuc, S_core, psi_u, psi_v, B_res, dBdE, nvec,
             A_pri = torch.diag(A_tensor[i_nuc, eidx])
         if not A_pri.any():
             continue
-        A_mol = _tensor_in_molecular_frame(A_pri, sys.AFrame[i_nuc, eidx].tolist(), device)
+        A_mol = _tensor_in_molecular_frame(A_pri, sys.AFrame[i_nuc, eidx], device)
         Hhfi[e] = torch.einsum('ab,bij->aij', A_mol.to(dtype), I_vec)
 
     # Nuclear quadrupole (I >= 1) — independent of the electronic manifold
@@ -152,7 +156,7 @@ def _one_nucleus_sublines(sys, i_nuc, S_core, psi_u, psi_v, B_res, dBdE, nvec,
         Q_pri = (sys.Q[3 * i_nuc:3 * i_nuc + 3, :] if sys.fullQ
                  else torch.diag(sys.Q[i_nuc, :]))
         if Q_pri.any():
-            Q_mol = _tensor_in_molecular_frame(Q_pri, sys.QFrame[i_nuc].tolist(), device)
+            Q_mol = _tensor_in_molecular_frame(Q_pri, sys.QFrame[i_nuc], device)
             H_const = H_const + torch.einsum('ab,aij,bjk->ik', Q_mol.to(dtype), I_vec, I_vec)
 
     # Nuclear Zeeman, MHz/mT.  ham_nz builds magnetic-moment operators with

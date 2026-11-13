@@ -112,7 +112,7 @@ def test_logtcorr_assignment_gives_same_garlic_result():
 
 
 @pytest.mark.parametrize('name, value, match', [
-    ('HStrain', [1.0, 2.0], 'HStrain'),
+    ('HStrain', [1.0, 2.0, 3.0, 4.0], 'HStrain'),   # [1, 2] is [1 1 2] (EasySpin)
     ('HStrainL', [-1.0, 1.0, 1.0], 'HStrainL'),
     ('DStrain', [[1.0, 2.0, 3.0, 4.0]], 'DStrain'),
     ('n', [1, 2], 'SpinSystem.n'),

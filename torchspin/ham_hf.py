@@ -101,9 +101,12 @@ def ham_hf(
 
             # Rotate A into molecular frame
             # AFrame shape: (nNuclei, 3*nElectrons); angles for pair (nSp, eSp):
-            ang = sys.AFrame[n0, eidx].tolist()
-            if any(a != 0.0 for a in ang):
-                R_M2A = erot(ang, device=device)
+            # angles stay a tensor (differentiable erot); the detached list only
+            # decides whether to rotate
+            ang_t = sys.AFrame[n0, eidx]
+            ang = ang_t.detach().tolist()
+            if ang_t.requires_grad or any(a != 0.0 for a in ang):
+                R_M2A = erot(ang_t, device=device)
                 R_A2M = R_M2A.T
                 A = R_A2M.double() @ A @ R_A2M.T.double()
 
