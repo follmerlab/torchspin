@@ -78,6 +78,61 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `test_interp_nan_edges_...::test_autograd_vs_central_differences[b50_D]`: d/dE at E = 0 is
   0 by x ↔ y symmetry (AD −1.8e-14, CD −8e-11, ≤ 3.3e-10 of d/dD) and is now asserted to be 0;
   0.9.27 gave −1.07e-3 in both because its missing-knot interpolation broke the symmetry.
+## [0.9.25] — 2026-11-12
+
+### Fixed
+
+- **AStrain widths use EasySpin's effective nuclear mI (B68).** EasySpin (`resfields.m`
+  766-788) labels every level once with the mI of the first nucleus: eigenvectors of
+  `H0 - mean(Exp.Range)*muz` with the field along the molecular z axis, levels sorted by
+  energy, `mI = <Iz>`; a transition uses the mean over its two levels at every orientation
+  (`resfields.m` 1297-1306). torchspin took `<Iz>` at each orientation's own resonance
+  field (strainwidth.py:201-214, 256 on 0.9.20), which vanishes for the field
+  perpendicular to a large A, so perpendicular lines got no AStrain width: 14N,
+  A = [20 20 90] MHz, AStrain 10 MHz, φ = 0.3, θ = 90°: 0.000 mT against EasySpin's
+  0.357 mT (an explicit ensemble with A sampled gives 0.32-0.38 mT). New
+  `strainwidth.astrain_level_mI`; `resfields_batch` computes it once per call and passes
+  it to `compute_strain_widths_batch(..., mI_levels=...)`. Differentiable
+  (degeneracy-safe eigendecomposition). **Every field-sweep result with AStrain changes**
+  (pepper, pepper_autograd, `Opt.Method='hybrid'`, esfit, `resfields`,
+  `resfields_batch`): spectra vs EasySpin (Harmonic 1, cosine / amplitude, before →
+  after) 14N 0.923 / 1.46 → 0.999999 / 0.9995; 1H 0.9987 / 1.024 → 1.000000 / 1.0001;
+  63Cu A = [50 50 500], AStrain [10 10 50] 0.972 / 0.945 → 0.999996 / 1.0000;
+  14N + gStrain 0.920 / 0.616 → 1.000000 / 1.0004; the same with `gAStrainCorr = -1`
+  0.926 / 1.027 → 1.000000 / 0.9989. Per-transition widths agree with EasySpin's
+  `resfields` to 1e-5 relative. Frequency sweeps are unchanged (EasySpin's
+  `resfreqs_matrix` uses a different AStrain model, without mI).
+- **Zero strain widths give finite gradients.** `compute_strain_widths_batch` took
+  `sqrt(lw2)` with an infinite derivative at `lw2 = 0` (e.g. HStrain = [h h 0] along z;
+  strainwidth.py:271 on 0.9.20), and pepper_autograd's facet smoothing computed
+  `gam = 1/sqrt(c1 Λ² + c2 Λ⁴)` = inf for a facet with zero mean width (Λ = 0;
+  pepper_autograd.py:685), then `0 * inf`: NaN spectra or gradients. Both now use a double
+  `torch.where`; the value at zero width is unchanged (`gam = 0`, as pepper's NumPy path
+  and EasySpin).
+
+### Changed
+
+- `compute_strain_widths_batch` raises `ValueError` for AStrain without the new
+  `mI_levels` argument (callers outside the package: pass
+  `astrain_level_mI(sys, H0, muz, mean(Range))`); without AStrain nothing changes.
+  `compute_strain_widths` (single orientation) takes optional `Range` and `mI_levels`;
+  without either it labels the levels at `B0`.
+
+### Tests
+
+- New `torchspin/tests/test_astrain_mi_model.py` (51 tests; 38 fail on 0.9.20, 2 strict
+  xfail) with EasySpin references `tests/data/ref_astrain_mi.mat`
+  (`generate_astrain_mi_refs.m`): per-orientation widths incl. θ = 90° (6 systems, one with
+  a tilted AFrame), single-orientation `compute_strain_widths`, pepper and pepper_autograd
+  spectra (Harmonic 0 and 1, 5 systems), zero-width facets, and gradients in AStrain, A
+  and gStrain vs converged central differences.
+- Tightened: `test_pepper_matlab_validation_ext2.py` `pt_broadenings_matrix` /
+  `pt_broadenings_perturb2` (cosine 0.9888 → 1.000000; threshold 0.985 → 0.99999,
+  amplitude 2 % → 0.2 %); `test_strain_validation.py` `gstrain_astrain` (RMS 0.0308 →
+  0.0002; tolerance 0.10 → 0.001, peak ratio 20 % → 0.2 %).
+  `test_resfields_single_autograd.py::test_compute_strain_widths_equals_batch` passes the
+  mI labels to the batch call (same tolerance).
+
 ## [0.9.21] — 2026-11-12
 
 ### Fixed
@@ -114,6 +169,83 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpolation, at bounds just above the measured deviations (3.7e-4 to 4.3e-3 of the
   maximum). The check that the other open-φ grids (Ci, C2h, C4h) are unchanged uses error
   bounds against exact symmetric test functions and the NaN pattern instead of output hashes.
+## [0.9.20] — 2026-11-12
+
+### Fixed
+
+- **Single-orientation `resfields` and `compute_strain_widths` are differentiable (B76).**
+  Both had their own per-orientation code with a Python-float Brent search and `.item()`
+  (resfields.py:117-118, 124, 148, 174-184, 228; strainwidth.py:168, 552, 608, 665, 669),
+  so fields, intensities and widths carried no gradient. For S = 1 with DStrain + HStrain
+  the widths kept a partial graph through the eigenvectors and returned a wrong gradient
+  without warning (dW/dg0: +0.771 against -0.807 from finite differences). They are now
+  thin wrappers over `resfields_batch` and `compute_strain_widths_batch` with one
+  orientation; public signatures and return types are unchanged. Gradients with respect
+  to g, A, D, J, gStrain, AStrain, HStrain, the angles and B0 match 4-point central
+  differences to 1e-6 relative above their round-off floor.
+- **gStrain with a full g matrix raises in the single-orientation path (B5).**
+  `compute_strain_widths` read `Sys.g[0, :]` (the first row of the full matrix) and returned
+  an infinite width (strainwidth.py:619 on 0.9.13). It now raises `ValueError` ("gStrain and AStrain are not supported
+  when full g matrices are given!"), as `resfields_batch`, pepper and EasySpin do.
+- **Looping transitions return all their resonances in `resfields` (single orientation).**
+  The two-point bracket at the range ends found at most one resonance per level pair.
+  Example: S = 1, D = 10 GHz, 9.5 GHz, θ = 0.3, 5-1000 mT: the lowest pair now gives both
+  lines (18.8 and 622.8 mT); before, only 18.8 mT.
+
+### Changed
+
+- `resfields` (single orientation): resonance fields move by up to 2e-6 mT (the old Brent
+  tolerance was 1e-5 mT; S = 1/2 6e-14 mT), intensities and widths by ≤ 3e-8 relative.
+  `Exp.mwMode` is now honored (it was ignored), and `Options.Threshold` is applied to
+  `|I|` relative to the largest `|I|`, as in `resfields_batch`. With strains but no
+  resonance in range the widths are an empty tensor instead of `None`.
+- `strainwidth.compute_strain_widths`: the `dtype` argument is accepted but unused (the
+  arithmetic follows `H0`). The per-orientation helpers `_compute_hstrain_width_squared`,
+  `_compute_gstrain_astrain_width_squared`, `_compute_dstrain_width_squared`,
+  `_orientation_vector` and `resfields._brent`/`_nuc_states` are removed.
+
+### Tests
+
+- New `torchspin/tests/test_resfields_single_autograd.py` (44 tests; 42 fail on 0.9.13).
+
+## [0.9.13] — 2026-11-11
+
+### Added
+
+- **Gradients with respect to `Sys.Ham` coefficients (B53).** `ham_ezho` detached the `Ham`
+  coefficients, so `ham`, `levels`, `pepper_autograd` and `pepper` gave no gradient for them
+  (`Ham110`, `Ham112`, and with `Options.QuadraticZeeman` `Ham2xx`/`Ham3xx`). The coefficients
+  now stay on the autograd graph; a coefficient that is zero also gets its gradient. `pepper`
+  sends a system whose `Ham` coefficient requires grad to its differentiable path
+  (`autograd.inputs_require_grad` now looks into `Sys.Ham`). Values are bit-identical (1188
+  matrices compared against 0.9.12 for S = 1/2 to 5/2 and two electrons); `ham(Sys)` and
+  `pepper` take the same time. Gradients match central differences to 1e-8 (crystal
+  orientations, all six `Ham110`/`Ham112` coefficients) and the chain rule through the
+  g-equivalent matrix to 1e-9 (powder).
+- `ham_ezho.ham_linear_g(Sys, e)`: the g matrix equivalent to the `Ham110`/`Ham112` terms of
+  electron e.
+
+### Fixed
+
+- **`chili`, `cardamom` and `fastmotion` now raise for `Sys.Ham` (B54).** They build the
+  Zeeman term from `Sys.g` only and ignored `Sys.Ham` without an error; for g given as
+  `Ham110`/`Ham112` they ran with g = 0. They now raise `ValueError` for any `Sys.Ham`
+  entry, as EasySpin's chili does (chili.m:160) and torchspin's garlic already did.
+  EasySpin's cardamom and fastmotion do not check.
+- **pepper's automatic field range raises a clear error for g = 0 (B55).** With no
+  `Exp.Range`/`Exp.CenterSweep` and the linear Zeeman term given as `Ham110`/`Ham112`, the
+  range computation divided by g = 0 and raised `ZeroDivisionError`. EasySpin takes the
+  range from `Sys.g` too and fails with an index error (pepper.m:324). torchspin now raises
+  `ValueError` and asks for `Exp.Range` or `Exp.CenterSweep`.
+- **`gStrain` with a `Ham110`/`Ham112` Zeeman term no longer gives an all-zero spectrum
+  (B56).** The strain widths divided gStrain by g = 0, and `pepper` (matrix) returned zero
+  without an error (S = 1/2, g ≡ [2.01 2.005 1.998], gStrain [0.01 0.005 0.002]: max 0 against
+  327.7 for the same g as `Sys.g`). EasySpin's pepper does the same. gStrain is now taken
+  relative to the g-equivalent of the `Ham` terms in `Sys.gFrame` (in `pepper`,
+  `pepper_autograd` and `resfields`); the spectrum equals the `Sys.g` one to 1e-13 and
+  EasySpin's spectrum of that g system at cosine > 0.9999999 (`ref_ham_gstrain.mat`, three
+  cases incl. a `gFrame` and a 1H). A g-equivalent matrix that is not diagonal in
+  `Sys.gFrame` raises `ValueError`, as gStrain with a full g matrix does.
 
 ## [0.9.10] — 2026-11-11
 
@@ -142,6 +274,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   at every knot change only by roundoff (≤ 1.3e-13 of the maximum, from the φ values). Open-φ
   grids (Ci, C2h, C4h, C6h, S6, C1) with missing knots keep a separate deviation from EasySpin
   (B58, see KNOWN_LIMITATIONS.md). EasySpin references: tests/data/ref_interp_nan_edges.mat.
+## [0.9.9] — 2026-11-11
+
+### Fixed
+
+- **Field-swept `salt` (`Experiment.Range`) has the same scale on both EPR solvers** (B44). At
+  infinite temperature EasySpin shares the polarization among the nuclear sublevels, 1/prod(2I+1),
+  in both `resfields` and `resfields_perturb` (resfields.m:1265-1266, resfields_perturb.m:486-487),
+  and torchspin's `resfields_perturb_batch` does too, but salt called `resfields_batch` without the
+  spin system, which skips that division. The matrix path (several electrons; also `Sys.Ham`
+  systems once those are routed there) was therefore prod(2I+1) times too large: S = 1/2 with
+  g = [2.01 2.005 1.998], 330-345 mT, GridSize 7, matrix/perturbation ratio of the spectrum sums
+  2.0000 for 1H (A = [3 5 12] MHz) and 6.0000 for 1H + 14N (A = [1 1.5 2] MHz); now 1.0000
+  (cosine 0.99978 / 0.99998, unchanged). The division is applied in salt rather than by passing the
+  spin system, which would also compute strain widths that salt does not use. Finite temperature
+  is unchanged (the Boltzmann populations already include it). Fixed-field salt (EasySpin's mode)
+  and one-electron field-swept spectra are bit-identical. EasySpin's salt has no field-swept mode,
+  so there is no direct reference.
 ## [0.9.8] — 2026-11-11
 
 ### Fixed
@@ -162,6 +311,58 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   sweeps, strain, several electrons). Terms of order lB ≥ 2 (dropped unless
   `Options.QuadraticZeeman`) still pass. Results with `g`, and every matrix and hybrid
   result, are unchanged.
+## [0.9.6] — 2026-11-11
+
+### Fixed
+
+- **`pepper`, `pepper_autograd` and `salt` now pad the sweep range with the edge values before the
+  final line-width convolution when the spectrum reaches an end of the range, as EasySpin does**
+  (pepper.m:1171-1193, salt.m:858-882; B34). The convolution used to zero-extend, so the points
+  within about two widths of such an end were wrong. Fixed-field salt, 1H, g = [2 2.05 2.1],
+  A = [5 8 12] MHz, 10–19 MHz, lw 0.2 MHz: end points 0.562 and 0.552 of EasySpin's (max |diff|
+  0.44 of the peak); 1H + 14N with Q (matrix path), 1.5–19 MHz, lw 0.3 MHz: 0.454 and 0.562; pepper
+  frequency sweep, Lorentzian lw 40 MHz, Harmonic 1, 9.3–9.55 GHz: 0.538 and 0.548; pepper field
+  sweep with HStrain and a Gaussian lw 1 mT, Harmonic 1: 2.94 and 3.21. All now 1.0000 (max |diff|
+  3e-13 of the peak; 1.8e-4 for the matrix-path salt and the HStrain case, the same as without
+  padding). Spectra that are zero at both ends are bit-identical. An end counts as nonzero above
+  1e-9 of the row maximum, not at exact `~= 0` as in EasySpin, because torchspin's projections
+  leave a ~1e-14 round-off floor in empty bins (KNOWN_LIMITATIONS.md); a rhombic Voigt field sweep
+  that EasySpin does not pad stays unpadded. Gradients flow through the edge copies (checked
+  against central differences). EasySpin references: tests/data/range_padding_refs.mat.
+
+### Added
+
+- **`Options.PaddingMultiplier`** (EasySpin `Opt.PaddingMultiplier`, default 3): the number of
+  line widths by which the range is padded before the convolution; 0 switches padding off. Used by
+  `pepper`, `pepper_autograd` and `salt`; a negative, non-finite or non-numeric value raises
+  `ValueError`.
+## [0.9.5] — 2026-11-11
+
+### Fixed
+
+- **`salt` simulates `Sys.Ham` systems on the matrix paths** (B35). A linear Zeeman term given
+  as `Ham110`/`Ham112` sets `g = 0`, but salt's first-order ENDOR path (fixed field, one
+  electron without Q) and the field-swept mode's perturbation resonance search build the
+  Zeeman term from `Sys.g` alone. For S = 1/2 + 1H, A = [3 5 12] MHz at 338 mT with Ham110/112
+  equal to g = [2.01 2.005 1.998], the fixed-field spectrum was 12.77x the amplitude of the g
+  spectrum with lines at the bare 1H Larmor frequency (cosine 0.00); 8.90x with orientation
+  selection (`ExciteWidth` 30 MHz); the field-swept spectrum was all zero. Any system with a
+  `Sys.Ham` entry (EasySpin's `MO_present`) now always takes the matrix paths (resonance fields
+  by `resfields_batch`, ENDOR by diagonalizing `ham()`), and the Ham spectrum equals the g
+  spectrum on that path to 2e-12 (fixed field, with and without orientation selection) and
+  2e-14 (field swept); against the default first-order g spectrum: cosine 0.99999, amplitude
+  0.994. **Deliberate deviation:** EasySpin's salt rejects every `Sys.Ham*` (salt.m:132).
+  Field-quadratic and cubic terms (lB >= 2) are dropped, as in pepper with the default
+  `Options.QuadraticZeeman=False` (True raises). An explicit `Options.Method='perturb'`,
+  `'perturb1'` or `'perturb2'` with `Sys.Ham` now raises `ValueError` (salt still ignores
+  `Method` otherwise). The field-swept mode, which is not differentiable, now also raises
+  `NotImplementedError` when a `Sys.Ham` coefficient requires grad (as for g, A, D, Q, ee),
+  instead of returning a partial gradient once Ham coefficients are differentiable (B53).
+  Results change only for systems with `Sys.Ham`; nothing else is routed differently.
+- **`salt` raises for `Sys.L`, as EasySpin does** (B45; salt.m:133, 'salt does not support
+  Sys.L.'). The first-order path ignored orbital angular momenta (S = 1/2, L = 1, soc = 100 MHz
+  gave the spectrum without L exactly); the matrix path included them through `ham()` but was
+  never validated (EasySpin has no reference).
 ## [0.9.4] — 2026-11-11
 
 ### Fixed

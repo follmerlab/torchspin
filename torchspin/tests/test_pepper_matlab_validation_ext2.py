@@ -256,9 +256,14 @@ C1_INTERP = {'fullsphere_C1': 6.3e-4}
 LOOSE = {
     'fieldrange_Q': (0.999, 0.03, "autoranged Q-band rhombic g, lw=1: amplitude 0.976 (feature "
                                   "sharper in EasySpin at 1024 points) — under investigation"),
-    'pt_broadenings_matrix': (0.985, 0.02, "gStrain+AStrain (gAStrainCorr=-1)+HStrain with 1H: "
-                                           "cosine 0.9887 — AStrain width model, PORT_SPEC_2 follow-up"),
-    'pt_broadenings_perturb2': (0.985, 0.02, "same system, perturbation method"),
+}
+
+# Cases held to thresholds tighter than the defaults: name -> (cosine, amplitude tolerance, reason)
+TIGHT = {
+    'pt_broadenings_matrix': (0.99999, 0.002, "gStrain+AStrain (gAStrainCorr=-1)+HStrain with 1H: "
+                                              "EasySpin's AStrain mI model since 0.9.25 (B68), "
+                                              "cosine 0.9888 -> 1.000000, amplitude 1.00001"),
+    'pt_broadenings_perturb2': (0.99999, 0.002, "same system, perturbation method: amplitude 0.99977"),
 }
 
 # Cases torchspin cannot run yet (feature missing) -> xfail reason
@@ -293,7 +298,7 @@ def test_pepper_ext2_vs_matlab(cases, name):
     np.testing.assert_allclose(x.numpy(), np.asarray(c.B, dtype=float), rtol=0, atol=1e-6)
     cs = cosine(spc, ref)
     ratio = np.abs(spc).max() / np.abs(ref).max()
-    cs_min, amp_tol, _ = LOOSE.get(name, (0.999, 0.02, ''))
+    cs_min, amp_tol, _ = LOOSE.get(name, TIGHT.get(name, (0.999, 0.02, '')))
     assert cs > cs_min, f"{name}: cosine {cs:.5f}"
     assert abs(ratio - 1) < amp_tol, f"{name}: amplitude ratio {ratio:.4f}"
 

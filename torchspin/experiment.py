@@ -4,6 +4,8 @@ Mirrors EasySpin's ``Exp`` and ``Opt`` structs for CW EPR powder simulation.
 """
 from __future__ import annotations
 
+import math
+import numbers
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
 
@@ -300,8 +302,10 @@ class Options:
         :func:`salt` ignores ``Method``: it always finds resonance fields by
         diagonalization and the ENDOR frequencies by first-order perturbation
         theory for one electron without quadrupole couplings, and by matrix
-        diagonalization otherwise or when ``Enhancement=True``.  Both
-        ENDOR paths give |<i|mu_perp|j>|^2 intensities in (MHz/mT)^2 (the
+        diagonalization otherwise, when ``Enhancement=True`` or when
+        ``Sys.Ham`` is given (0.9.5; with ``Sys.Ham`` an explicit
+        ``'perturb*'`` method raises).  Both ENDOR paths give
+        |<i|mu_perp|j>|^2 intensities in (MHz/mT)^2 (the
         first-order one since 0.8.1), so the scale does not depend on the path;
         EasySpin's default is always ``'matrix'``.
     HybridCoreNuclei:
@@ -411,6 +415,16 @@ class Options:
         ``NotImplementedError`` when the option is on and such terms are present.
         Transition moments stay those of the linear moment operators μ, as in
         EasySpin; the field-to-frequency factor dB/dE uses the full slope.
+    PaddingMultiplier:
+        :func:`pepper`, :func:`~torchspin.pepper_autograd.pepper_autograd` and
+        :func:`salt` (EasySpin ``Opt.PaddingMultiplier``, default 3).  When the
+        spectrum is nonzero at the first or last point of the sweep range, both
+        ends are extended by ``round(PaddingMultiplier * max(lw) / increment)``
+        copies of the edge values before the final line-width convolution
+        (``Sys.lw`` in pepper, ``lw_mhz`` in salt), and cropped afterwards, so
+        the convolution does not see a step to zero at the range ends.  ``0``
+        disables the padding.  An end counts as nonzero above 1e-9 of the
+        spectrum maximum (EasySpin: exactly nonzero); see KNOWN_LIMITATIONS.md.
     """
 
     Method: str = 'matrix'
@@ -434,6 +448,7 @@ class Options:
     Enhancement: bool = False         # ENDOR hyperfine enhancement (EasySpin Opt.Enhancement), endorfrq/salt matrix paths
     ZeroField: bool = False           # allow Experiment.Field = 0 (pepper frequency sweeps, salt fixed field)
     Transitions: Union[str, List[Tuple[int, int]], None] = None   # EasySpin Opt.Transitions: None, 'all' or 1-based (u, v) pairs
+    PaddingMultiplier: float = 3.0    # EasySpin Opt.PaddingMultiplier: range padding before the final convolution (0: off)
 
     @property
     def grid_size_coarse(self) -> int:
@@ -472,6 +487,12 @@ class Options:
         else:
             if self.GridSize < 2:
                 raise ValueError("GridSize must be at least 2.")
+        pm = self.PaddingMultiplier
+        if (isinstance(pm, bool) or not isinstance(pm, numbers.Real)
+                or not math.isfinite(float(pm)) or float(pm) < 0):
+            raise ValueError(
+                f"Options.PaddingMultiplier must be a non-negative finite number; got {pm!r}."
+            )
         # EasySpin's 14 grid symmetries (private/gridparam.m); '' means 'auto'
         # as in EasySpin (an empty Opt.GridSymmetry)
         from torchspin.sphgrid import _GRIDPARAM
