@@ -4,6 +4,8 @@ Mirrors EasySpin's ``Exp`` and ``Opt`` structs for CW EPR powder simulation.
 """
 from __future__ import annotations
 
+import math
+import numbers
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
 
@@ -300,8 +302,10 @@ class Options:
         :func:`salt` ignores ``Method``: it always finds resonance fields by
         diagonalization and the ENDOR frequencies by first-order perturbation
         theory for one electron without quadrupole couplings, and by matrix
-        diagonalization otherwise or when ``Enhancement=True``.  Both
-        ENDOR paths give |<i|mu_perp|j>|^2 intensities in (MHz/mT)^2 (the
+        diagonalization otherwise, when ``Enhancement=True`` or when
+        ``Sys.Ham`` is given (0.9.5; with ``Sys.Ham`` an explicit
+        ``'perturb*'`` method raises).  Both ENDOR paths give
+        |<i|mu_perp|j>|^2 intensities in (MHz/mT)^2 (the
         first-order one since 0.8.1), so the scale does not depend on the path;
         EasySpin's default is always ``'matrix'``.
     HybridCoreNuclei:
@@ -357,10 +361,17 @@ class Options:
 
     Threshold:
         Relative intensity cutoff for transitions.  Transitions with
-        intensity below ``Threshold * max_intensity`` are discarded.
+        intensity below ``Threshold * max_intensity`` are discarded.  In
+        :func:`~torchspin.salt.salt` (all matrix paths) it is EasySpin
+        endorfrq's selection threshold: a level pair is kept if its
+        nuclear-moment rate summed over the ``TPSGridSymm``/``TPSGridSize``
+        grid is ``> Threshold * max`` (0.9.14).
     Transitions:
-        :func:`pepper` / :func:`~torchspin.pepper_autograd.pepper_autograd`
-        only (EasySpin ``Opt.Transitions``).  ``None`` (default): automatic
+        :func:`pepper` / :func:`~torchspin.pepper_autograd.pepper_autograd`,
+        and the ENDOR matrix paths of :func:`~torchspin.endorfrq.endorfrq` and
+        :func:`~torchspin.salt.salt` (0.9.14; level pairs at the ENDOR field,
+        no selection and no threshold, as EasySpin endorfrq; not with salt's
+        ``ZeroField``) (EasySpin ``Opt.Transitions``).  ``None`` (default): automatic
         transition pre-selection with ``Threshold``.  ``'all'``: every level
         pair ``u < v``, with neither pre-selection nor the ``Threshold``
         intensity post-selection.  A list of 1-based level pairs ``(u, v)``
@@ -370,6 +381,13 @@ class Options:
         within the list, as in EasySpin.  With ``Method='hybrid'`` the levels
         are those of the exactly treated core.  Not available with
         ``Method='perturb*'`` (raises).
+    TPSGridSymm, TPSGridSize:
+        :func:`~torchspin.endorfrq.endorfrq` and :func:`~torchspin.salt.salt`
+        only (EasySpin's undocumented ``Opt.TPSGridSymm``/``Opt.TPSGridSize``,
+        endorfrq.m:145-146).  Symmetry and size of the coarse grid
+        (``sphgrid``, molecular frame) on which the automatic ENDOR transition
+        selection sums the nuclear-moment rates.  Defaults ``'D2h'`` and 4,
+        as in EasySpin.  The selection does not depend on ``GridSize``.
     Verbosity:
         Output verbosity: 0 = silent, 1 = progress, 2 = detailed.
     BatchSize:
@@ -411,6 +429,16 @@ class Options:
         ``NotImplementedError`` when the option is on and such terms are present.
         Transition moments stay those of the linear moment operators μ, as in
         EasySpin; the field-to-frequency factor dB/dE uses the full slope.
+    PaddingMultiplier:
+        :func:`pepper`, :func:`~torchspin.pepper_autograd.pepper_autograd` and
+        :func:`salt` (EasySpin ``Opt.PaddingMultiplier``, default 3).  When the
+        spectrum is nonzero at the first or last point of the sweep range, both
+        ends are extended by ``round(PaddingMultiplier * max(lw) / increment)``
+        copies of the edge values before the final line-width convolution
+        (``Sys.lw`` in pepper, ``lw_mhz`` in salt), and cropped afterwards, so
+        the convolution does not see a step to zero at the range ends.  ``0``
+        disables the padding.  An end counts as nonzero above 1e-9 of the
+        spectrum maximum (EasySpin: exactly nonzero); see KNOWN_LIMITATIONS.md.
     """
 
     Method: str = 'matrix'
@@ -434,6 +462,9 @@ class Options:
     Enhancement: bool = False         # ENDOR hyperfine enhancement (EasySpin Opt.Enhancement), endorfrq/salt matrix paths
     ZeroField: bool = False           # allow Experiment.Field = 0 (pepper frequency sweeps, salt fixed field)
     Transitions: Union[str, List[Tuple[int, int]], None] = None   # EasySpin Opt.Transitions: None, 'all' or 1-based (u, v) pairs
+    PaddingMultiplier: float = 3.0    # EasySpin Opt.PaddingMultiplier: range padding before the final convolution (0: off)
+    TPSGridSymm: str = 'D2h'          # ENDOR transition-selection grid symmetry (EasySpin Opt.TPSGridSymm), endorfrq/salt
+    TPSGridSize: int = 4              # ENDOR transition-selection grid size (EasySpin Opt.TPSGridSize), endorfrq/salt
 
     @property
     def grid_size_coarse(self) -> int:
@@ -472,10 +503,20 @@ class Options:
         else:
             if self.GridSize < 2:
                 raise ValueError("GridSize must be at least 2.")
-        valid_sym = {'Dinfh', 'D2h', 'C2h', 'Ci', 'C1', 'O3', 'auto'}
+        pm = self.PaddingMultiplier
+        if (isinstance(pm, bool) or not isinstance(pm, numbers.Real)
+                or not math.isfinite(float(pm)) or float(pm) < 0):
+            raise ValueError(
+                f"Options.PaddingMultiplier must be a non-negative finite number; got {pm!r}."
+            )
+        # EasySpin's 14 grid symmetries (private/gridparam.m); '' means 'auto'
+        # as in EasySpin (an empty Opt.GridSymmetry)
+        from torchspin.sphgrid import _GRIDPARAM
+        valid_sym = ('auto', '') + tuple(_GRIDPARAM)
         if self.GridSymmetry not in valid_sym:
             raise ValueError(
-                f"GridSymmetry must be one of {valid_sym}; got '{self.GridSymmetry}'."
+                f"GridSymmetry must be 'auto', '' or one of {tuple(_GRIDPARAM)}; "
+                f"got {self.GridSymmetry!r}."
             )
         # Graceful CUDA fallback: warn and revert to CPU if CUDA is requested
         # but not available (e.g. CPU-only PyTorch install).
