@@ -15,6 +15,14 @@ as in EasySpin:
   terms (``Sys.CF*``) or any full 3×3 tensors are present. The Hamiltonian is
   diagonalized at twelve probe field directions in each candidate symmetry
   frame and the point group is inferred from eigenvalue coincidences.
+
+torchspin additions (deviations from EasySpin, 0.9.24):
+
+* The strain tensors (HStrain/HStrainL, gStrain, AStrain, DStrain) are symmetry
+  inputs too, since the strain widths depend on the field direction (B82);
+  strain-free systems get EasySpin's group and frame exactly.
+* :func:`grid_angles_to_molecular` rotates a symmetry-frame grid into the molecular
+  frame (B83).
 """
 from __future__ import annotations
 
@@ -27,7 +35,7 @@ import torch
 from torchspin.spinsystem import SpinSystem
 from torchspin.rotations import erot
 
-__all__ = ['hamsymm']
+__all__ = ['hamsymm', 'grid_angles_to_molecular']
 
 # Point groups in EasySpin's ranking order (index = symmetry rank, 1-based).
 _EIG_GROUP_NAMES = [
@@ -92,6 +100,11 @@ def hamsymm(sys: SpinSystem, debug: bool = False) -> tuple[str, torch.Tensor]:
 
     full_tensors = _full_tensors_given(sys)
 
+    # Strain broadening (torchspin deviation from EasySpin, B82): the line
+    # widths depend on the field direction through the strain tensors, so
+    # the grid symmetry must also be a symmetry of every strain tensor.
+    strains = _strain_tensors(sys)
+
     if debug:
         print('High-order terms present!' if high_order
               else 'No high-order terms present!')
@@ -99,7 +112,7 @@ def hamsymm(sys: SpinSystem, debug: bool = False) -> tuple[str, torch.Tensor]:
     if not full_tensors and not high_order:
         if debug:
             print('Check whether isotropic...')
-        if _is_isotropic(sys):
+        if _is_isotropic(sys) and all(s[0] == 0 for s in strains):
             return 'O3', torch.eye(3, dtype=torch.float64)
 
     do_qm = high_order or full_tensors
@@ -108,9 +121,9 @@ def hamsymm(sys: SpinSystem, debug: bool = False) -> tuple[str, torch.Tensor]:
               else 'Geometric symmetry analysis...')
 
     if do_qm:
-        pgroup, R_S2M = _hamsymm_eigs(sys, higher_zeeman, debug)
+        pgroup, R_S2M = _hamsymm_eigs(sys, higher_zeeman, debug, strains=strains)
     else:
-        pgroup, R_S2M = _hamsymm_geom(sys, debug)
+        pgroup, R_S2M = _hamsymm_geom(sys, debug, strains=strains)
 
     if getattr(sys, 'tdm', None) is not None:
         pgroup = 'C1'
@@ -268,9 +281,14 @@ def _eqeig(eA: torch.Tensor, eB: torch.Tensor) -> bool:
 
 
 def _hamsymm_eigs(
-    sys: SpinSystem, higher_zeeman: bool, debug: bool = False,
+    sys: SpinSystem, higher_zeeman: bool, debug: bool = False, strains=(),
 ) -> tuple[str, torch.Tensor]:
     """Eigenvalue-based point-group detection (EasySpin ``hamsymm_eigs``).
+
+    ``strains`` (from :func:`_strain_tensors`): anisotropic strain quadratic
+    forms ``W``; a symmetry operation must also leave every strain width
+    ``z.W.z`` unchanged (torchspin addition, B82; none for strain-free
+    systems, which then follow EasySpin exactly).
 
     Returns ``(pgroup, R_S2M)`` with EasySpin's column convention.
     """
@@ -279,18 +297,32 @@ def _hamsymm_eigs(
     Rots = _candidate_frames(sys)
     nFrames = Rots.shape[0]
     FieldVecs = _probe_field_vectors()
+    Ws = [W for code, _, W in strains if code > 0]
 
     if higher_zeeman:
-        def eig_at(Bvec: torch.Tensor) -> torch.Tensor:
+        def _eigs(Bvec: torch.Tensor) -> torch.Tensor:
             B = Bvec.tolist()
             H = ham(sys, B0=B)          # already includes ham_ezho(sys, B0=B)
             return torch.linalg.eigvalsh(H)
     else:
         H0, mux, muy, muz = ham(sys)
 
-        def eig_at(Bvec: torch.Tensor) -> torch.Tensor:
+        def _eigs(Bvec: torch.Tensor) -> torch.Tensor:
             H = H0 - Bvec[0] * mux - Bvec[1] * muy - Bvec[2] * muz
             return torch.linalg.eigvalsh(H)
+
+    if Ws:
+        def eig_at(Bvec: torch.Tensor):
+            z = Bvec / torch.linalg.norm(Bvec)
+            return _eigs(Bvec), [z @ W @ z for W in Ws]
+
+        def _eqeig_s(a, b) -> bool:
+            return _eqeig(a[0], b[0]) and all(
+                abs(float(wa - wb)) <= 1e-10 * float(torch.linalg.norm(W))
+                for wa, wb, W in zip(a[1], b[1], Ws))
+    else:
+        eig_at = _eigs
+        _eqeig_s = _eqeig
 
     if debug:
         print('=' * 59)
@@ -309,45 +341,45 @@ def _hamsymm_eigs(
         eB = eig_at(B[:, 1])
         eC = eig_at(B[:, 2])
 
-        C3 = _eqeig(eB, eA)   # C3 along z?
-        C4 = _eqeig(eC, eA)   # C4 along z?
+        C3 = _eqeig_s(eB, eA)   # C3 along z?
+        C4 = _eqeig_s(eC, eA)   # C4 along z?
         if debug:
             print('C3z axis found' if C3 else 'No C3z axis found')
             print('C4z axis found' if C4 else 'No C4z axis found')
 
         if not C3 and not C4:            # Ci, C2h, D2h
-            C2z = _eqeig(eA, eig_at(B[:, 11]))
+            C2z = _eqeig_s(eA, eig_at(B[:, 11]))
             if not C2z:
                 pg = 1                   # Ci
             else:
-                sigmaxz = _eqeig(eA, eig_at(B[:, 10]))
+                sigmaxz = _eqeig_s(eA, eig_at(B[:, 10]))
                 pg = 3 if sigmaxz else 2  # D2h : C2h
         elif C3 and not C4:              # S6, D3d, Th, C6h, D6h
-            sigmaxy = _eqeig(eA, eig_at(B[:, 6]))
+            sigmaxy = _eqeig_s(eA, eig_at(B[:, 6]))
             if sigmaxy:                  # Th, C6h, D6h
-                C2z = _eqeig(eC, eig_at(B[:, 5]))
+                C2z = _eqeig_s(eC, eig_at(B[:, 5]))
                 if C2z:                  # C6h, D6h
-                    C2x = _eqeig(eC, eig_at(B[:, 7]))
+                    C2x = _eqeig_s(eC, eig_at(B[:, 7]))
                     pg = 9 if C2x else 8  # D6h : C6h
                 else:
                     pg = 10              # Th
             else:                        # S6, D3d
-                C2x = _eqeig(eC, eig_at(B[:, 7]))
+                C2x = _eqeig_s(eC, eig_at(B[:, 7]))
                 C2y = False
                 if not C2x:
-                    C2y = _eqeig(eA, eig_at(B[:, 8]))
+                    C2y = _eqeig_s(eA, eig_at(B[:, 8]))
                 pg = 7 if (C2x or C2y) else 6  # D3d : S6
         elif not C3 and C4:              # C4h, D4h, Oh
-            C2x = _eqeig(eC, eig_at(B[:, 7]))
+            C2x = _eqeig_s(eC, eig_at(B[:, 7]))
             if C2x:                      # D4h, Oh
                 b = B[:, 9]
                 Bs = torch.stack([b[1], b[2], b[0]])
-                C3d = _eqeig(eig_at(b), eig_at(Bs))
+                C3d = _eqeig_s(eig_at(b), eig_at(Bs))
                 pg = 11 if C3d else 5    # Oh : D4h
             else:
                 pg = 4                   # C4h
         else:                            # C3 and C4: Dinfh, O3
-            Cinfx = _eqeig(eC, eig_at(B[:, 3]))
+            Cinfx = _eqeig_s(eC, eig_at(B[:, 3]))
             pg = 13 if Cinfx else 12     # O3 : Dinfh
 
         if debug:
@@ -373,9 +405,21 @@ def _hamsymm_eigs(
 # Geometric analysis (EasySpin hamsymm_geom)
 # ---------------------------------------------------------------------------
 
-def _hamsymm_geom(sys: SpinSystem, debug: bool = False) -> tuple[str, torch.Tensor]:
-    """Geometric point-group detection. Returns ``(pgroup, R_S2M)``."""
+def _hamsymm_geom(
+    sys: SpinSystem, debug: bool = False, strains=(),
+) -> tuple[str, torch.Tensor]:
+    """Geometric point-group detection. Returns ``(pgroup, R_S2M)``.
+
+    The anisotropic strain tensors (``strains``, from
+    :func:`_strain_tensors`) are combined after the Hamiltonian tensors, so
+    the frame of a strain-free system and its group are EasySpin's (B82).
+    """
     tensor_syms, tensor_axes, tensor_names = _collect_tensor_symmetries(sys)
+    for k, (code, R_S2M, _) in enumerate(strains):
+        if code > 0:
+            tensor_syms.append(code)
+            tensor_axes.append(R_S2M)
+            tensor_names.append(f'strain{k + 1}')
 
     if debug:
         print('=' * 59)
@@ -725,3 +769,155 @@ def _combine_symmetries(
         return Ci, R1
 
     raise ValueError(f'Cannot compute symmetry combination: {sym1} {sym2}')
+
+
+# ---------------------------------------------------------------------------
+# Strain tensors (torchspin addition, B82)
+# ---------------------------------------------------------------------------
+
+def _strain_from_principal(pv, euler) -> tuple[int, torch.Tensor, torch.Tensor]:
+    """``(sym_code, R_S2M, W_mol)`` of a quadratic form with principal values
+    ``pv`` in the frame given by Euler angles ``euler`` (molecular → tensor)."""
+    pv = torch.as_tensor(pv, dtype=torch.float64).detach().reshape(3)
+    euler = torch.as_tensor(euler, dtype=torch.float64).detach().reshape(3)
+    code, R_S2M = _tensor_symmetry(pv, euler)
+    R = erot(euler.tolist()).to(torch.float64)          # molecular → tensor frame
+    return code, R_S2M, R.T @ torch.diag(pv) @ R
+
+
+def _strain_from_matrix(W: torch.Tensor) -> tuple[int, torch.Tensor, torch.Tensor]:
+    """``(sym_code, R_S2M, W)`` of a symmetric 3×3 quadratic form ``W`` given
+    in the molecular frame (the symmetry axes are its eigenvectors)."""
+    W = W.detach().to(torch.float64)
+    W = 0.5 * (W + W.T)
+    if bool(torch.all(W == torch.diag(torch.diagonal(W)))):
+        return _strain_from_principal(torch.diagonal(W), torch.zeros(3, dtype=torch.float64))
+    ev, V = torch.linalg.eigh(W)                          # ascending
+    tol = 1e-10 * max(float(ev.abs().max()), 1e-300)
+    d01, d12 = float(ev[1] - ev[0]) <= tol, float(ev[2] - ev[1]) <= tol
+    if d01 and d12:
+        code, cols = 0, [0, 1, 2]
+    elif d01:
+        code, cols = 1, [0, 1, 2]                         # unique axis: ev[2]
+    elif d12:
+        code, cols = 1, [1, 2, 0]                         # unique axis: ev[0]
+    else:
+        code, cols = 2, [0, 1, 2]
+    R_S2M = V[:, cols].contiguous()
+    if float(torch.linalg.det(R_S2M)) < 0:
+        R_S2M[:, 0] = -R_S2M[:, 0]
+    return code, R_S2M, W
+
+
+def _strain_tensors(sys: SpinSystem) -> list:
+    """Orientation dependence of the strain line widths as quadratic forms.
+
+    Every strain width torchspin computes (:mod:`torchspin.strainwidth`) is a
+    function of the field direction ``z`` (molecular frame) with the
+    symmetry of the quadratic forms ``z.W.z`` returned here; the grid
+    symmetry must be a symmetry of each of them (B82).  Returns a list of
+    ``(sym_code, R_S2M, W_mol)`` (sym codes as :func:`_tensor_symmetry`):
+
+    * ``HStrain`` / ``HStrainL``: ``diag(HStrain**2)`` in the molecular frame.
+    * ``gStrain``: per electron ``G∘G`` (element-wise square, as in the width
+      formula) with ``G = R_g2M diag(gStrain/g) R_g2M'``, i.e. the g frame.
+    * ``AStrain`` (single electron, first nucleus): ``A∘A`` and ``G∘A`` with
+      ``A = R_A2M diag(AStrain) R_A2M'`` (``AFrame``); together with ``G∘G``
+      these keep ``(G + c·mI·A)∘(G + c·mI·A)`` invariant for every ``mI``.
+    * ``DStrain``: dH/dD (axial) and dH/dE (rhombic) operators in the D frame:
+      ``Dinfh`` about the D-frame z axis without E strain, else ``D2h`` in the
+      D frame (also with ``DStrainCorr``).
+    """
+    out = []
+
+    def _nz(t) -> bool:
+        return t is not None and bool(torch.any(torch.as_tensor(t).detach() != 0))
+
+    zeros3 = torch.zeros(3, dtype=torch.float64)
+    for name in ('HStrain', 'HStrainL'):
+        H = getattr(sys, name, None)
+        if _nz(H):
+            H = torch.as_tensor(H, dtype=torch.float64).detach().reshape(3)
+            out.append(_strain_from_principal(H ** 2, zeros3))
+
+    nE = sys.nElectrons
+    gS = getattr(sys, 'gStrain', None)
+    G = [None] * nE
+    if _nz(gS) and sys.g is not None and not _full_tensors_given_g(sys):
+        gS = torch.as_tensor(gS, dtype=torch.float64).detach().reshape(-1, 3)
+        g_rows = _principal_rows(torch.as_tensor(sys.g).detach(), nE)
+        gFrame = getattr(sys, 'gFrame', None)
+        gFrame = (torch.zeros(nE, 3, dtype=torch.float64) if gFrame is None
+                  else torch.as_tensor(gFrame, dtype=torch.float64).detach().reshape(-1, 3))
+        for e in range(min(nE, gS.shape[0])):
+            if not bool(torch.any(gS[e] != 0)):
+                continue
+            g_e = g_rows[e]
+            if not bool(torch.any(g_e != 0)):
+                # g given as Ham110/Ham112 (SpinSystem sets g = 0): the
+                # g-equivalent principal values the strain widths use (B56)
+                # (diagonal in the g frame; the strain widths raise if it is
+                # not diagonal there, so no check here)
+                from torchspin.ham_ezho import ham_linear_g
+                gm = ham_linear_g(sys, e)
+                if gm is not None:
+                    gm = gm.detach().to(torch.float64)
+                    if bool(torch.any(gFrame[e] != 0)):
+                        R = erot(gFrame[e].tolist()).to(torch.float64)   # molecular -> g
+                        gm = R @ gm @ R.T
+                    g_e = torch.diagonal(gm)
+            M = torch.diag(gS[e] / g_e)
+            if bool(torch.any(gFrame[e] != 0)):
+                R = erot(gFrame[e].tolist()).to(torch.float64)
+                M = R.T @ M @ R
+            G[e] = M
+            out.append(_strain_from_matrix(M * M))
+
+    AS = getattr(sys, 'AStrain', None)
+    if _nz(AS) and sys.nNuclei > 0 and nE == 1:
+        A = torch.diag(torch.as_tensor(AS, dtype=torch.float64).detach().reshape(3))
+        AFrame = getattr(sys, 'AFrame', None)
+        if AFrame is not None:
+            a0 = torch.as_tensor(AFrame, dtype=torch.float64).detach().reshape(sys.nNuclei, -1)[0, :3]
+            if bool(torch.any(a0 != 0)):
+                R = erot(a0.tolist()).to(torch.float64)
+                A = R.T @ A @ R
+        out.append(_strain_from_matrix(A * A))
+        if G[0] is not None:
+            out.append(_strain_from_matrix(G[0] * A))
+
+    DS = getattr(sys, 'DStrain', None)
+    if _nz(DS):
+        DS = torch.as_tensor(DS, dtype=torch.float64).detach()
+        DS = DS.reshape(DS.shape[0] if DS.ndim > 1 else 1, -1)
+        DFrame = getattr(sys, 'DFrame', None)
+        DFrame = (torch.zeros(nE, 3, dtype=torch.float64) if DFrame is None
+                  else torch.as_tensor(DFrame, dtype=torch.float64).detach().reshape(-1, 3))
+        for e in range(min(nE, DS.shape[0])):
+            dD = float(DS[e, 0])
+            dE = float(DS[e, 1]) if DS.shape[1] > 1 else 0.0
+            if (dD == 0 and dE == 0) or float(sys.S[e]) < 1.0:
+                continue
+            pv = [1.0, 2.0, 3.0] if dE != 0 else [0.0, 0.0, 1.0]
+            out.append(_strain_from_principal(pv, DFrame[e]))
+    return out
+
+
+def _full_tensors_given_g(sys: SpinSystem) -> bool:
+    return _is_full(sys.g, sys.nElectrons)
+
+
+def grid_angles_to_molecular(phi, theta, R: torch.Tensor):
+    """Rotate grid directions ``(phi, theta)`` from the symmetry frame of
+    :func:`hamsymm` (``v_sym = R @ v_mol``) into the molecular frame, as
+    pepper does.  Returns torch tensors; unchanged when ``R`` is the identity
+    (to 1e-10)."""
+    phi = torch.as_tensor(phi, dtype=torch.float64)
+    theta = torch.as_tensor(theta, dtype=torch.float64)
+    R = torch.as_tensor(R, dtype=torch.float64)
+    if torch.allclose(R, torch.eye(3, dtype=torch.float64), atol=1e-10):
+        return phi, theta
+    sin_t = torch.sin(theta)
+    v_sym = torch.stack([sin_t * torch.cos(phi), sin_t * torch.sin(phi), torch.cos(theta)], dim=1)
+    v_mol = (R.T @ v_sym.T).T
+    return torch.atan2(v_mol[:, 1], v_mol[:, 0]), torch.acos(v_mol[:, 2].clamp(-1.0, 1.0))

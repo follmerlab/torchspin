@@ -143,6 +143,39 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `test_resfields_single_autograd.py::test_compute_strain_widths_equals_batch` passes the
   mI labels to the batch call (same tolerance).
 
+## [0.9.24] — 2026-11-12
+
+### Fixed
+
+- **Strains are part of the automatic grid symmetry (B82, deliberate deviation from
+  EasySpin).** `hamsymm` ignored HStrain, gStrain, AStrain and DStrain, so an axial g with a
+  rhombic strain got the Dinfh grid, one meridian: S = 1/2, g = [2.05 2.05 2.15], lw 0.3,
+  HStrain = [200 20 20] MHz (or gStrain = [0.02 0.002 0.002]), 9.5 GHz, GridSize [31 4] was
+  79 % (76 %) of the maximum off the D2h spectrum, while D2h [31 4] and [91 4] agree to 0.9 %
+  (0.4 %). EasySpin's hamsymm has the same gap (78.7 % / 76.0 % in MATLAB,
+  `tests/data/ref_hamsymm_strain.mat`). Each strain now enters as one more tensor in its own
+  frame (HStrain molecular, gStrain g, AStrain A, DStrain D), in both the geometric and the
+  eigenvalue analysis, for every consumer of the automatic symmetry; strain-free systems keep
+  EasySpin's group and frame (bit-identical spectra). Two EasySpin DStrain references
+  (`multidstrain`, `multidstrain_31`) are now strict xfails: EasySpin is 5.9 % off a fine D2h
+  grid there, torchspin 0.2 % / 0.07 %. `orisel`'s default grid for a tilted g with
+  molecular-frame HStrain is Ci instead of EasySpin's D2h (the EasySpin weight check in
+  `test_orisel.py` runs that case on EasySpin's own orientations).
+- **saffron, saffron_thyme, nucfrq2d and the broadband autograd model used hamsymm's grid in
+  the wrong frame (B83).** They dropped the symmetry frame (pepper rotates the grid into the
+  molecular frame) and replaced a hamsymm error by a silent C1 grid. A tilted system now gives
+  the result of the untilted one (saffron 3pESEEM: was 1.9 % off; saffron_thyme 2pESEEM 111 %;
+  nucfrq2d missed part of the frequency range; broadband, axial g along x vs z: 78 %); hamsymm
+  errors propagate. New `torchspin.hamsymm.grid_angles_to_molecular`.
+- **gStrain with a g given as `Ham110`/`Ham112` (0.9.13, B56) in the strain tensor of the
+  grid symmetry.** `SpinSystem` sets `g = 0` for such systems, and the gStrain tensor divided by
+  it (inf, a wrong grid; with a gFrame `eigh` failed before the strain widths' own check). It now
+  uses the g-equivalent principal values (`ham_linear_g`, diagonal in the g frame) that the
+  strain widths use. With a gFrame the Ham and the g system both get Ci, in different frames
+  (spectra 1.0e-3 of the maximum apart; on the same Ci grid 7.8e-14). Against EasySpin's g
+  spectrum (EasySpin's grid ignores the strain) that case is a strict xfail (cosine 0.997209);
+  against a converged C1 [91 1] grid 1 - cos is 1.07e-7 (EasySpin 2.78e-3).
+
 ## [0.9.21] — 2026-11-12
 
 ### Fixed

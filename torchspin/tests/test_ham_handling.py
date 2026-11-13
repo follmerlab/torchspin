@@ -285,11 +285,7 @@ def _ref_cases():
     return {c.name: c for c in np.atleast_1d(d['cases'])}
 
 
-@pytest.mark.parametrize("name", ['diag', 'gframe', 'diag_1H'])
-def test_pepper_gstrain_ham_matches_g(name):
-    """Ham110/Ham112 + gStrain equals the same system with g given as Sys.g
-    (torchspin) and EasySpin's spectrum of that g system. EasySpin itself gives
-    zero for the Ham system (diag cases) or a wrong spectrum (gFrame case)."""
+def _gstrain_case(name):
     c = _ref_cases()[name]
     H = c.SysH
     kw = dict(S=[0.5], lw=float(H.lw), gStrain=list(np.atleast_1d(H.gStrain).astype(float)))
@@ -301,16 +297,62 @@ def test_pepper_gstrain_ham_matches_g(name):
     Ham = {'110': [[float(H.Ham110)]], '112': [list(np.atleast_1d(H.Ham112).astype(float))]}
     exp = Experiment(mwFreq=float(c.Exp.mwFreq), Range=list(np.atleast_1d(c.Exp.Range).astype(float)),
                      nPoints=int(c.Exp.nPoints))
-    y_h = np.asarray(pepper(SpinSystem(Ham=Ham, **kw), exp)[1])
-    y_g = np.asarray(pepper(SpinSystem(g=G, **kw), exp)[1])
+    return c, SpinSystem(Ham=Ham, **kw), SpinSystem(g=G, **kw), exp
+
+
+def _cos(a, b):
+    return float(a @ b / np.linalg.norm(a) / np.linalg.norm(b))
+
+
+@pytest.mark.parametrize("name", ['diag', 'gframe', 'diag_1H'])
+def test_pepper_gstrain_ham_matches_g(name):
+    """Ham110/Ham112 + gStrain equals the same system with g given as Sys.g.
+    With a gFrame the automatic grid (B82, 0.9.24) is Ci for both, but in
+    different frames (Ham vs g 1.0e-3 of the maximum), so that case compares
+    them on an explicit Ci grid (7.8e-14)."""
+    c, s_h, s_g, exp = _gstrain_case(name)
+    opt = Options(GridSymmetry='Ci') if name == 'gframe' else Options()
+    y_h = np.asarray(pepper(s_h, exp, opt)[1])
+    y_g = np.asarray(pepper(s_g, exp, opt)[1])
     assert np.max(np.abs(y_h - y_g)) < 1e-11 * np.max(np.abs(y_g))
-    ref = np.asarray(c.spc, dtype=float)
-    cos = float(y_h @ ref / np.linalg.norm(y_h) / np.linalg.norm(ref))
-    assert cos > 0.9999999, cos
-    assert np.max(np.abs(y_h - ref)) < 3e-4 * np.max(np.abs(ref))
     # EasySpin's Ham spectrum without strain equals its g spectrum (the Ham
     # coefficients are right); with gStrain it is not the g spectrum.
+    ref = np.asarray(c.spc, dtype=float)
     assert np.max(np.abs(np.asarray(c.spcHam) - ref)) > 0.1 * np.max(np.abs(ref))
+
+
+# B82 (0.9.24): with gStrain and a gFrame EasySpin's automatic grid ignores the
+# strain and is under-symmetric; torchspin picks Ci.  Against EasySpin's g
+# spectrum: cosine 0.997209, max deviation 0.125 of the maximum (it was
+# > 0.9999999 when both used EasySpin's grid).  test_pepper_gstrain_ham_gframe_
+# converged_reference checks the default against a converged grid.
+_B82_XFAIL = pytest.mark.xfail(
+    strict=True, reason='B82: EasySpin\'s automatic grid ignores gStrain with a gFrame '
+                        '(KNOWN_LIMITATIONS, automatic grid symmetry and strains)')
+
+
+@pytest.mark.parametrize("name", ['diag', pytest.param('gframe', marks=_B82_XFAIL), 'diag_1H'])
+def test_pepper_gstrain_ham_vs_easyspin(name):
+    """Ham110/Ham112 + gStrain against EasySpin's spectrum of the g system.
+    EasySpin itself gives zero for the Ham system (diag cases) or a wrong
+    spectrum (gFrame case)."""
+    c, s_h, _, exp = _gstrain_case(name)
+    y_h = np.asarray(pepper(s_h, exp)[1])
+    ref = np.asarray(c.spc, dtype=float)
+    cos = _cos(y_h, ref)
+    assert cos > 0.9999999, cos
+    assert np.max(np.abs(y_h - ref)) < 3e-4 * np.max(np.abs(ref))
+
+
+def test_pepper_gstrain_ham_gframe_converged_reference():
+    """gFrame case on the default grid against a no-interpolation C1 [91 1] grid
+    (which agrees with C1 [181 1] to 6.7e-9 in 1 - cos): 1 - cos 1.070e-7 (Ham)
+    and 1.058e-7 (g); EasySpin's spectrum 2.777e-3."""
+    c, s_h, s_g, exp = _gstrain_case('gframe')
+    y_ref = np.asarray(pepper(s_g, exp, Options(GridSymmetry='C1', GridSize=[91, 1]))[1])
+    for s in (s_h, s_g):
+        assert 1 - _cos(np.asarray(pepper(s, exp)[1]), y_ref) < 1.2e-7
+    assert 1 - _cos(np.asarray(c.spc, dtype=float), y_ref) > 1e-3     # EasySpin's grid
 
 
 def test_pepper_autograd_gstrain_ham_matches_g():

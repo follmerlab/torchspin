@@ -93,15 +93,18 @@ def nucfrq2d(
     nfreq = np.sum(beta_mask)
 
     # Orientational grid
-    symm_result = hamsymm(sys)
-    symm_str = symm_result[0] if isinstance(symm_result, tuple) else symm_result
+    symm_str, R_sym2mol = hamsymm(sys)
     phi_grid, theta_grid, weights, vecs = sphgrid(symm_str, GridSize)
 
-    # vecs is (3, nOri) — unit vectors on the sphere
+    # vecs is (3, nOri) — unit vectors on the sphere, in hamsymm's symmetry
+    # frame: rotate them into the molecular frame (B83)
     if hasattr(vecs, 'numpy'):
         vecs = vecs.detach().cpu().numpy()
     else:
         vecs = np.asarray(vecs)
+    if vecs.shape[0] != 3:
+        vecs = vecs.T
+    vecs = np.asarray(R_sym2mol, dtype=np.float64).T @ vecs
     nOri = vecs.shape[1]
 
     FreqsAlpha = np.zeros((nOri, nfreq))

@@ -82,10 +82,22 @@ def _run_case(r, sys_key):
 # EasySpin references
 # ---------------------------------------------------------------------------
 
+# Default-grid cases where torchspin's grid deliberately differs from EasySpin's
+# (B82, 0.9.24): HStrain [30 40 60] in the molecular frame breaks the D2h symmetry
+# of the tilted g, so hamsymm gives Ci, not EasySpin's D2h in the g frame.  The
+# weight model is still checked against EasySpin on EasySpin's own grid
+# orientations (passed as Exp.Orientations), at the same tolerance.
+GRID_DEVIATES_FROM_EASYSPIN = {'grid_rotated_d2h': 'Ci'}
+
+
 @pytest.mark.parametrize('name', list(CASES))
 def test_matches_easyspin(refs, name):
     """[Weights, Transitions] and the orientations match EasySpin orisel (rel 1e-10)."""
     r = refs[name]
+    if name in GRID_DEVIATES_FROM_EASYSPIN:
+        from torchspin.hamsymm import hamsymm
+        assert hamsymm(SpinSystem(**SYS[CASES[name]]))[0] == GRID_DEVIATES_FROM_EASYSPIN[name]
+        r = dict(r, Exp=dict(r['Exp'], Orientations=np.asarray(r['ori'], float)), Opt=[])
     W, trans, phi, theta = _run_case(r, CASES[name])
     W_ref = np.asarray(r['W'], float).reshape(W.shape[0], -1)
     assert W.shape == W_ref.shape

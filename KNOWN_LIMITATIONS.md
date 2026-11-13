@@ -825,6 +825,42 @@ Hamiltonian.
 - **Gradients.** Reverse mode works through `levels`, `ham` and `pepper_autograd`; forward
   mode (dual numbers) works through `ham`/`levels`, not through pepper (known issue).
 
+## Automatic grid symmetry — strains are symmetry inputs (deliberate deviation from EasySpin, 0.9.24)
+
+`hamsymm`, and with it the automatic `GridSymmetry` of pepper, pepper_autograd, salt, saffron,
+saffron_thyme, orisel, nucfrq2d and the broadband autograd model, treats every strain as one
+more tensor in its own frame, because the strain widths depend on the field direction (B82):
+
+- `HStrain` / `HStrainL`: `diag(HStrain²)` in the molecular frame.
+- `gStrain`: per electron `G∘G` with `G = R_g2M diag(gStrain/g) R_g2M'` (the element-wise
+  square the width formula uses, so a tilted g frame can give a lower group than g itself).
+- `AStrain` (single electron, first nucleus): `A∘A` and `G∘A`, A frame.
+- `DStrain`: Dinfh about the D-frame z axis without E strain, otherwise D2h in the D frame
+  (also with `DStrainCorr`).
+
+The geometric analysis combines them after the Hamiltonian tensors; the eigenvalue analysis
+also compares the strain widths at its probe directions. Strain-free systems, and strains that
+share the Hamiltonian's symmetry, get exactly EasySpin's group and frame.
+
+EasySpin's hamsymm.m has no strain term (its `p_gridsetup.m` only lowers Dinfh to D2h for
+`initState`, which torchspin's pepper keeps). For S = 1/2, g = [2.05 2.05 2.15], lw 0.3 mT,
+HStrain = [200 20 20] MHz (or gStrain = [0.02 0.002 0.002]), 9.5 GHz, GridSize [31 4], EasySpin
+picks Dinfh and its spectrum is 78.7 % (76.0 %) of the maximum off its own D2h spectrum, while
+D2h [31 4] and [91 4] agree to 0.9 % (0.4 %) (EasySpin main, MATLAB R2024b,
+`tests/data/generate_hamsymm_strain_refs.m`; torchspin < 0.9.24 behaved the same). torchspin's
+default spectrum now matches EasySpin's forced-D2h one. Consequences:
+
+- Two `test_pepper_dstrain_matlab_validation.py` EasySpin cases (two S = 1 spins with axial D
+  and E strain) are strict xfails: EasySpin's Dinfh spectrum is 5.9 % off a fine D2h grid,
+  torchspin's default 0.2 %; with Dinfh forced, torchspin still reproduces EasySpin.
+- `orisel` with a molecular-frame `HStrain` can return a lower-symmetry (larger) default grid
+  than EasySpin (tilted rhombic g + HStrain: Ci instead of D2h).
+- Systems with strain can take longer (more orientations).
+
+Since 0.9.24 saffron, saffron_thyme, nucfrq2d and the broadband autograd model also apply
+hamsymm's symmetry frame (rotate the grid into the molecular frame, as pepper does) and let
+hamsymm errors propagate; before, a tilted symmetry frame gave wrong results there (B83).
+
 ## `orisel` — differences from EasySpin (0.9.0)
 
 Since 0.9.0 `orisel` runs EasySpin's model (full diagonalization at `Exp.Field`, orisel.m:110-153;
