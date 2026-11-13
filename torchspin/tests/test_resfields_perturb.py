@@ -278,5 +278,22 @@ def test_perturb_field_range_filtering():
         assert torch.any(torch.isclose(B_wide, B, rtol=1e-10))
 
 
+# ---------------------------------------------------------------------------
+# B65 (0.9.14): zero hyperfine principal value in second-order perturbation theory
+# ---------------------------------------------------------------------------
+
+def test_resfields_perturb_zero_hyperfine_raises():
+    """EasySpin resfields_perturb.m:120-127: 'All hyperfine coupling constants must be non-zero.'
+    torchspin raised torch's raw LinAlgError from inv(A)."""
+    from torchspin.resfields_perturb import resfields_perturb_batch
+    s = SpinSystem(S=[0.5], g=[[2.0, 2.0, 2.1]], Nucs='1H', A=[[0.0, 5.0, 10.0]])
+    exp = Experiment(Range=[300, 360], mwFreq=9.7)
+    with pytest.raises(ValueError, match="hyperfine coupling constants must be non-zero"):
+        resfields_perturb(s, 0.3, 0.7, exp)
+    with pytest.raises(ValueError, match="hyperfine coupling constants must be non-zero"):
+        resfields_perturb_batch(s, torch.tensor([0.3]), torch.tensor([0.7]), exp, Options())
+    resfields_perturb(s, 0.3, 0.7, exp, order=1)     # first order needs no inverse
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -550,6 +550,10 @@ def chili(
     """
     if opt is None:
         opt = ChiliOptions()
+    # The SLE builds the Zeeman term from Sys.g only (B54); EasySpin's chili
+    # rejects every Sys.Ham* (chili.m:160).
+    if getattr(sys, 'Ham', None):
+        raise ValueError("chili does not support Sys.Ham* parameters.")
     # EasySpin-parity implementation (general Liouvillian method): torchspin.chili_sle
     from torchspin.chili_sle import chili_sle, ChiliSLEOptions
     sle_opt = ChiliSLEOptions(**{k: getattr(opt, k) for k in ChiliSLEOptions.__dataclass_fields__ if hasattr(opt, k)})

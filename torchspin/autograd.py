@@ -46,7 +46,7 @@ __all__ = ['differentiable_spectrum', 'inputs_require_grad']
 def inputs_require_grad(*objs) -> bool:
     """True if any tensor field of the given SpinSystem/Experiment objects (or
     lists of them) requires grad. Lists and tuples of tensors (e.g. ``lw``) are
-    searched one level deep."""
+    searched one level deep, and so are dicts of tensors (``Sys.Ham``)."""
     import dataclasses
 
     def _rg(v) -> bool:
@@ -54,6 +54,8 @@ def inputs_require_grad(*objs) -> bool:
             return bool(v.requires_grad)
         if isinstance(v, (list, tuple)):
             return any(torch.is_tensor(u) and u.requires_grad for u in v)
+        if isinstance(v, dict):
+            return any(torch.is_tensor(u) and u.requires_grad for u in v.values())
         return False
 
     def _rg_deep(v) -> bool:

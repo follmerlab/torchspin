@@ -109,6 +109,13 @@ def compare_spectra(spc_py, spc_mat, B_py, B_mat, tol_rms=0.10, tol_peak=0.20):
     return passes, rms_diff, metrics
 
 
+# Per-file tolerances tighter than the defaults (tol_rms, tol_peak)
+TIGHT_TOL = {
+    # B68 (0.9.25): RMS 0.0002, peak ratio 1.0004 (was RMS 0.0308)
+    'strain_ref_gstrain_astrain.mat': (0.001, 0.002),
+}
+
+
 @pytest.mark.parametrize("filename,sys_params,exp_params", [
     # Test 1: HStrain only — PASSING
     pytest.param(
@@ -164,7 +171,8 @@ def compare_spectra(spc_py, spc_mat, B_py, B_mat, tol_rms=0.10, tol_peak=0.20):
         },
         id='dstrain',
     ),
-    # Test 4: gStrain + AStrain with correlation — xfail: nuclei+strain correction factor wrong
+    # Test 4: gStrain + AStrain with correlation (EasySpin's AStrain mI model since 0.9.25, B68:
+    # RMS 0.0308 -> 0.0002; tighter tolerance in TIGHT_TOL)
     pytest.param(
         'strain_ref_gstrain_astrain.mat',
         {
@@ -249,7 +257,8 @@ def test_strain_vs_matlab(filename, sys_params, exp_params):
     B_py, spc_py = pepper(sys, exp, opt)
 
     # Compare spectra
-    passes, rms_diff, metrics = compare_spectra(spc_py, spc_mat, B_py, B_mat)
+    tol_rms, tol_peak = TIGHT_TOL.get(filename, (0.10, 0.20))
+    passes, rms_diff, metrics = compare_spectra(spc_py, spc_mat, B_py, B_mat, tol_rms=tol_rms, tol_peak=tol_peak)
 
     print(f"\n{filename}:")
     print(f"  RMS difference: {rms_diff:.4f} (threshold: 0.10)")
