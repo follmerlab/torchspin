@@ -206,7 +206,13 @@ def _ramp_bins_t(n: int, base: torch.Tensor, a: torch.Tensor, b: torch.Tensor, d
         S1 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, lo, s1).index_add(0, hi, -s1)
         S0 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, lo, s0).index_add(0, hi, -s0)
         c1 = torch.cumsum(S1, 0)[:n]; c0 = torch.cumsum(S0, 0)[:n]
-        spec = spec + c1 * torch.arange(n, dtype=_F64, device=dev) + c0
+        # Bins that no interior covers get nothing (pepper._ramp_bins): the
+        # running sums leave a roundoff residual there.  The coverage count is
+        # integer (no graph); covered bins keep the same arithmetic, so their
+        # values and gradients are unchanged.
+        cnt = torch.zeros(n + 1, dtype=torch.long, device=dev).index_add(0, lo, torch.ones_like(lo)).index_add(0, hi, -torch.ones_like(hi))
+        cov = torch.cumsum(cnt, 0)[:n] > 0
+        spec = torch.where(cov, spec + c1 * torch.arange(n, dtype=_F64, device=dev) + c0, spec)
     return spec
 
 
@@ -290,7 +296,11 @@ def projectzones_t(pos: torch.Tensor, amp: torch.Tensor, seg_weights: torch.Tens
     has_int = lo < hi
     if bool(has_int.any()):
         S0 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, lo[has_int], height[has_int]).index_add(0, hi[has_int], -height[has_int])
-        spec = spec + torch.cumsum(S0, 0)[:n]
+        # bins no interior covers stay exactly 0 (see _ramp_bins_t)
+        li, hj = lo[has_int], hi[has_int]
+        cnt = torch.zeros(n + 1, dtype=torch.long, device=dev).index_add(0, li, torch.ones_like(li)).index_add(0, hj, -torch.ones_like(hj))
+        c0 = torch.cumsum(S0, 0)[:n]
+        spec = spec + torch.where(torch.cumsum(cnt, 0)[:n] > 0, c0, torch.zeros_like(c0))
     return spec
 
 
