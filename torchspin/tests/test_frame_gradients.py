@@ -187,7 +187,7 @@ def test_strain_width_frame_gradient(case):
     <= 6.5e-10 for all four cases (torch 2.10 and 2.15, 1 and 14 threads).
     Steps of 4e-2 are too large: there the ``AFrame+AStrain`` widths are no
     longer smooth (an 8-point stencil at h = 1e-2 is off by 5e-3)."""
-    from torchspin.strainwidth import compute_strain_widths_batch
+    from torchspin.strainwidth import astrain_level_mI, compute_strain_widths_batch
     frame, kw = STRAIN_CASES[case]
     pair = [0, 3] if kw['S'] == 0.5 else [0, 1]
 
@@ -199,8 +199,9 @@ def test_strain_width_frame_gradient(case):
         st = torch.sin(th)
         z = torch.stack([st * torch.cos(phi), st * torch.sin(phi), torch.cos(th)], dim=1).to(mux.dtype)
         muzL = z[:, 0, None, None] * mux + z[:, 1, None, None] * muy + z[:, 2, None, None] * muz
+        mI = astrain_level_mI(s, H0, muz, 325.0) if 'AStrain' in kw else None
         return compute_strain_widths_batch(s, H0, muzL, phi, th, torch.tensor([320.0, 330.0], dtype=F64),
-                                           None, 9.5, pairs_flat=torch.tensor([pair, pair]))
+                                           None, 9.5, pairs_flat=torch.tensor([pair, pair]), mI_levels=mI)
     _grad_vs_cd(batch, [0.3, 0.5, -0.4], 2e-2, 1e-8, f'compute_strain_widths_batch {case}', stencil='fit')
 
 
