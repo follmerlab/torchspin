@@ -235,8 +235,15 @@ def test_zero_weight_nan_corner():
 
 
 def _b48(g):
+    # PaddingMultiplier=0: this checks the gradient of the B48 interpolation.  With
+    # the range padding (0.9.6) the end bins, which since 0.9.28 carry clipped
+    # triangles, are copied 225 times; their kinks (vertices crossing bins at the
+    # range ends) then limit central differences to ~1e-6 (h 1e-6: 1.0e-6, 1e-7:
+    # 1.6e-6, 3e-8: 4.5e-6), while autograd is the exact local slope (each end bin
+    # agrees with central differences to their 1e-5 jitter).  Without padding the
+    # central differences converge to 1e-8.
     exp = Experiment(mwFreq=9.5, Range=[325, 337], nPoints=601, Harmonic=1)
-    return SpinSystem(S=[0.5], g=g, lw=[1.5]), exp, Options(GridSize=[31, 4], Verbosity=0)
+    return SpinSystem(S=[0.5], g=g, lw=[1.5]), exp, Options(GridSize=[31, 4], Verbosity=0, PaddingMultiplier=0)
 
 
 def _b50(D):

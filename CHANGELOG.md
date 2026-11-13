@@ -78,6 +78,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `test_interp_nan_edges_...::test_autograd_vs_central_differences[b50_D]`: d/dE at E = 0 is
   0 by x ↔ y symmetry (AD −1.8e-14, CD −8e-11, ≤ 3.3e-10 of d/dD) and is now asserted to be 0;
   0.9.27 gave −1.07e-3 in both because its missing-knot interpolation broke the symmetry.
+- Tests merged in after #53 (range padding, 0.9.6) and #72 (AStrain mI model, 0.9.25): the
+  63Cu AStrain case of `test_astrain_mi_model.py` cuts transitions at 290 mT, so its EasySpin
+  comparison is a strict xfail (cosine h0 0.997448, h1 0.946325) and
+  `test_cu63_vs_converged_reference` checks it against a wide-sweep no-interpolation reference
+  (1 − cos 4.97e-4 / 1.35e-2; EasySpin 1.87e-3 / 3.75e-2). `test_voigt_field_sweep_not_padded`
+  became `test_voigt_field_sweep_padded_since_b88`: with clipped range-end triangles the
+  padding applies (cosine vs a wide sweep 0.9946 padded, 0.908 unpadded, 0.857 EasySpin).
+  The B48 gradient test runs with `PaddingMultiplier=0` (padding copies the clipped end bins
+  225 times and limits central differences to ~1e-6; without it they converge to 1e-8).
+
 ## [0.9.25] — 2026-11-12
 
 ### Fixed
