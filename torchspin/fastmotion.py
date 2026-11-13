@@ -83,6 +83,10 @@ def fastmotion_t(sys, field_mT, tcorr, domain: str = "field") -> Tuple[torch.Ten
     """
     from torchspin.spinsystem import _reject_h0extra
     _reject_h0extra(sys, 'fastmotion')
+    # The line widths use Sys.g only (B54). EasySpin's fastmotion reads
+    # System.g directly and fails without it.
+    if getattr(sys, 'Ham', None):
+        raise ValueError("fastmotion does not support Sys.Ham* parameters.")
     if domain not in ("field", "freq"):
         raise ValueError(f"domain must be 'field' or 'freq', got {domain!r}")
     dt = torch.float64
