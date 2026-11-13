@@ -262,15 +262,16 @@ def test_pepper_autograd_orientations_frame_gradient():
 
 
 def test_pepper_routes_frame_grad_to_differentiable_path():
-    """A system whose only grad tensor is a frame goes to pepper_autograd; the
-    automatic grid (a frame changes it) is taken from the detached values."""
+    """A system whose only grad tensor is a frame goes to pepper_autograd.  With
+    differentiated Euler angles the automatic grid is Ci (B1, 0.9.26: the symmetry
+    frame moves with the angles), so the reference runs on an explicit Ci grid."""
     ang = _t([0.0, 0.3, 0.0])
     exp, opt = Experiment(**EXP_CU), Options(GridSize=[11, 4])
     _, y = pepper(SpinSystem(**CU, AFrame=ang), exp, opt)
     assert torch.is_tensor(y) and y.requires_grad
     (g,) = torch.autograd.grad((y * torch.linspace(0, 1, y.numel(), dtype=F64)).sum(), [ang], allow_unused=True)
     assert g is not None and torch.isfinite(g).all() and float(g.abs().max()) > 0
-    _, y_ref = pepper(SpinSystem(**CU, AFrame=[0.0, 0.3, 0.0]), exp, opt)
+    _, y_ref = pepper(SpinSystem(**CU, AFrame=[0.0, 0.3, 0.0]), exp, Options(GridSize=[11, 4], GridSymmetry='Ci'))
     y_ref = torch.as_tensor(y_ref)
     assert float((y.detach() - y_ref).abs().max()) < 1e-9 * float(y_ref.abs().max())
 
@@ -386,7 +387,7 @@ def _frame_outputs(mk, graph_paths):
         for method in ('matrix', 'perturb'):
             if method == 'perturb' and case not in ('gFrame', 'AFrame', 'gFrame+gStrain', 'AFrame+AStrain'):
                 continue
-            _, y = sim(SpinSystem(**kw, **{frame: mk(a)}), Experiment(**ek), Options(GridSize=[7, 4], Method=method))
+            _, y = sim(SpinSystem(**kw, **{frame: mk(a)}), Experiment(**ek), Options(GridSize=[7, 4], GridSymmetry='Ci', Method=method))
             out[f'pepper_{method}_{case}'] = _np(y)
     for case, (frame, kw) in STRAIN_CASES.items():
         s = SpinSystem(**kw, **{frame: mk(a)})
@@ -396,13 +397,14 @@ def _frame_outputs(mk, graph_paths):
                                                          theta=1.1, transitions=trans, mwFreq=9.5, B0=320.0))
     for case, (frame, kw) in SALT_CASES.items():
         _, y = salt(SpinSystem(**kw, **{frame: mk(a)}), Experiment(Field=330.0, mwFreq=9.4, ExciteWidth=200.0),
-                    Options(GridSize=[7, 4]), freq_range=(0.5, 25.0), n_points=256, lw_mhz=0.3)
+                    Options(GridSize=[7, 4], GridSymmetry='Ci'), freq_range=(0.5, 25.0), n_points=256, lw_mhz=0.3)
         out[f'salt_{case}'] = _np(y)
     exp = PulseExperiment(Sequence='2pESEEM', Field=350, dt=0.01, nPoints=64, tau=0.1)
     kw = dict(S=0.5, g=[2.01, 2.03, 2.06], Nucs='14N', A=[3.2, 2.7, 6.1], Q=[-0.6, -0.4, 1.0])
     for frame in ('gFrame', 'AFrame', 'QFrame'):
         _, y, _ = saffron(SpinSystem(**kw, **{frame: mk(a)}), exp,
-                          SaffronOptions(GridSize=7, TimeDomain=True) if graph_paths else SaffronOptions(GridSize=7))
+                          SaffronOptions(GridSize=7, GridSymmetry='Ci', TimeDomain=True) if graph_paths
+                          else SaffronOptions(GridSize=7, GridSymmetry='Ci'))
         out[f'saffron_{frame}'] = _np(y)
     return out
 
