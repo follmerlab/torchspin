@@ -14,6 +14,7 @@ ratio. Thresholds are the observed accuracy; anything below the default
 (cosine 0.999, amplitude within 2 %) is listed in ``LOOSE`` with the reason.
 """
 
+import dataclasses
 import re
 from pathlib import Path
 
@@ -227,14 +228,42 @@ def cosine(a, b):
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
+def fine_grid_options(o: Options) -> Options:
+    """The same options on the fine knots without interpolation: GridSize
+    [N_c N_i] -> [(N_c - 1) N_i + 1, 1]."""
+    nc, ni = o.grid_size_coarse, o.grid_size_interp
+    return dataclasses.replace(o, GridSize=[(nc - 1) * ni + 1, 1])
+
+
+def max_rel_dev(a, ref):
+    """max |a - ref| / max |ref|."""
+    a = np.asarray(a, dtype=float); ref = np.asarray(ref, dtype=float)
+    return float(np.abs(a - ref).max() / np.abs(ref).max())
+
+
+# Cases on an interpolated C1 grid. EasySpin's C1 interpolation mirrors the lower
+# hemisphere (gridinterp.m:211-219, B74), torchspin's does not since 0.9.21, so
+# EasySpin's spectrum is a known-wrong reference here and the EasySpin comparison
+# is removed. The objective reference is torchspin on the same fine knots without
+# interpolation (fine_grid_options): name -> bound on max_rel_dev, measured x ~1.05.
+# fullsphere_C1 (C1 [10 2] vs [19 1]): 5.961e-4 (0.9.10: 9.023e-3; vs EasySpin it
+# was cosine 1.0000000, amplitude 1.0004, i.e. EasySpin shares the 9e-3 error).
+C1_INTERP = {'fullsphere_C1': 6.3e-4}
+
+
 # Cases below the default thresholds (cosine 0.999, amplitude within 2 %):
 # name -> (cosine threshold, amplitude tolerance, reason)
 LOOSE = {
     'fieldrange_Q': (0.999, 0.03, "autoranged Q-band rhombic g, lw=1: amplitude 0.976 (feature "
                                   "sharper in EasySpin at 1024 points) — under investigation"),
-    'pt_broadenings_matrix': (0.985, 0.02, "gStrain+AStrain (gAStrainCorr=-1)+HStrain with 1H: "
-                                           "cosine 0.9887 — AStrain width model, PORT_SPEC_2 follow-up"),
-    'pt_broadenings_perturb2': (0.985, 0.02, "same system, perturbation method"),
+}
+
+# Cases held to thresholds tighter than the defaults: name -> (cosine, amplitude tolerance, reason)
+TIGHT = {
+    'pt_broadenings_matrix': (0.99999, 0.002, "gStrain+AStrain (gAStrainCorr=-1)+HStrain with 1H: "
+                                              "EasySpin's AStrain mI model since 0.9.25 (B68), "
+                                              "cosine 0.9888 -> 1.000000, amplitude 1.00001"),
+    'pt_broadenings_perturb2': (0.99999, 0.002, "same system, perturbation method: amplitude 0.99977"),
 }
 
 # Cases torchspin cannot run yet (feature missing) -> xfail reason
@@ -257,7 +286,7 @@ def _case_names():
     return [str(c.name) for c in np.atleast_1d(refs['cases'])]
 
 
-@pytest.mark.parametrize("name", _case_names())
+@pytest.mark.parametrize("name", [n for n in _case_names() if n not in C1_INTERP])
 def test_pepper_ext2_vs_matlab(cases, name):
     if name in XFAIL:
         pytest.xfail(XFAIL[name])
@@ -269,6 +298,18 @@ def test_pepper_ext2_vs_matlab(cases, name):
     np.testing.assert_allclose(x.numpy(), np.asarray(c.B, dtype=float), rtol=0, atol=1e-6)
     cs = cosine(spc, ref)
     ratio = np.abs(spc).max() / np.abs(ref).max()
-    cs_min, amp_tol, _ = LOOSE.get(name, (0.999, 0.02, ''))
+    cs_min, amp_tol, _ = LOOSE.get(name, TIGHT.get(name, (0.999, 0.02, '')))
     assert cs > cs_min, f"{name}: cosine {cs:.5f}"
     assert abs(ratio - 1) < amp_tol, f"{name}: amplitude ratio {ratio:.4f}"
+
+
+@pytest.mark.parametrize("name", sorted(C1_INTERP))
+def test_pepper_ext2_c1_vs_no_interpolation(cases, name):
+    """Interpolated C1 grid vs the same fine knots without interpolation (B74)."""
+    c = cases[name]
+    sys, exp, opt = sys_from_mat(c.Sys), exp_from_mat(c.Exp, c.Sys), opt_from_mat(c.Opt)
+    assert opt.grid_size_interp > 1
+    y = pepper(sys, exp, opt)[1].numpy()
+    ref = pepper(sys, exp, fine_grid_options(opt))[1].numpy()
+    dev = max_rel_dev(y, ref)
+    assert dev < C1_INTERP[name], f"{name}: {dev:.4g}"

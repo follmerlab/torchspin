@@ -199,8 +199,8 @@ def test_axial_invariance_across_grid_symmetries():
 
 def test_rhombic_invariance_across_grid_symmetries():
     """pepper_rhombicinvariance: D2h, Ci, C2h and C1 grids agree to 1e-3 (of max)
-    on a common intensity scale as in EasySpin (C1: 2.5e-3 observed, full-sphere
-    rectified interpolation)."""
+    on a common intensity scale as in EasySpin. C1 vs D2h: 3.6e-4 (2.4e-3 before
+    0.9.21, when the interpolation mirrored the C1 lower hemisphere, B74)."""
     sys = SpinSystem(S=[0.5], g=[1.9, 2.0, 2.3], lw=[1.0, 0.0])
     exp = Experiment(mwFreq=9.5, Range=[285, 365], nPoints=1054, Harmonic=0)
     spectra = {}
@@ -208,7 +208,7 @@ def test_rhombic_invariance_across_grid_symmetries():
         _, y = pepper(sys, exp, Options(GridSize=[20, 4], GridSymmetry=sym))
         spectra[sym] = y.numpy()
     scale = max(np.abs(v).max() for v in spectra.values())
-    for sym, tol in [('Ci', 1e-3), ('C2h', 1e-3), ('C1', 2.5e-3)]:
+    for sym, tol in [('Ci', 1e-3), ('C2h', 1e-3), ('C1', 1e-3)]:
         dev = np.abs(spectra[sym] - spectra['D2h']).max() / scale
         assert dev < tol, f"{sym} vs D2h: {dev:.4f}"
 

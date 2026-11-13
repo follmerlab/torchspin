@@ -127,6 +127,10 @@ def cardamom(
     """
     from torchspin.spinsystem import _reject_h0extra
     _reject_h0extra(sys, 'cardamom')
+    # cardamom builds the Zeeman term from Sys.g only (B54). EasySpin's
+    # cardamom does not check and runs with g = 0 for a Ham110/Ham112 system.
+    if getattr(sys, 'Ham', None):
+        raise ValueError("cardamom does not support Sys.Ham* parameters.")
     if opt is None:
         opt = CardamomOptions()
 

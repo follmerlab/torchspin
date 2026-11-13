@@ -479,6 +479,12 @@ def _check_supported(sys: SpinSystem, exp: Experiment, opt: Options) -> None:
             raise NotImplementedError(f'pepper_autograd: Experiment.{name} is not supported.')
     if getattr(sys, 'initState', None) is not None:
         raise NotImplementedError('pepper_autograd: Sys.initState is not supported.')
+    # As in pepper: perturbation theory reads Sys.g only and drops Sys.Ham.
+    _method = str(getattr(opt, 'Method', 'matrix'))
+    if _method.startswith('perturb'):
+        from torchspin.spinsystem import _reject_ham
+        _reject_ham(sys, f"pepper_autograd with Options.Method='{_method}'",
+                    "Options(Method='matrix')")
     # Without this the matrix branch would silently run below, giving the exact
     # spectrum of the whole system instead of the hybrid one — a different
     # forward model from pepper(Method='hybrid'), not just a missing gradient.
@@ -676,7 +682,12 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
         pos_spread = fSpread.detach() > 0
         Lambda = torch.where(pos_spread, fWidM / torch.where(pos_spread, fSpread, torch.ones_like(fSpread)),
                              torch.full_like(fSpread, float('inf')))
-        gam = torch.where(pos_spread, 1.0 / torch.sqrt(c1 * Lambda ** 2 + c2 * Lambda ** 4), torch.zeros_like(Lambda))
+        # Lambda = 0 (a facet whose mean width is exactly zero) gives gam = inf in
+        # EasySpin, which sets it to 0 (pepper.py does the same); the double
+        # where keeps the value and its gradient finite (0 * inf was NaN).
+        pos_l = pos_spread & (Lambda.detach() > 0)
+        Ls = torch.where(pos_l, Lambda, torch.ones_like(Lambda))
+        gam = torch.where(pos_l, 1.0 / torch.sqrt(c1 * Ls ** 2 + c2 * Ls ** 4), torch.zeros_like(Lambda))
         fWidC = fWidM * (1.0 + 2.0 * gam)                        # Opt.Smoothing = 2
         _bins = _lorentzian_bins_t if strain_lorentz else gaussian_bins_t
         spec = _bins(x, fPosC, fWidC, fIntC, dx / 100.0)
@@ -693,7 +704,8 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)
     elif _pos(fwhm_g) or _pos(fwhm_l):
-        spec = _pep._lw_convolve(spec, dx, fwhm_g, fwhm_l, H, conv=_conv_t)
+        spec = _pep._lw_convolve(spec, dx, fwhm_g, fwhm_l, H, conv=_conv_t,
+                                   pad_multiplier=opt.PaddingMultiplier)
     else:
         spec = convspec_t(spec, dx, fwhm_g, fwhm_l, deriv=H)
     if use_mod:
@@ -800,7 +812,8 @@ def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, stra
         if use_mod:
             raise ValueError("With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.")
     if _pos(g_rem) or _pos(l_rem):
-        spec = _pep._lw_convolve(spec, dx, g_rem, l_rem, H, conv=_conv_t)
+        spec = _pep._lw_convolve(spec, dx, g_rem, l_rem, H, conv=_conv_t,
+                                   pad_multiplier=opt.PaddingMultiplier)
     else:
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)
