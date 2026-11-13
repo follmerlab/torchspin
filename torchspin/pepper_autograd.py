@@ -704,7 +704,8 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)
     elif _pos(fwhm_g) or _pos(fwhm_l):
-        spec = _pep._lw_convolve(spec, dx, fwhm_g, fwhm_l, H, conv=_conv_t)
+        spec = _pep._lw_convolve(spec, dx, fwhm_g, fwhm_l, H, conv=_conv_t,
+                                   pad_multiplier=opt.PaddingMultiplier)
     else:
         spec = convspec_t(spec, dx, fwhm_g, fwhm_l, deriv=H)
     if use_mod:
@@ -811,7 +812,8 @@ def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, stra
         if use_mod:
             raise ValueError("With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.")
     if _pos(g_rem) or _pos(l_rem):
-        spec = _pep._lw_convolve(spec, dx, g_rem, l_rem, H, conv=_conv_t)
+        spec = _pep._lw_convolve(spec, dx, g_rem, l_rem, H, conv=_conv_t,
+                                   pad_multiplier=opt.PaddingMultiplier)
     else:
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)

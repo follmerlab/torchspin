@@ -464,6 +464,37 @@ for field and frequency sweeps:
   transition is labelled by the first (lowest-numbered) level of each cluster; a listed pair selects
   a zero-field line only when it names those first levels (`'all'` selects every line).
 
+## Pepper and salt — range padding, `Options.PaddingMultiplier` (0.9.6)
+
+Before the final line-width convolution (`Sys.lw` in `pepper`/`pepper_autograd`, field and
+frequency sweeps; `lw_mhz` in `salt`), a spectrum that is nonzero at the first or last point of
+the range is extended at both ends by `nPad = round(max(fwhmG, fwhmL) / increment ×
+PaddingMultiplier)` copies of the edge values, and cropped afterwards, as in EasySpin
+(pepper.m:1171-1193, salt.m:858-882). `Options.PaddingMultiplier` is EasySpin's
+`Opt.PaddingMultiplier` (default 3; 0 switches padding off). Before 0.9.6 torchspin's convolution
+padded with zeros, so the points within about two widths of such an end were wrong: a pepper
+frequency sweep with a Lorentzian `lw` at Harmonic 1 had end points 0.54 of EasySpin's, a field
+sweep with HStrain and a Gaussian `lw` at Harmonic 1 2.9–3.2 times EasySpin's.
+
+- **Deliberate deviation: the "nonzero end" test has a tolerance.** EasySpin pads when an edge
+  value is exactly nonzero (`any(spec(:,1)~=0)`). torchspin counts an end as nonzero only when
+  `|edge| > 1e-9 × max|row|` for some row: its projections leave a round-off floor of about 1e-14
+  of the maximum in bins that EasySpin's leave exactly zero, and an exact test would pad spectra
+  that EasySpin does not pad (a rhombic Voigt field sweep cut by the range, lw = [0.5 1.5] mT:
+  end points would move to 1.69 times EasySpin's). An edge between 0 and 1e-9 of the maximum is
+  therefore not padded where EasySpin would pad; the change padding makes there is of that order.
+- As in EasySpin, one decision covers all rows of a multi-row spectrum (`Options.separate`,
+  separate transitions): when one row reaches an end, every row is padded by the same count.
+- `nPad` uses MATLAB rounding (half away from zero) and the widths that reach the convolution
+  step, a skipped one (at most two increments) included, as in EasySpin; on the line-template
+  paths a Gaussian `lw` is already in the template and is not counted (EasySpin sets
+  `Sys.lw(1) = 0`, pepper.m:792-804).
+- The decision and `nPad` are discrete (detached); the edge copies are torch slices, so
+  gradients of `pepper_autograd` and of fixed-field `salt` flow through them (checked against
+  central differences with padding active).
+- No padding is applied when no convolution is (only a finite-difference harmonic, or both
+  widths skipped as at most two increments).
+
 ## Pepper and salt — zero field, `Options.ZeroField` (0.7.4)
 
 `Options(ZeroField=True)` lets `pepper` frequency sweeps (zero-field EPR/FDMR) and
@@ -833,12 +864,13 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
   (0 to 2·mwFreq, 512 points, about 37 MHz increments at X band) is therefore a stick spectrum.
 - **Not supported:** a Lorentzian ENDOR width (`Sys.lwEndor(2)`) and `Exp.Harmonic` for salt.
   torchspin's salt returns the absorption spectrum with one Gaussian width.
-- **Range padding.** When the spectrum is nonzero at an end of the rf range, EasySpin pads the
-  range with the edge values before convolving (salt.m:858-882, `Opt.PaddingMultiplier`);
-  torchspin's convolution pads with zeros, so the points within about two widths of that end
-  come out lower: 1H as above on 10–19 MHz, lw 0.2 MHz (10 increments), 20 points at each end
-  differ (end point 0.56 of EasySpin's, 0.26 of the peak), the rest agree to 2e-13; cosine 0.9980. Spectra that fall to zero inside the range (all
-  EasySpin reference cases) are not affected. A skipped width is unaffected either way.
+- **Range padding (0.9.6).** When the spectrum is nonzero at an end of the rf range, it is
+  extended by edge copies before the `lw_mhz` convolution and cropped afterwards, as in EasySpin
+  (salt.m:858-882, `Options.PaddingMultiplier`; see § Pepper and salt — range padding). Before 0.9.6
+  torchspin's convolution padded with zeros, so the points within about two widths of that end
+  came out low: 1H as above on 10–19 MHz, lw 0.2 MHz, end points 0.56 and 0.55 of EasySpin's
+  (0.44 of the peak); 1H + 14N with Q (matrix path) on 1.5–19 MHz, 0.45 and 0.56. Both now agree
+  with EasySpin at `PaddingMultiplier` 3, 1 and 0 (tests/data/range_padding_refs.mat).
 
 ## ENDOR — `endorfrq_perturb` (0.8.8)
 

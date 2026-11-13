@@ -247,6 +247,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   sweeps, strain, several electrons). Terms of order lB ≥ 2 (dropped unless
   `Options.QuadraticZeeman`) still pass. Results with `g`, and every matrix and hybrid
   result, are unchanged.
+## [0.9.6] — 2026-11-11
+
+### Fixed
+
+- **`pepper`, `pepper_autograd` and `salt` now pad the sweep range with the edge values before the
+  final line-width convolution when the spectrum reaches an end of the range, as EasySpin does**
+  (pepper.m:1171-1193, salt.m:858-882; B34). The convolution used to zero-extend, so the points
+  within about two widths of such an end were wrong. Fixed-field salt, 1H, g = [2 2.05 2.1],
+  A = [5 8 12] MHz, 10–19 MHz, lw 0.2 MHz: end points 0.562 and 0.552 of EasySpin's (max |diff|
+  0.44 of the peak); 1H + 14N with Q (matrix path), 1.5–19 MHz, lw 0.3 MHz: 0.454 and 0.562; pepper
+  frequency sweep, Lorentzian lw 40 MHz, Harmonic 1, 9.3–9.55 GHz: 0.538 and 0.548; pepper field
+  sweep with HStrain and a Gaussian lw 1 mT, Harmonic 1: 2.94 and 3.21. All now 1.0000 (max |diff|
+  3e-13 of the peak; 1.8e-4 for the matrix-path salt and the HStrain case, the same as without
+  padding). Spectra that are zero at both ends are bit-identical. An end counts as nonzero above
+  1e-9 of the row maximum, not at exact `~= 0` as in EasySpin, because torchspin's projections
+  leave a ~1e-14 round-off floor in empty bins (KNOWN_LIMITATIONS.md); a rhombic Voigt field sweep
+  that EasySpin does not pad stays unpadded. Gradients flow through the edge copies (checked
+  against central differences). EasySpin references: tests/data/range_padding_refs.mat.
+
+### Added
+
+- **`Options.PaddingMultiplier`** (EasySpin `Opt.PaddingMultiplier`, default 3): the number of
+  line widths by which the range is padded before the convolution; 0 switches padding off. Used by
+  `pepper`, `pepper_autograd` and `salt`; a negative, non-finite or non-numeric value raises
+  `ValueError`.
 ## [0.9.5] — 2026-11-11
 
 ### Fixed

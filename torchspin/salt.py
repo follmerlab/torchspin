@@ -23,7 +23,8 @@ Pipeline::
         for each B_res:
             endorfrq(…, _H0=H0, …)  → freqs, intens  (reuses device operators)
             bin freqs into freq_axis
-    _lw_convolve(...)   → Gaussian broadening (skipped at <= 2 increments)
+    _lw_convolve(...)   → Gaussian broadening (skipped at <= 2 increments; range
+                          padding with Options.PaddingMultiplier, salt.m:858-882)
     return freq_axis, spec
 """
 from __future__ import annotations
@@ -561,7 +562,8 @@ def salt(
                 # the graph with zero gradient)
                 from torchspin.pepper import _lw_convolve
                 from torchspin.pepper_autograd import _conv_t
-                spec = _lw_convolve(spec, df, lw_mhz, 0.0, 0, conv=_conv_t)
+                spec = _lw_convolve(spec, df, lw_mhz, 0.0, 0, conv=_conv_t,
+                                    pad_multiplier=opt.PaddingMultiplier)
             return freq_axis.cpu(), spec.cpu()
 
         B_res_all  = [B_fixed] * n_orient
@@ -869,6 +871,6 @@ def salt(
     if lw_mhz > 0.0:
         # skip a Gaussian of at most two increments, as in the fixed-field mode
         from torchspin.pepper import _lw_convolve
-        spec = _lw_convolve(spec, df, lw_mhz, 0.0, 0)
+        spec = _lw_convolve(spec, df, lw_mhz, 0.0, 0, pad_multiplier=opt.PaddingMultiplier)
 
     return freq_axis.cpu(), spec.cpu()

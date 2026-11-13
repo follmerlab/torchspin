@@ -51,6 +51,8 @@ Tests comparing against these are true cross-validation.
 | `generate_ham_gstrain_refs.m` | `ref_ham_gstrain.mat` | `gStrain` with a `Ham110`/`Ham112` Zeeman term (0.9.13, B56; EasySpin main, R2024b, 2026-11-11): EasySpin spectra of the same systems with the g-equivalent given as `Sys.g` (g = [2.01 2.005 1.998]; along the molecular axes, with `gFrame` [0.3 0.4 0.5], and with a 1H), plus EasySpin's own Ham spectra without strain (equal to the g ones) and with gStrain (all zero, or wrong with `gFrame`) (3 cases) |
 | `generate_astrain_mi_refs.m` | `ref_astrain_mi.mat` | AStrain effective nuclear mI (0.9.25, B68; EasySpin main, R2024b, 2026-11-12): per case pepper spectra (Harmonic 0 and 1, 1024 points, default options) and `resfields` positions, widths, intensities and level pairs at φ = 0.3, θ = 0:10:90° (one `SampleFrame` row `[0 -theta -phi]` each, same `Exp.Range`); 14N and 1H with A = [20 20 90], AStrain 10; 63Cu A = [50 50 500], AStrain [10 10 50] (also with `AFrame` [0 0.4 0]); 14N + gStrain with `gAStrainCorr` +1 and -1 (6 cases) |
 
+| `generate_range_padding_refs.m` | `range_padding_refs.mat` | Range padding before the final line-width convolution (bug B34, 0.9.6; salt.m:858-882, pepper.m:1171-1193): spectra nonzero at the range ends, each at `Opt.PaddingMultiplier` 3 (default), 0 and 1: fixed-field salt 1H `perturb1` (10–19 MHz, lwEndor 0.2) and 1H+14N with Q `matrix` (1.5–19 MHz, lwEndor 0.3); pepper frequency sweep, Lorentzian lw 40 MHz, Harmonic 1; pepper field sweep with HStrain and Gaussian lw 1 mT; rhombic Voigt field sweep cut by the range (not padded by EasySpin) (5 cases) |
+
 ### MATLAB-sourced .mat files (by module)
 
 **Spin operators & constants:**
@@ -79,6 +81,8 @@ Tests comparing against these are true cross-validation.
 `ref_sphgrid_maxphi.mat` — MATLAB-gen (`generate_sphgrid_maxphi_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt` and hamsymm group, and `grids` from `sphgrid`)
 `ref_interp_nan_edges.mat` — MATLAB-gen (`generate_interp_nan_edges_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`, `grids` from `sphgrid`, and `interp` from the private `gridinterp`)
 `ref_ham_gstrain.mat` — MATLAB-gen (`generate_ham_gstrain_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `SysG`/`SysH`/`Exp`)
+
+`range_padding_refs.mat` — MATLAB-gen (`generate_range_padding_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`): salt and pepper spectra reaching the range ends at `Opt.PaddingMultiplier` 3, 0, 1
 
 `ref_nucspin_core.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; spectra only, the systems are written out in `test_nucspin_keep_fields.py`)
 
