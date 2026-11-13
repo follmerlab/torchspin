@@ -26,29 +26,7 @@ import torch
 from torchspin.spinsystem import SpinSystem
 from torchspin.constants import PLANCK, BMAGN, NMAGN
 from torchspin.rotations import erot
-
-
-def _check_nonzero_hyperfine(sys: SpinSystem, iNuc: int, A_mat: torch.Tensor) -> None:
-    """Second-order terms need inv(A): raise as EasySpin for a zero principal value.
-
-    EasySpin endorfrq_perturb.m has no check: inv(A) (:176) warns "Matrix is
-    singular" and the frequencies come out NaN.  EasySpin resfreqs_perturb.m and
-    resfields_perturb.m:120-127 raise 'All hyperfine coupling constants must be
-    non-zero.' for any zero entry of a diagonal ``Sys.A``; torchspin raises that
-    error here too, rather than NaN.  torchspin substituted a zero matrix for
-    inv(A) instead, so the second-order result was silently wrong (B79).  A singular full ``Sys.A`` raises the same
-    error.  Only the second order uses the inverse; the first order still runs.
-    Same check as ``resfields_perturb`` (B65).
-    """
-    if sys.fullA:
-        singular = bool(torch.linalg.matrix_rank(A_mat.detach()) < 3)
-    else:
-        singular = bool((sys.A[iNuc, :].detach() == 0).any())
-    if singular:
-        raise ValueError(
-            f"endorfrq_perturb: All hyperfine coupling constants must be non-zero "
-            f"(nucleus {iNuc + 1}, {sys.Nucs[iNuc]}): second-order perturbation theory "
-            "needs inv(A). Use a small non-zero value, order=1, or matrix diagonalization.")
+from torchspin._adjugate import _adjugate3
 
 
 def endorfrq_perturb(
@@ -73,8 +51,8 @@ def endorfrq_perturb(
         molecular frame is ``n = (sin θ cos φ, sin θ sin φ, cos θ)``.
     order:
         Perturbation order: 1 or 2 (default 2).
-        Second order needs inv(A): a zero hyperfine principal value (or a
-        singular full A) raises ``ValueError``.
+        A zero hyperfine principal value (or a singular full A) gives the
+        exact A -> 0 limit: the second-order term uses adj(A), not inv(A).
     nuclei:
         List of 0-based nucleus indices to include.  Default: all nuclei.
     opt:
@@ -249,10 +227,8 @@ def endorfrq_perturb(
 
         # Second-order A invariants (independent of mS and mI)
         if order >= 2:
-            _check_nonzero_hyperfine(sys, iNuc, A_mat)
-            invA = torch.linalg.inv(A_mat)
+            adjA = _adjugate3(A_mat)   # det(A) inv(A), defined for a singular A too
             trAA = float((A_mat.T @ A_mat).trace())
-            detA = float(torch.linalg.det(A_mat))
             A_u_norm_sq = float((A_mat @ u).dot(A_mat @ u))
 
         # Nuclear energy for each (mS, mI): shape (n_mS, n_mI)
@@ -294,7 +270,7 @@ def endorfrq_perturb(
                 k_AAk = float(Ak @ Ak)
 
                 A1_sq = k_AAk - k_Au ** 2
-                A2 = detA * float(u @ invA @ k_vec)
+                A2 = float(u @ adjA @ k_vec)   # det(A) u·inv(A)·k
                 A3 = trAA - A_u_norm_sq - k_AAk + k_Au ** 2
 
                 E2A = (
