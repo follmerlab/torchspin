@@ -99,23 +99,23 @@ def _broadband_spectrum(
     """
     from torchspin.ham import ham
     from torchspin.sphgrid import sphgrid
-    from torchspin.hamsymm import hamsymm
+    from torchspin.hamsymm import grid_symmetry, grid_angles_to_molecular
     from torchspin.constants import BMAGN, PLANCK, BOLTZMANN
 
     _dev = device
     mwFreq_MHz = mwFreq_GHz * 1e3  # GHz → MHz
 
     # ---- orientation grid ----
+    # grid in hamsymm's symmetry frame, rotated into the molecular frame as in
+    # pepper (B83); hamsymm errors propagate
+    R_sym2mol = torch.eye(3, dtype=torch.float64)
     if GridSymmetry == 'auto':
-        try:
-            result = hamsymm(sys)
-            grid_sym = result[0] if isinstance(result, tuple) else result
-        except Exception:
-            grid_sym = 'C1'
+        grid_sym, R_sym2mol = grid_symmetry(sys)
     else:
         grid_sym = GridSymmetry
 
     phi_arr, theta_arr, weights_arr, _ = sphgrid(grid_sym, GridSize)
+    phi_arr, theta_arr = grid_angles_to_molecular(phi_arr, theta_arr, R_sym2mol)
     phi = phi_arr.to(device=_dev, dtype=dtype).detach()
     theta = theta_arr.to(device=_dev, dtype=dtype).detach()
     wt = weights_arr.to(device=_dev, dtype=dtype).detach()

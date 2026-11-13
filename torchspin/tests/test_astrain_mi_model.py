@@ -267,20 +267,24 @@ def test_zero_width_facets_finite_value_and_gradient():
 
     pepper_autograd gave a NaN spectrum or NaN gradients there (gam = 1/0 and
     0 * inf for Lambda = 0, and d sqrt(lw2)/d lw2 at lw2 = 0); pepper sets gam = 0.
+    Explicit D2h: AStrain [10 10 10] with axial g is Dinfh (strains are symmetry
+    inputs since 0.9.24), the perturbed AStrain [10+h 10 10] D2h, and on Dinfh
+    d/dA_x is counted on the x-z meridian only (-0.016368 vs -0.008442 on D2h,
+    where AD and the central differences agree to 2e-10).
     """
     exp = Experiment(mwFreq=9.5, Range=[315.0, 345.0], nPoints=512)
     wts = torch.linspace(-1, 1, 512, dtype=F64) ** 3 + 0.3
 
     def loss(a_strain, g):
         s = SpinSystem(S=0.5, g=g, Nucs='14N', A=[0.0, 0.0, 0.0], lw=0.3, AStrain=a_strain)
-        return pepper_autograd(s, exp)[1]
+        return pepper_autograd(s, exp, Options(GridSymmetry='D2h'))[1]
 
     a = torch.tensor([10.0, 10.0, 10.0], dtype=F64, requires_grad=True)
     g = torch.tensor([2.0, 2.0, 2.1], dtype=F64, requires_grad=True)
     y = loss(a, g)
     assert torch.all(torch.isfinite(y))
     _, y_np = pepper(SpinSystem(S=0.5, g=[2.0, 2.0, 2.1], Nucs='14N', A=[0.0, 0.0, 0.0], lw=0.3,
-                                AStrain=[10.0, 10.0, 10.0]), exp)
+                                AStrain=[10.0, 10.0, 10.0]), exp, Options(GridSymmetry='D2h'))
     np.testing.assert_allclose(y.detach().numpy(), np.asarray(y_np, float), rtol=1e-9,
                                atol=1e-9 * float(np.abs(np.asarray(y_np)).max()))
     (y * wts).sum().backward()
