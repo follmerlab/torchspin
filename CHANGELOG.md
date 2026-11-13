@@ -167,6 +167,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the result of the untilted one (saffron 3pESEEM: was 1.9 % off; saffron_thyme 2pESEEM 111 %;
   nucfrq2d missed part of the frequency range; broadband, axial g along x vs z: 78 %); hamsymm
   errors propagate. New `torchspin.hamsymm.grid_angles_to_molecular`.
+- **gStrain with a g given as `Ham110`/`Ham112` (0.9.13, B56) in the strain tensor of the
+  grid symmetry.** `SpinSystem` sets `g = 0` for such systems, and the gStrain tensor divided by
+  it (inf, a wrong grid; with a gFrame `eigh` failed before the strain widths' own check). It now
+  uses the g-equivalent principal values (`ham_linear_g`, diagonal in the g frame) that the
+  strain widths use. With a gFrame the Ham and the g system both get Ci, in different frames
+  (spectra 1.0e-3 of the maximum apart; on the same Ci grid 7.8e-14). Against EasySpin's g
+  spectrum (EasySpin's grid ignores the strain) that case is a strict xfail (cosine 0.997209);
+  against a converged C1 [91 1] grid 1 - cos is 1.07e-7 (EasySpin 2.78e-3).
 
 ## [0.9.21] — 2026-11-12
 
