@@ -210,6 +210,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   at every knot change only by roundoff (≤ 1.3e-13 of the maximum, from the φ values). Open-φ
   grids (Ci, C2h, C4h, C6h, S6, C1) with missing knots keep a separate deviation from EasySpin
   (B58, see KNOWN_LIMITATIONS.md). EasySpin references: tests/data/ref_interp_nan_edges.mat.
+## [0.9.9] — 2026-11-11
+
+### Fixed
+
+- **Field-swept `salt` (`Experiment.Range`) has the same scale on both EPR solvers** (B44). At
+  infinite temperature EasySpin shares the polarization among the nuclear sublevels, 1/prod(2I+1),
+  in both `resfields` and `resfields_perturb` (resfields.m:1265-1266, resfields_perturb.m:486-487),
+  and torchspin's `resfields_perturb_batch` does too, but salt called `resfields_batch` without the
+  spin system, which skips that division. The matrix path (several electrons; also `Sys.Ham`
+  systems once those are routed there) was therefore prod(2I+1) times too large: S = 1/2 with
+  g = [2.01 2.005 1.998], 330-345 mT, GridSize 7, matrix/perturbation ratio of the spectrum sums
+  2.0000 for 1H (A = [3 5 12] MHz) and 6.0000 for 1H + 14N (A = [1 1.5 2] MHz); now 1.0000
+  (cosine 0.99978 / 0.99998, unchanged). The division is applied in salt rather than by passing the
+  spin system, which would also compute strain widths that salt does not use. Finite temperature
+  is unchanged (the Boltzmann populations already include it). Fixed-field salt (EasySpin's mode)
+  and one-electron field-swept spectra are bit-identical. EasySpin's salt has no field-swept mode,
+  so there is no direct reference.
 ## [0.9.8] — 2026-11-11
 
 ### Fixed
