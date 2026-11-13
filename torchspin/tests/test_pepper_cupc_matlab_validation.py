@@ -101,13 +101,13 @@ def _opt(O) -> Options:
 #
 # The two grid19 cases are deliberately run at EasySpin's default GridSize=[19,4],
 # which is far too coarse for a 0.54 mT line on a 647 MHz copper hyperfine: the
-# powder average is dominated by grid ripple.  Both codes produce ripple, but
-# they place it differently, because the coarse-to-fine interpolation of the
-# resonance fields is not bit-identical.  Refining the grid removes the
-# disagreement — the same systems at [91,4] agree to cosine 0.9998 (see the
-# cupc_natural_4N_* and cupc_isotope_4N_* cases), so this is a convergence
-# artifact of the default grid rather than a parity defect.  It is kept as a
-# regression anchor for that statement.
+# powder average is dominated by grid ripple.  Up to 0.9.6 the two codes placed
+# that ripple differently (cosine 0.970 / 0.956, amplitude 0.765 / 0.820), because
+# torchspin's axial position interpolation was a not-a-knot spline in cos theta
+# instead of EasySpin's zero-end-slope spline over the knot index (B30).  Since
+# 0.9.7 the interpolation is EasySpin's and both cases agree to cosine
+# 1 - 5e-9 and amplitude 3e-5, ripple included.  Tolerances tightened from
+# (0.96, 0.30) / (0.95, 0.25).
 #
 # The two 2N matrix cases are limited by the grid, not by parity.  At
 # GridSize=[91,4] the derivative peak at the perpendicular turning point is not
@@ -124,13 +124,11 @@ def _opt(O) -> Options:
 # is within 0.02-0.09 % for 0, 1 and 2 nitrogens.  These cases stay at [91,4]
 # with the tolerance set to the measured grid error, as the anchor for that.
 LOOSE: dict = {
-    'cupc_grid19_4N_perturb': (0.96, 0.30, 'GridSize=[19,4] is unconverged for these '
-                                           'narrow lines; [91,4] gives 0.99973'),
-    'cupc_grid19_4N_hybrid': (0.95, 0.25, 'GridSize=[19,4] is unconverged for these '
-                                          'narrow lines; [91,4] gives 0.99982'),
-    'cupc_isotope_2N_matrix': (0.999, 0.03, 'derivative amplitude 0.978 at [91,4]; '
+    'cupc_grid19_4N_perturb': (1 - 1e-7, 1e-3, 'GridSize=[19,4] ripple; identical since 0.9.7'),
+    'cupc_grid19_4N_hybrid': (1 - 1e-7, 1e-3, 'GridSize=[19,4] ripple; identical since 0.9.7'),
+    'cupc_isotope_2N_matrix': (0.999, 0.03, 'derivative amplitude 0.983 at [91,4]; '
                                             '1.001 at [361,4] -- grid, not parity'),
-    'cupc_natural_2N_matrix': (0.999, 0.03, 'derivative amplitude 0.977 at [91,4]; '
+    'cupc_natural_2N_matrix': (0.999, 0.03, 'derivative amplitude 0.978 at [91,4]; '
                                             'see the note above'),
 }
 
