@@ -56,6 +56,8 @@ Tests comparing against these are true cross-validation.
 
 | `generate_range_padding_refs.m` | `range_padding_refs.mat` | Range padding before the final line-width convolution (bug B34, 0.9.6; salt.m:858-882, pepper.m:1171-1193): spectra nonzero at the range ends, each at `Opt.PaddingMultiplier` 3 (default), 0 and 1: fixed-field salt 1H `perturb1` (10–19 MHz, lwEndor 0.2) and 1H+14N with Q `matrix` (1.5–19 MHz, lwEndor 0.3); pepper frequency sweep, Lorentzian lw 40 MHz, Harmonic 1; pepper field sweep with HStrain and Gaussian lw 1 mT; rhombic Voigt field sweep cut by the range (not padded by EasySpin) (5 cases) |
 
+| `generate_spinsystem_shapes_refs.m` | `ref_spinsystem_shapes.mat` | SpinSystem input shorthands expanded by validatespinsys.m (0.9.15, B62/B63), each pepper case given in the short form: `g = [gperp gpar]` axial, `gStrain = [x y]`, `HStrain = [x y]`, `A = [Aperp Apar]` (14N), `A = [A1 A2]` for one 1H and two electron spins (5 cases) |
+
 ### MATLAB-sourced .mat files (by module)
 
 **Spin operators & constants:**
@@ -88,6 +90,8 @@ Tests comparing against these are true cross-validation.
 `ref_ham_gstrain.mat` — MATLAB-gen (`generate_ham_gstrain_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `SysG`/`SysH`/`Exp`)
 
 `range_padding_refs.mat` — MATLAB-gen (`generate_range_padding_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`): salt and pepper spectra reaching the range ends at `Opt.PaddingMultiplier` 3, 0, 1
+
+`ref_spinsystem_shapes.mat` — MATLAB-gen (`generate_spinsystem_shapes_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
 
 `ref_nucspin_core.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; spectra only, the systems are written out in `test_nucspin_keep_fields.py`)
 
