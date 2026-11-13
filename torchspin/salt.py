@@ -583,6 +583,18 @@ def salt(
         batch_size = auto_batch_size(opt.BatchSize, H0.shape[0], n_orient)
         B_res_all  = [None] * n_orient
         intens_all = [None] * n_orient
+        # Infinite temperature: the polarization is shared among the nuclear
+        # sublevels, 1/prod(2I+1), as in EasySpin (resfields.m:1265-1266) and in
+        # resfields_perturb_batch (B44).  resfields_batch applies it only when
+        # given sys, which would also compute (and validate) strain widths that
+        # salt does not use, so it is applied here.  At finite temperature the
+        # Boltzmann populations over the full space already include it.
+        if exp.Temperature is not None and exp.Temperature > 0:
+            nuc_pol = 1.0
+        else:
+            nuc_pol = 1.0
+            for I in getattr(sys, 'I', []):
+                nuc_pol /= (2 * I + 1)  # 1/prod(2I+1)
         for batch_idx in range((n_orient + batch_size - 1) // batch_size):
             s = batch_idx * batch_size
             e = min(s + batch_size, n_orient)
@@ -591,7 +603,8 @@ def salt(
             )
             for j, (B_res, intens_epr) in enumerate(zip(B_list, I_list)):
                 B_res_all[s + j]  = B_res
-                intens_all[s + j] = intens_epr
+                intens_all[s + j] = (intens_epr * nuc_pol
+                                     if intens_epr is not None else None)
 
     # ── Phase 2: ENDOR computation ─────────────────────────────────────────
     # For single-electron systems without quadrupole coupling, use fast

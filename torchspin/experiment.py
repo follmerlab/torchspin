@@ -474,10 +474,14 @@ class Options:
         else:
             if self.GridSize < 2:
                 raise ValueError("GridSize must be at least 2.")
-        valid_sym = {'Dinfh', 'D2h', 'C2h', 'Ci', 'C1', 'O3', 'auto'}
+        # EasySpin's 14 grid symmetries (private/gridparam.m); '' means 'auto'
+        # as in EasySpin (an empty Opt.GridSymmetry)
+        from torchspin.sphgrid import _GRIDPARAM
+        valid_sym = ('auto', '') + tuple(_GRIDPARAM)
         if self.GridSymmetry not in valid_sym:
             raise ValueError(
-                f"GridSymmetry must be one of {valid_sym}; got '{self.GridSymmetry}'."
+                f"GridSymmetry must be 'auto', '' or one of {tuple(_GRIDPARAM)}; "
+                f"got {self.GridSymmetry!r}."
             )
         # Graceful CUDA fallback: warn and revert to CPU if CUDA is requested
         # but not available (e.g. CPU-only PyTorch install).
