@@ -1877,6 +1877,46 @@ def _reject_h0extra(sys, where: str) -> None:
             f"Options(Method='matrix')), or remove H0Extra.")
 
 
+def _ham_linear_orders(sys) -> list:
+    """Keys of the nonzero ``Sys.Ham*`` terms of order lB <= 1 in the field.
+
+    These are the terms that ``ham()`` puts into H0 - B·μ and that every
+    solver diagonalizing it includes.  Terms of order lB >= 2 enter only with
+    ``Options.QuadraticZeeman`` and are dropped by default everywhere.
+    """
+    ham = getattr(sys, 'Ham', None)
+    if ham is None:
+        return []
+    out = []
+    for key, val in ham.items():
+        k = str(key)
+        k = k[3:] if k.startswith('Ham') else k
+        if (val is not None and bool(torch.any(torch.as_tensor(val) != 0))
+                and int(k[0]) <= 1):
+            out.append(str(key))
+    return out
+
+
+def _reject_ham(sys, where: str, alternative: str) -> None:
+    """Raise if *sys* carries ``Sys.Ham*`` terms that *where* (a
+    perturbation-theory solver) silently drops.
+
+    These solvers build the electron Zeeman term from ``Sys.g`` only.  With g
+    given as ``Ham110``/``Ham112``, ``Sys.g`` is zero, so they returned NaN
+    frequencies or an all-zero spectrum; other terms of order lB <= 1 were
+    ignored.  EasySpin's resfreqs_perturb rejects every ``Sys.Ham*``
+    (resfreqs_perturb.m:75-77).  Terms of order lB >= 2 are dropped by every
+    solver unless ``Options.QuadraticZeeman`` is on, which the perturbation
+    solvers reject separately (``check_quadratic_zeeman_unsupported``).
+    """
+    keys = _ham_linear_orders(sys)
+    if keys:
+        raise ValueError(
+            f"{where} does not support Sys.Ham* parameters (here {', '.join(keys)}): "
+            f"perturbation theory builds the Zeeman term from Sys.g only. Give the "
+            f"linear Zeeman term as Sys.g, or use {alternative}.")
+
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
