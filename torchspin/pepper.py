@@ -90,6 +90,27 @@ def _d2h_interp_matrix(N_c: int, N_f: int) -> np.ndarray:
     return W @ R
 
 
+def _interp_dinfh_g3(th_c: np.ndarray, th_f: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """EasySpin ``gridinterp`` G3 on an axial (Dinfh) grid: ``esspline1d(y, 1, iphi)``
+    (gridinterp.m:77-78), a cubic spline over the knot index ``1..n`` with zero
+    first derivatives at both ends (esspline1d.m ``EndCon = 1``; for two knots the
+    zero-slope cubic Hermite polynomial), evaluated at the fine knots'
+    fractional indices.  The Dinfh knots are equally spaced in θ, so the index
+    is θ/Δθ.  Up to 0.9.6 torchspin used a not-a-knot spline in cos θ here.
+    Linear in ``values``, so pepper_autograd's cached matrix stays exact."""
+    from scipy.interpolate import CubicSpline
+    order = np.argsort(th_c)
+    th_s = th_c[order]
+    n = th_s.size
+    if n < 2:
+        return np.full(th_f.shape, float(values[0]))
+    step = (th_s[-1] - th_s[0]) / (n - 1)
+    if not np.allclose(np.diff(th_s), step, rtol=1e-9, atol=1e-12):
+        raise ValueError('Dinfh interpolation needs knots equally spaced in theta.')
+    xi = np.clip((th_f - th_s[0]) / step, 0.0, n - 1.0)
+    return CubicSpline(np.arange(n, dtype=float), values[order], bc_type='clamped')(xi)
+
+
 def _interp_sph(
     coarse_vecs: torch.Tensor,
     fine_vecs: torch.Tensor,
@@ -103,7 +124,8 @@ def _interp_sph(
     ``gridinterp(..., 'G3')`` and eliminates the quantization artifacts that arise
     from unstructured 2-D scattered interpolation.
 
-    For Dinfh grids (1-D meridional), uses a cubic spline in cos(theta).
+    For Dinfh grids (1-D meridional), uses :func:`_interp_dinfh_g3` (EasySpin's
+    spline over the θ knot index with zero end slopes).
 
     For full-sphere (C1) grids, falls back to CloughTocher 2-D scattered interpolation.
 
@@ -125,21 +147,12 @@ def _interp_sph(
     z_c = coarse_vecs[2].numpy()
     z_f = fine_vecs[2].numpy()
 
-    # ---- 1-D fallback for meridional grids (Dinfh: all phi = 0, y ≈ 0) ----
+    # ---- 1-D meridional grids (Dinfh: all phi = 0, y ≈ 0) ----
     if np.std(y_c) < 1e-8:
-        from scipy.interpolate import CubicSpline
-        sort_idx = np.argsort(z_c)
-        zs = z_c[sort_idx]
-        vs = values[sort_idx]
-        if len(zs) >= 4:
-            cs = CubicSpline(zs, vs, extrapolate=False)
-            res = cs(z_f)
-            nan_mask = np.isnan(res)
-            if nan_mask.any():
-                res[nan_mask] = np.interp(z_f[nan_mask], zs, vs,
-                                          left=vs[0], right=vs[-1])
-            return res
-        return np.interp(z_f, zs, vs, left=vs[0], right=vs[-1])
+        x_f, y_f = fine_vecs[0].numpy(), fine_vecs[1].numpy()
+        th_c = np.arctan2(np.hypot(x_c, y_c), z_c)
+        th_f = np.arctan2(np.hypot(x_f, y_f), z_f)
+        return _interp_dinfh_g3(th_c, th_f, np.asarray(values, dtype=float))
 
     n_c = len(values)
 
@@ -291,6 +304,133 @@ def _transition_slots(all_B, all_I, all_W, all_pairs, n_orient):
     return B_arrs, I_arrs, (W_arrs if have_widths else None)
 
 
+# Missing knots (B88, B75): the matrix resonance search covers Exp.Range only, so
+# a transition that leaves the sweep window at some orientations has NaN knots
+# there.  Those level pairs are searched again over a window padded by these
+# fractions of the sweep width (lower edge clamped at 0), widening while partly
+# missing pairs remain.
+_RESEARCH_PADS = (0.5, 1.0, 2.0, 4.0)
+
+
+def _pair_counts(all_B, all_pairs):
+    """``{(u, v): counts}``: number of resonances of each level pair at every
+    orientation (int array).  Empty without level pairs (perturbation path)."""
+    counts: dict = {}
+    if all_pairs is None or all(p is None for p in all_pairs):
+        return counts
+    n_orient = len(all_B)
+    for k in range(n_orient):
+        B, P = all_B[k], all_pairs[k]
+        if B is None or P is None or B.numel() == 0:
+            continue
+        uv, c = np.unique(P.detach().cpu().numpy().astype(np.int64), axis=0, return_counts=True)
+        for (u, v), n in zip(uv, c):
+            counts.setdefault((int(u), int(v)), np.zeros(n_orient, dtype=np.int64))[k] = n
+    return counts
+
+
+def _missing_resonances(all_B, all_pairs):
+    """``{(u, v): n}`` for the level pairs whose resonance count differs between
+    orientations; ``n`` is the number of resonances missing relative to the
+    orientation with the most (summed over orientations).
+
+    A slot is a level pair plus its occurrence index, so such a pair leaves NaN
+    knots in at least one of its slots (``_transition_slots``).  Index-matched
+    results without level pairs (perturbation path) give an empty dict.
+    """
+    return {uv: int((c.max() - c).sum()) for uv, c in sorted(_pair_counts(all_B, all_pairs).items())
+            if c.min() < c.max()}
+
+
+def _replace_pairs(lists, new, bad):
+    """Per orientation, replace the resonances of the level pairs ``bad`` in
+    ``lists = (B, I, W, pairs)`` by those of ``new`` (same layout; its other
+    pairs are ignored).  Slot assembly sorts by (pair, field) itself, so the
+    order does not matter.  Tensors stay on the autograd graph (masking and
+    concatenation only)."""
+    def _in_bad(P):
+        badt = torch.as_tensor(bad, dtype=P.dtype, device=P.device)
+        return (P[:, None, :] == badt[None]).all(-1).any(-1)
+
+    out = ([], [], [], [])
+    for k in range(len(lists[0])):
+        B1, I1, W1, P1 = (l[k] for l in lists)
+        B2, I2, W2, P2 = (l[k] for l in new)
+        keep = take = None
+        if P1 is not None and B1 is not None and B1.numel():
+            keep = ~_in_bad(P1)
+        if P2 is not None and B2 is not None and B2.numel():
+            take = _in_bad(P2)
+
+        def _cat(x1, x2):
+            parts = []
+            if x1 is not None and x1.numel() and keep is not None:
+                parts.append(x1[keep])
+            if x2 is not None and x2.numel() and take is not None:
+                parts.append(x2[take])
+            if parts:
+                return torch.cat(parts) if len(parts) > 1 else parts[0]
+            for x in (x1, x2):
+                if x is not None:
+                    return x[:0]
+            return None
+        Bk = _cat(B1, B2)
+        out[0].append(Bk)
+        out[1].append(_cat(I1, I2))
+        out[2].append(None if (W1 is None and W2 is None) else _cat(W1, W2))
+        out[3].append(None if (Bk is None or Bk.numel() == 0) else _cat(P1, P2))
+    return out
+
+
+def _research_missing_knots(lists, rng, search, verbose=False):
+    """Search again the level pairs that miss resonances at some orientations
+    (B88, B75).
+
+    ``lists = (B, I, W, pairs)`` per orientation from the search over
+    ``rng = Exp.Range``; ``search(window, pairs)`` repeats that search over
+    all orientations for the given level pairs and field window and returns
+    the same layout.  The partly missing pairs are searched over
+    Range ± f·W (W = sweep width, f in ``_RESEARCH_PADS``, lower edge clamped
+    at 0) and their resonances replaced wholesale, all orientations at once so
+    that the occurrence index of a looping transition means the same at every
+    knot.  A pair's new resonances are kept only if they leave fewer of its
+    resonances missing and none of its orientations loses one; pairs that improved but are still incomplete are
+    searched again over a doubled window, the others keep what they have
+    (what is still missing then does not resonate at those orientations at
+    any field nearby, e.g. a looping transition, and very wide windows make
+    the detection of its near-tangent resonances roundoff-sensitive).
+    Out-of-range positions are kept: projection and summation clip them to
+    the sweep window, and the interpolation sees the transition at every
+    knot.  Returns ``lists`` itself (same objects) when no
+    pair is partly missing, so such spectra are unchanged bit for bit.
+    """
+    missing = _missing_resonances(lists[0], lists[3])
+    if not missing:
+        return lists
+    W = float(rng[1]) - float(rng[0])
+    active = list(missing)
+    for f in _RESEARCH_PADS:
+        window = [max(0.0, float(rng[0]) - f * W), float(rng[1]) + f * W]
+        if verbose:
+            print(f"pepper: {len(active)} level pair(s) miss resonances at some knots; "
+                  f"searching them again over [{window[0]:.6g}, {window[1]:.6g}] mT")
+        found = search(window, active)
+        old = _pair_counts(lists[0], lists[3])
+        trial = _replace_pairs(lists, found, active)
+        trial = _pair_counts(trial[0], trial[3])
+        # the wider window contains the old one: a pair improves if it has no
+        # fewer resonances at any orientation and fewer missing
+        better = [uv for uv in active if uv in trial and (trial[uv] >= old[uv]).all()
+                  and int((trial[uv].max() - trial[uv]).sum()) < missing[uv]]
+        if better:
+            lists = _replace_pairs(lists, found, better)
+            missing = _missing_resonances(lists[0], lists[3])
+        active = [uv for uv in better if uv in missing]
+        if not active:
+            break
+    return lists
+
+
 def _filter_slots(B_arrs, I_arrs, W_arrs, threshold):
     """EasySpin transition pre-selection: keep a transition (slot) when its
     maximum |intensity| over the grid reaches ``threshold`` × the global maximum.
@@ -412,22 +552,30 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
         ln += dlen
     z[N_c - 1, :] = np.concatenate([y[idx:idx + ln], y[idx:idx + 1]]) if periodic else y[idx:idx + ln]
     if full:
+        # C1 lower hemisphere: sphgrid stores each of these rows as a reversed
+        # upper row (sphgrid.m:320-325), i.e. with phi decreasing; put it back
+        # in phi-increasing order before resampling it on the common phi
+        # columns (B74). EasySpin's gridinterp.m:211-219 reads the rows as
+        # increasing: a lower knot at phi gets the value from -phi - dphi.
         idx += ln
         ln -= dlen
         for ir in range(N_c, 2 * N_c - 2):
-            z[ir, :] = _row(y[idx:idx + ln], periodic)
+            z[ir, :] = _row(y[idx:idx + ln][::-1], periodic)
             idx += ln
             ln += -dlen
         z[2 * N_c - 2, :] = y[idx]
 
     phi_f, theta_f, _, _ = sphgrid(symmetry, N_f)
     phi_f = phi_f.numpy(); theta_f = theta_f.numpy()
+    # 1-based as in gridinterp.m:121-125, then shifted (exactly) to 0-based:
+    # the ``1 +`` rounds away ulp-level excess at integer knots, which decides
+    # whether a NaN neighbor gets a zero weight.
     if full:
-        iphi = 4 * (N_c - 1) * (phi_f / maxPhi)
-        ithe = 2 * (N_c - 1) * (theta_f / math.pi)
+        iphi = (1 + 4 * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + 2 * (N_c - 1) * (theta_f / math.pi)) - 1
     else:
-        iphi = nOct * (N_c - 1) * (phi_f / maxPhi)
-        ithe = (N_c - 1) * (theta_f / (math.pi / 2))
+        iphi = (1 + nOct * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + (N_c - 1) * (theta_f / (math.pi / 2))) - 1
     iphi = np.clip(iphi, 0, nc - 1); ithe = np.clip(ithe, 0, nr - 1)
     if cubic:
         spl = RectBivariateSpline(np.arange(nr), np.arange(nc), z, kx=3, ky=3, s=0)
@@ -435,8 +583,13 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
     # bilinear with NaN propagation (EasySpin interp2 'linear')
     r0 = np.minimum(np.floor(ithe).astype(int), nr - 2); c0 = np.minimum(np.floor(iphi).astype(int), nc - 2)
     fr = ithe - r0; fc = iphi - c0
-    return ((1 - fr) * (1 - fc) * z[r0, c0] + (1 - fr) * fc * z[r0, c0 + 1]
-            + fr * (1 - fc) * z[r0 + 1, c0] + fr * fc * z[r0 + 1, c0 + 1])
+    # MATLAB interp2 'linear' (gridinterp.m:129) ignores corners with zero
+    # weight, so a NaN neighbor does not propagate to fine knots lying on a
+    # coarse row or column (0*NaN would be NaN here).
+    def _term(w, zz):
+        return np.where(w == 0.0, 0.0, w * zz)
+    return (_term((1 - fr) * (1 - fc), z[r0, c0]) + _term((1 - fr) * fc, z[r0, c0 + 1])
+            + _term(fr * (1 - fc), z[r0 + 1, c0]) + _term(fr * fc, z[r0 + 1, c0 + 1]))
 
 
 def _interp_l3(y: np.ndarray, N_f: int) -> np.ndarray:
@@ -461,17 +614,25 @@ def _interp_l3(y: np.ndarray, N_f: int) -> np.ndarray:
 
 
 def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
-                 vecs_c: torch.Tensor, vecs_f: torch.Tensor, mode: str = 'pos', any_nan: bool = False):
+                 vecs_c: torch.Tensor, vecs_f: torch.Tensor, mode: str = 'pos'):
     """Interpolate one transition slot from the coarse to the fine grid.
 
     Closed-φ one-octant grids and Dinfh use :func:`_interp_sph` (structured
     G3 / meridional spline); open-φ grids use :func:`_interp_grid`. Returns
     ``None`` when fewer than three knots carry a value.
 
-    EasySpin pepper.m interpolation modes: positions ``G3`` (global cubic;
-    ``L3``/``L1`` when knots are missing), intensities and widths ``L3``
-    (local cubic, axial grids) or ``L1`` (linear, all other grids).  Pass
-    ``mode='val'`` for intensities/widths.
+    EasySpin pepper.m interpolation modes: positions ``G3`` (global cubic),
+    intensities and widths ``L3`` (local cubic, axial grids) or ``L1``
+    (linear, all other grids).  Pass ``mode='val'`` for intensities/widths.
+
+    Positions of a slot that still has knots without a resonance (after the
+    re-search of :func:`_research_missing_knots`, e.g. a looping transition)
+    are interpolated with ``L3`` (axial) / ``L1``, so the NaNs propagate and
+    the facets touching those knots are dropped instead of being filled from
+    neighboring knots.  This is decided per slot (B88): EasySpin switches the
+    positions of every transition to linear as soon as any one has a missing
+    knot (pepper.m:701, 763-772), which reproduces the coarse-grid facets for
+    all the others.
     """
     vals = np.asarray(vals, dtype=float)
     valid = ~np.isnan(vals)
@@ -481,16 +642,10 @@ def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
         if symmetry == 'Dinfh':
             return _interp_l3(vals, N_f)
         return _interp_grid(vals, symmetry, N_c, N_f, linear=True)
-    # EasySpin: NaN_in_Pdat is a global flag — if any transition lacks a
-    # resonance somewhere, all positions are interpolated with L3 (axial) / L1
-    if not valid.all() or any_nan:
-        # EasySpin: with NaNs in Pdat the interpolation switches to linear
-        # ('L1'/'L3' → linear here) so that the NaNs propagate and the facets
-        # touching knots without a resonance are dropped, instead of being
-        # filled from neighboring knots.
+    if not valid.all():
         if symmetry == 'Dinfh':
-            return _interp_l3(vals, N_f)          # EasySpin: 'L3' for axial grids with NaNs
-        return _interp_grid(vals, symmetry, N_c, N_f)
+            return _interp_l3(vals, N_f)          # EasySpin 'L3' for axial grids with NaNs
+        return _interp_grid(vals, symmetry, N_c, N_f, linear=True)
     if symmetry in _CLOSEDPHI_1OCT or symmetry == 'Dinfh':
         return _interp_sph(vecs_c, vecs_f, vals)
     return _interp_grid(vals, symmetry, N_c, N_f)
@@ -563,8 +718,42 @@ def _lorentzian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np
     return out
 
 
+# Relative tolerance of the range-padding decision (see _edge_pad_count).
+_EDGE_PAD_RTOL = 1e-9
+
+
+def _edge_pad_count(spec: torch.Tensor, dx: float, fwhm_g, fwhm_l,
+                    multiplier: float = 3.0) -> int:
+    """EasySpin's range padding before the final convolution (pepper.m:1171-1193,
+    salt.m:858-882): when the spectrum is nonzero at the first or last point of
+    the range, both ends are extended by
+    ``nPad = round(max(fwhmG, fwhmL)/deltaX * Opt.PaddingMultiplier)`` copies of
+    the edge values, so the convolution does not see a step to zero there.
+
+    Returns ``nPad`` (0: no padding).  As EasySpin's ``any(spec(:,1)~=0)``, one
+    decision covers all rows of a multi-row ``spec``.  An end counts as nonzero
+    when ``|edge| > 1e-9 * max|row|`` for some row, not at exact ``~= 0``:
+    torchspin's projections leave a ~1e-14 relative round-off floor in empty
+    bins that EasySpin's leave exactly zero, and an exact test would pad
+    spectra EasySpin does not pad (KNOWN_LIMITATIONS.md).  ``round`` is
+    MATLAB's (half away from zero).  The decision is discrete and reads
+    detached values only.
+    """
+    mult = float(multiplier)
+    if mult <= 0 or spec.shape[-1] < 2:
+        return 0
+    g_val = float(fwhm_g.detach()) if torch.is_tensor(fwhm_g) else float(fwhm_g)
+    l_val = float(fwhm_l.detach()) if torch.is_tensor(fwhm_l) else float(fwhm_l)
+    rd = spec.detach().reshape(-1, spec.shape[-1]).abs()
+    tol = _EDGE_PAD_RTOL * rd.max(dim=-1).values
+    if not bool(((rd[:, 0] > tol) | (rd[:, -1] > tol)).any()):
+        return 0
+    return int(math.floor(max(g_val, l_val) / dx * mult + 0.5))
+
+
 def _lw_convolve(row: torch.Tensor, dx: float, fwhm_g, fwhm_l, harmonic: int,
-                 phase: float = 0.0, conv=None) -> torch.Tensor:
+                 phase: float = 0.0, conv=None, pad_multiplier: float = 3.0,
+                 n_pad: Optional[int] = None) -> torch.Tensor:
     """EasySpin pepper.m's final ``Sys.lw`` convolution (pepper.m:1150-1223).
 
     * The harmonic and ``Exp.mwPhase`` go to the Lorentzian when
@@ -574,6 +763,12 @@ def _lw_convolve(row: torch.Tensor, dx: float, fwhm_g, fwhm_l, harmonic: int,
       0 is not convolved: it is a delta-like line (pepper.m:1195-1223).
       EasySpin raises for such a component with a harmonic > 0; torchspin
       convolves it anyway (KNOWN_LIMITATIONS.md).
+    * Range padding (pepper.m:1171-1193): a spectrum that is nonzero at an end
+      of the range is extended by ``n_pad`` edge copies on both sides before
+      the convolutions and cropped afterwards (:func:`_edge_pad_count`, from
+      ``pad_multiplier`` = ``Options.PaddingMultiplier``; 0 disables it).
+      ``n_pad`` overrides the count, for callers that decide once for several
+      rows.  The copies are torch slices, so gradients flow through them.
 
     ``conv(spec, dx, fwhm_g, fwhm_l, deriv, phase)`` is the convolution
     (default :func:`convspec`; :mod:`torchspin.pepper_autograd` passes its
@@ -596,19 +791,27 @@ def _lw_convolve(row: torch.Tensor, dx: float, fwhm_g, fwhm_l, harmonic: int,
     for w_, used in ((fwhm_g, use_g), (fwhm_l, use_l)):
         if not used and torch.is_tensor(w_) and w_.requires_grad:
             row = row + 0.0 * w_.to(row.dtype)
-    if use_l and use_g:
-        row = conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
-        return conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+    if not (use_l or use_g):
+        return row          # padding followed by cropping alone is the identity
+    n = row.shape[-1]
+    if n_pad is None:
+        n_pad = _edge_pad_count(row, dx, fwhm_g, fwhm_l, pad_multiplier)
+    if n_pad > 0:
+        lead = row.shape[:-1]
+        row = torch.cat([row[..., :1].expand(*lead, n_pad), row,
+                         row[..., -1:].expand(*lead, n_pad)], dim=-1)
     if use_l:
-        return conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
+        row = conv(row, dx, 0.0, fwhm_l, harm_l, phase_l)
     if use_g:
-        return conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+        row = conv(row, dx, fwhm_g, 0.0, harm_g, phase_g)
+    if n_pad > 0:
+        row = row[..., n_pad:n_pad + n]
     return row
 
 
 def _finish_field_sweep(spec: torch.Tensor, x: torch.Tensor, dx: float, exp,
                         fwhm_g: float, fwhm_l: float, fd_deriv: bool,
-                        phase: float = 0.0) -> torch.Tensor:
+                        phase: float = 0.0, pad_multiplier: float = 3.0) -> torch.Tensor:
     """EasySpin's final broadening/harmonic bookkeeping for field sweeps.
 
     With field modulation (``Exp.ModAmp``) the absorption spectrum is convolved
@@ -617,17 +820,20 @@ def _finish_field_sweep(spec: torch.Tensor, x: torch.Tensor, dx: float, exp,
     (ConvHarmonic) or, without residual line width, by differentiation
     (DerivHarmonic: finite differences for template/strain spectra, spectral
     derivative for stick spectra).  ``phase`` (``Exp.mwPhase``) enters the
-    convolution kernel.  Multi-row spectra are processed row-wise.
+    convolution kernel.  Multi-row spectra are processed row-wise, with one
+    range-padding decision for all rows (``pad_multiplier`` =
+    ``Options.PaddingMultiplier``), as EasySpin pads the whole ``spec`` matrix.
     """
     mod_amp = float(getattr(exp, 'ModAmp', 0.0) or 0.0)
     if mod_amp > 0 and exp.Harmonic < 1:
         raise ValueError("With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.")
     conv_harm = 0 if mod_amp > 0 else int(exp.Harmonic)
     rows = [spec] if spec.ndim == 1 else list(spec)
+    n_pad = _edge_pad_count(spec, dx, fwhm_g, fwhm_l, pad_multiplier) if (fwhm_g > 0 or fwhm_l > 0) else 0
     out = []
     for row in rows:
         if fwhm_g > 0 or fwhm_l > 0:
-            row = _lw_convolve(row, dx, fwhm_g, fwhm_l, conv_harm, phase)
+            row = _lw_convolve(row, dx, fwhm_g, fwhm_l, conv_harm, phase, n_pad=n_pad)
         elif conv_harm > 0:
             if fd_deriv:
                 for _h in range(conv_harm):
@@ -765,9 +971,14 @@ def _user_transitions(transitions, n_states):
 
 def _zf_const_pos(B_f, B_c):
     """Zero field: a transition has the same position at every orientation.
-    Restore that exactly after interpolation, whose round-off would otherwise
-    give near-zero-width triangles that straddle a bin edge, where the
-    projection formulas cancel catastrophically (a few % of the line area)."""
+    Give every interpolated vertex the coarse position exactly, so the line
+    goes into one bin as in EasySpin. Interpolation round-off scatters the
+    fine-grid positions by a few ulp; for a line exactly on a bin edge
+    (bin k covers [x_k, x_k + dx)) the vertices then straddle the edge and the
+    projection puts part of the line into the lower bin (5-39 % per line for
+    S = 1, D = [-700 -1300 2000] MHz on a 10 MHz axis, GridSize [19 4]; test
+    test_pepper_zerofield_edge.py). The projection itself is exact for such
+    near-zero-width triangles since 0.8.4 (B18); this is about which bin."""
     fin = B_c[np.isfinite(B_c)]
     if fin.size == 0:
         return B_f
@@ -1298,6 +1509,15 @@ def pepper(sys_or_list, exp: Experiment, opt: Optional[Options] = None):
             f"solver is second order: use 'perturb' or 'perturb2' for second order, "
             f"'perturb1' for first order, or 'hybrid'/'matrix'."
         )
+    # Perturbation theory takes the electron Zeeman term from Sys.g only: with
+    # g given as Ham110/Ham112 (g = 0) the spectrum was all zero, and other
+    # Sys.Ham terms were dropped.  EasySpin's pepper does the same silently;
+    # its resfreqs_perturb raises (resfreqs_perturb.m:75-77).
+    if _method.startswith('perturb'):
+        from torchspin.spinsystem import _reject_ham
+        for _s in components:
+            _reject_ham(_s, f"pepper with Options.Method='{_method}'",
+                        "Options(Method='matrix')")
     # Inputs on the autograd graph: run the differentiable forward path, as
     # garlic does, instead of returning a silently detached spectrum.
     from torchspin.autograd import inputs_require_grad
@@ -1408,7 +1628,18 @@ def _pepper_single(
         g = sys.g.detach().cpu().numpy()
         gvals = np.linalg.eigvalsh(g) if sys.fullg else g.reshape(-1)
         gmax, gmin = float(np.max(gvals)), float(np.min(gvals))
-        minB = PLANCK * (float(exp.mwFreq) * 1e9 - hf) / BMAGN / gmax / 1e-3
+        if gmin == 0.0 or gmax == 0.0:
+            # B55: g = 0 when the linear Zeeman term is given as Ham110/Ham112.
+            # EasySpin's pepper.m (241-272) takes the range from Sys.g alone
+            # too and then fails with an index error (pepper.m:324).
+            from torchspin.spinsystem import _ham_linear_orders
+            _keys = _ham_linear_orders(sys)
+            why = (f"the linear Zeeman term is given as Sys.Ham* ({', '.join(_keys)}) "
+                   f"and Sys.g is zero" if _keys else 'a principal g value is zero')
+            raise ValueError(
+                f'Cannot automatically determine field range: it is computed from '
+                f'Sys.g, and {why}. Please provide Exp.CenterSweep or Exp.Range.')
+        minB =PLANCK * (float(exp.mwFreq) * 1e9 - hf) / BMAGN / gmax / 1e-3
         maxB = PLANCK * (float(exp.mwFreq) * 1e9 + hf) / BMAGN / gmin / 1e-3
         lw_max = float(max(sys.get_lw()))
         center = (maxB + minB) / 2
@@ -1677,6 +1908,31 @@ def _pepper_single(
             kw['hybrid'] = hybrid_info
         return resfields_batch(*_ham_ops(), phi_b, theta_b, exp_, opt_, ham_sys, **kw)
 
+    def _fill_missing_knots(lists):
+        """Field sweeps, matrix search: search again the level pairs that miss
+        resonances at some orientations over a padded window (B88, B75; see
+        :func:`_research_missing_knots`).  ``lists = (B, I, W, pairs)`` for the
+        coarse grid; returned unchanged when nothing is missing.  Frequency
+        sweeps need nothing (resfreqs_batch returns every level pair at every
+        orientation), and the hybrid line list is pruned per call, so it is
+        left as it is."""
+        if freq_sweep or hybrid_info is not None:
+            return lists
+
+        def _search(window, pairs_):
+            exp_w = _dc_replace(exp, Range=list(window), CenterSweep=None)
+            out = ([None] * n_orient, [None] * n_orient, [None] * n_orient, [None] * n_orient)
+            bs = _orientation_batch_size(n_orient)
+            for s0 in range(0, n_orient, bs):
+                e0 = min(s0 + bs, n_orient)
+                res = _resonances(phi_arr[s0:e0], theta_arr[s0:e0], exp_w, opt, sys, return_pairs=True,
+                                  init_state=init_state, photo_weights=_pw(s0, e0), opt_override=_opt_rf,
+                                  pairs=pairs_)
+                for col, vals in zip(out, res):
+                    col[s0:e0] = list(vals)
+            return out
+        return _research_missing_knots(lists, exp.Range, _search, verbose=opt.Verbosity >= 1)
+
     # -----------------------------------------------------------------------
     # Step 2: Spherical powder grid
     # -----------------------------------------------------------------------
@@ -1877,7 +2133,8 @@ def _pepper_single(
         else:
             g_rem, l_rem, deriv_fd = 0.0, 0.0, True
         spec = _finish_field_sweep(spec, x, dx, exp, g_rem, l_rem, deriv_fd,
-                                   phase=_conv_phase if l_rem > 0 else 0.0)
+                                   phase=_conv_phase if l_rem > 0 else 0.0,
+                                   pad_multiplier=opt.PaddingMultiplier)
         return x, spec
 
     # EasySpin p_sampletype: a crystal needs Exp.MolFrame or Exp.CrystalSymmetry;
@@ -1961,7 +2218,8 @@ def _pepper_single(
         spec = torch.stack(list(specs)) if n_spec > 1 else specs[0]
         # phase enters the Lorentzian template (above) or the Lorentzian convolution
         spec = _finish_field_sweep(spec, x, dx, exp, g_rem, l_rem, deriv_fd,
-                                   phase=_conv_phase if l_rem > 0 else 0.0)
+                                   phase=_conv_phase if l_rem > 0 else 0.0,
+                                   pad_multiplier=opt.PaddingMultiplier)
         return x, spec
 
     if grid_sym == 'O3':
@@ -2009,7 +2267,8 @@ def _pepper_single(
         spec = spec / dx * (2.0 * math.pi)
         # EasySpin disregards mwPhase for a Gaussian-only template spectrum
         spec = _finish_field_sweep(spec, x, dx, exp, g_rem, l_rem, deriv_fd,
-                                   phase=_conv_phase if l_rem > 0 else 0.0)
+                                   phase=_conv_phase if l_rem > 0 else 0.0,
+                                   pad_multiplier=opt.PaddingMultiplier)
         return x, spec
 
     # Strain on a projectable grid (D2h-type or Dinfh): EasySpin pepper.m's
@@ -2047,9 +2306,10 @@ def _pepper_single(
                 all_intens[s + j] = intens
                 all_widths[s + j] = widths
                 all_pairs[s + j] = prs
+        all_B_res, all_intens, all_widths, all_pairs = _fill_missing_knots(
+            (all_B_res, all_intens, all_widths, all_pairs))
         slot_B, slot_I, slot_W = _transition_slots(all_B_res, all_intens, all_widths, all_pairs, n_orient)
         slot_B, slot_I, slot_W = _filter_slots(slot_B, slot_I, slot_W, _post_thr)
-        _any_nan = any(np.isnan(b_).any() for b_ in slot_B)
         if slot_W is None:
             slot_W = [np.zeros(n_orient) for _ in slot_B]
 
@@ -2072,10 +2332,11 @@ def _pepper_single(
             B_c, I_c, W_c = slot_B[i_t], slot_I[i_t], slot_W[i_t]
             valid = ~np.isnan(B_c)
             if do_interp_s:
-                B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, any_nan=_any_nan)
+                B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s)
                 if B_f is None:
                     continue
                 if zero_field:
+                    # one position for all orientations: single-bin deposit on a bin edge
                     B_f = _zf_const_pos(B_f, B_c)
                 I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, mode='val')
                 W_f = _interp_slot(W_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, mode='val')
@@ -2158,6 +2419,8 @@ def _pepper_single(
                         all_pairs[s + j] = prs
                     if opt.Verbosity >= 1:
                         print(f"pepper: coarse grid {e}/{n_orient} orientations computed")
+                all_B_res, all_intens, all_widths, all_pairs = _fill_missing_knots(
+                    (all_B_res, all_intens, all_widths, all_pairs))
 
             # Build the fine grid
             phi_fine, theta_fine, weights_fine, vecs_fine_orig = sphgrid(grid_sym, nfKnots)
@@ -2219,15 +2482,15 @@ def _pepper_single(
                     all_B_res, all_intens, all_widths, all_pairs, n_orient
                 )
                 slot_B, slot_I, slot_W = _filter_slots(slot_B, slot_I, slot_W, _post_thr)
-                _any_nan = any(np.isnan(b_).any() for b_ in slot_B)
                 for i_t in range(len(slot_B)):
                     B_c = slot_B[i_t]
                     I_c = slot_I[i_t]
                     valid = ~np.isnan(B_c)
-                    B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, any_nan=_any_nan)
+                    B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f)
                     if B_f is None:
                         continue
                     if zero_field:
+                        # one position for all orientations: single-bin deposit on a bin edge
                         B_f = _zf_const_pos(B_f, B_c)
                     I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
 
@@ -2343,6 +2606,8 @@ def _pepper_single(
                             all_B_d[s + j] = B_res
                             all_I_d[s + j] = intens
                             all_P_d[s + j] = prs
+                    all_B_d, all_I_d, _, all_P_d = _fill_missing_knots(
+                        (all_B_d, all_I_d, [None] * n_orient, all_P_d))
 
                 # Phase 2: project per-transition onto the spectrum
                 x_np_d = x.numpy()
@@ -2524,5 +2789,6 @@ def _pepper_single(
     # modulation; otherwise the harmonic is produced by the convolution
     # (ConvHarmonic) or, without lw, by finite differences (DerivHarmonic).
     # Exp.mwPhase (dispersion admixture) enters through the line-shape kernel.
-    spec = _finish_field_sweep(spec, x, dx, exp, fwhm_g, fwhm_l, has_strain, phase=_conv_phase)
+    spec = _finish_field_sweep(spec, x, dx, exp, fwhm_g, fwhm_l, has_strain, phase=_conv_phase,
+                              pad_multiplier=opt.PaddingMultiplier)
     return x, spec
