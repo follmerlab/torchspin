@@ -206,7 +206,13 @@ def _ramp_bins_t(n: int, base: torch.Tensor, a: torch.Tensor, b: torch.Tensor, d
         S1 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, lo, s1).index_add(0, hi, -s1)
         S0 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, lo, s0).index_add(0, hi, -s0)
         c1 = torch.cumsum(S1, 0)[:n]; c0 = torch.cumsum(S0, 0)[:n]
-        spec = spec + c1 * torch.arange(n, dtype=_F64, device=dev) + c0
+        # Bins that no interior covers get nothing (pepper._ramp_bins): the
+        # running sums leave a roundoff residual there.  The coverage count is
+        # integer (no graph); covered bins keep the same arithmetic, so their
+        # values and gradients are unchanged.
+        cnt = torch.zeros(n + 1, dtype=torch.long, device=dev).index_add(0, lo, torch.ones_like(lo)).index_add(0, hi, -torch.ones_like(hi))
+        cov = torch.cumsum(cnt, 0)[:n] > 0
+        spec = torch.where(cov, spec + c1 * torch.arange(n, dtype=_F64, device=dev) + c0, spec)
     return spec
 
 
@@ -290,7 +296,11 @@ def projectzones_t(pos: torch.Tensor, amp: torch.Tensor, seg_weights: torch.Tens
     has_int = lo < hi
     if bool(has_int.any()):
         S0 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, lo[has_int], height[has_int]).index_add(0, hi[has_int], -height[has_int])
-        spec = spec + torch.cumsum(S0, 0)[:n]
+        # bins no interior covers stay exactly 0 (see _ramp_bins_t)
+        li, hj = lo[has_int], hi[has_int]
+        cnt = torch.zeros(n + 1, dtype=torch.long, device=dev).index_add(0, li, torch.ones_like(li)).index_add(0, hj, -torch.ones_like(hj))
+        c0 = torch.cumsum(S0, 0)[:n]
+        spec = spec + torch.where(torch.cumsum(cnt, 0)[:n] > 0, c0, torch.zeros_like(c0))
     return spec
 
 
@@ -352,14 +362,35 @@ def _interp_l3_t(y: torch.Tensor, N_f: int) -> torch.Tensor:
     return torch.cat([fine, y[:, -1:]], dim=1)
 
 
-def _interp_slots_t(vals: torch.Tensor, symmetry: str, N_c: int, N_f: int, mode: str, any_nan: bool) -> torch.Tensor:
+def _interp_slots_t(vals: torch.Tensor, symmetry: str, N_c: int, N_f: int, mode: str) -> torch.Tensor:
     """Interpolate ``(n_slots, n_coarse)`` slot values to the fine grid exactly as
     ``pepper._interp_slot`` does per slot, on the autograd graph.  NaN patterns of
-    the fine knots are taken from the numpy implementation (detached)."""
+    the fine knots are taken from the numpy implementation (detached).
+
+    Positions (``mode='pos'``) of a slot with missing knots go linear (``L3`` on
+    axial grids, ``L1`` otherwise); the other slots keep the global cubic
+    ``G3``.  This is decided per slot, as in ``pepper._interp_slot`` (B88)."""
+    if mode == 'pos':
+        rows_nan = torch.isnan(vals.detach()).any(dim=1)
+        if bool(rows_nan.any()) and not bool(rows_nan.all()):
+            idx_nan = torch.nonzero(rows_nan).flatten()
+            idx_ok = torch.nonzero(~rows_nan).flatten()
+            out = torch.cat([_interp_rows_t(vals[idx_ok], symmetry, N_c, N_f, mode, False),
+                             _interp_rows_t(vals[idx_nan], symmetry, N_c, N_f, mode, True)], dim=0)
+            perm = torch.cat([idx_ok, idx_nan])
+            inv = torch.empty_like(perm)
+            inv[perm] = torch.arange(perm.numel(), device=perm.device)
+            return out[inv]
+        return _interp_rows_t(vals, symmetry, N_c, N_f, mode, bool(rows_nan.any()))
+    return _interp_rows_t(vals, symmetry, N_c, N_f, mode, True)
+
+
+def _interp_rows_t(vals: torch.Tensor, symmetry: str, N_c: int, N_f: int, mode: str, linear: bool) -> torch.Tensor:
+    """One interpolation scheme for every row: linear (``L3`` axial / ``L1``)
+    or, for positions without missing knots, the global cubic ``G3``."""
     dev = vals.device
-    if symmetry == 'Dinfh' and (mode == 'val' or any_nan):
+    if symmetry == 'Dinfh' and linear:
         return _interp_l3_t(vals, N_f)
-    linear = (mode == 'val') or any_nan
     M = torch.as_tensor(_interp_matrix(symmetry, N_c, N_f, mode, linear), dtype=_F64, device=dev)
     nan_c = torch.isnan(vals.detach())
     if not bool(nan_c.any()):
@@ -479,6 +510,12 @@ def _check_supported(sys: SpinSystem, exp: Experiment, opt: Options) -> None:
             raise NotImplementedError(f'pepper_autograd: Experiment.{name} is not supported.')
     if getattr(sys, 'initState', None) is not None:
         raise NotImplementedError('pepper_autograd: Sys.initState is not supported.')
+    # As in pepper: perturbation theory reads Sys.g only and drops Sys.Ham.
+    _method = str(getattr(opt, 'Method', 'matrix'))
+    if _method.startswith('perturb'):
+        from torchspin.spinsystem import _reject_ham
+        _reject_ham(sys, f"pepper_autograd with Options.Method='{_method}'",
+                    "Options(Method='matrix')")
     # Without this the matrix branch would silently run below, giving the exact
     # spectrum of the whole system instead of the hybrid one — a different
     # forward model from pepper(Method='hybrid'), not just a missing gradient.
@@ -621,6 +658,22 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
                                                              **({'zeeman_ho': zho} if zho is not None else {}))
             for j in range(e - s):
                 all_B[s + j], all_I[s + j], all_P[s + j], all_Wl[s + j] = B_list[j], I_list[j], P_list[j], W_list[j]
+
+        # Level pairs that leave Exp.Range at some orientations: search them
+        # again over a padded window, as pepper does (B88, B75)
+        def _search(window, pairs_):
+            exp_w = _dc_replace(exp, Range=list(window), CenterSweep=None)
+            out = ([None] * n_orient, [None] * n_orient, [None] * n_orient, [None] * n_orient)
+            for s0 in range(0, n_orient, batch):
+                e0 = min(s0 + batch, n_orient)
+                res = resfields_batch(H0, mux, muy, muz, phi_arr[s0:e0], theta_arr[s0:e0], exp_w, opt_rf,
+                                      sys=sys, return_pairs=True, pairs=pairs_,
+                                      **({'zeeman_ho': zho} if zho is not None else {}))
+                for col, vals in zip(out, res):
+                    col[s0:e0] = list(vals)
+            return out
+        all_B, all_I, all_Wl, all_P = _pep._research_missing_knots(
+            (all_B, all_I, all_Wl, all_P), (B_lo, B_hi), _search, verbose=opt.Verbosity >= 1)
     if all(b is None or b.numel() == 0 for b in all_B):
         return x, torch.zeros(nPoints, dtype=_F64)
     has_strain = any(w is not None and w.numel() > 0 for w in all_Wl)
@@ -635,10 +688,9 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
     # Interpolation to the fine grid
     do_interp = N_interp > 1 and n_orient > 1
     if do_interp:
-        any_nan = bool(torch.isnan(B_c.detach()).any())
-        B_f = _interp_slots_t(B_c, grid_sym, N_coarse, nfKnots, 'pos', any_nan)
-        I_f = _interp_slots_t(I_c, grid_sym, N_coarse, nfKnots, 'val', any_nan)
-        W_f = _interp_slots_t(W_c, grid_sym, N_coarse, nfKnots, 'val', any_nan) if W_c is not None else None
+        B_f = _interp_slots_t(B_c, grid_sym, N_coarse, nfKnots, 'pos')
+        I_f = _interp_slots_t(I_c, grid_sym, N_coarse, nfKnots, 'val')
+        W_f = _interp_slots_t(W_c, grid_sym, N_coarse, nfKnots, 'val') if W_c is not None else None
         _, theta_fine, _, _ = sphgrid(grid_sym, nfKnots)
         theta_final, N_final = theta_fine, nfKnots
     else:
@@ -680,7 +732,12 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
         pos_spread = fSpread.detach() > 0
         Lambda = torch.where(pos_spread, fWidM / torch.where(pos_spread, fSpread, torch.ones_like(fSpread)),
                              torch.full_like(fSpread, float('inf')))
-        gam = torch.where(pos_spread, 1.0 / torch.sqrt(c1 * Lambda ** 2 + c2 * Lambda ** 4), torch.zeros_like(Lambda))
+        # Lambda = 0 (a facet whose mean width is exactly zero) gives gam = inf in
+        # EasySpin, which sets it to 0 (pepper.py does the same); the double
+        # where keeps the value and its gradient finite (0 * inf was NaN).
+        pos_l = pos_spread & (Lambda.detach() > 0)
+        Ls = torch.where(pos_l, Lambda, torch.ones_like(Lambda))
+        gam = torch.where(pos_l, 1.0 / torch.sqrt(c1 * Ls ** 2 + c2 * Ls ** 4), torch.zeros_like(Lambda))
         fWidC = fWidM * (1.0 + 2.0 * gam)                        # Opt.Smoothing = 2
         _bins = _lorentzian_bins_t if strain_lorentz else gaussian_bins_t
         spec = _bins(x, fPosC, fWidC, fIntC, dx / 100.0)
@@ -697,7 +754,8 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)
     elif _pos(fwhm_g) or _pos(fwhm_l):
-        spec = _pep._lw_convolve(spec, dx, fwhm_g, fwhm_l, H, conv=_conv_t)
+        spec = _pep._lw_convolve(spec, dx, fwhm_g, fwhm_l, H, conv=_conv_t,
+                                   pad_multiplier=opt.PaddingMultiplier)
     else:
         spec = convspec_t(spec, dx, fwhm_g, fwhm_l, deriv=H)
     if use_mod:
@@ -809,7 +867,8 @@ def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, stra
         if use_mod:
             raise ValueError("With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.")
     if _pos(g_rem) or _pos(l_rem):
-        spec = _pep._lw_convolve(spec, dx, g_rem, l_rem, H, conv=_conv_t)
+        spec = _pep._lw_convolve(spec, dx, g_rem, l_rem, H, conv=_conv_t,
+                                   pad_multiplier=opt.PaddingMultiplier)
     else:
         for _ in range(H):
             spec = _pep._central_difference(spec, dx)

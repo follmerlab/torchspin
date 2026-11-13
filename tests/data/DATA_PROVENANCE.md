@@ -32,6 +32,7 @@ Tests comparing against these are true cross-validation.
 | `generate_esfit_crossval.m` | `esfit_test*.mat` | Fitting cross-validation |
 | `generate_examples_*.m` | `example_*.mat` | Example simulation outputs |
 | `generate_endor_enhancement_refs.m` | `endor_enhancement_refs.mat` | ENDOR hyperfine enhancement (`Opt.Enhancement` off/on): endorfrq per level pair for 1H, 14N+1H, 63Cu+14N at 4 orientations; fixed-field salt for 14N (Q), 1H, 14N+1H |
+| `generate_endor_tps_selection_refs.m` | `endor_tps_selection_refs.mat` | ENDOR transition selection (0.9.14, B57/B41, B40): endorfrq (powder mode) `Transitions`, positions and intensities (`Enhancement` off/on) for 1H at threshold 0, 14N+1H at 1e-4 (no range, `Range [0 20]`), 0 and 1e-2 with `TPSGridSymm 'Ci'`/`TPSGridSize 7`, 63Cu+14N at 1e-4, 3 orientations each (18 cases); fixed-field salt spectra and `info.Transitions` for 14N+1H at GridSize [31 6] and [13 4] and 63Cu (A [60 60 600], Q) on 0-19400 MHz |
 | `generate_endorfrq_perturb_refs.m` | `endorfrq_perturb_refs.mat` | `endorfrq_perturb` element by element (0.8.8, B20/B27): frequencies and intensities, PerturbOrder 2 and 1, 4 orientations (one `SampleFrame` row `[0 -theta -phi]` each), 340 mT; 1H with AFrame, 14N with Q/QFrame, 1H+14N, 55Mn with Q, strongly coupled 1H, 14N with full Q, 1H+14N with full A and full Q, S = 3/2 with D + 14N (8 cases) |
 | `generate_salt_first_order_refs.m` | `salt_first_order_refs.mat` | salt first-order intensity scale (bug B16, 0.8.1): fixed-field salt with `Opt.Method` `'matrix'` and `'perturb1'` for 1H and 1H+14N (no Q) |
 | `generate_salt_narrowlw_refs.m` | `salt_narrowlw_refs.mat` | salt final `Sys.lwEndor` convolution (bug B24, 0.8.11): Gaussian widths of 0, 1.5, 2.0, 2.5 and 10 increments (at most two increments not convolved, salt.m:899-911), fixed-field 1H powder, `Opt.Method` `'perturb1'` (5 cases) |
@@ -40,11 +41,23 @@ Tests comparing against these are true cross-validation.
 | `generate_pepper_orientations_refs.m` | `ref_pepper_orientations.mat` | `Exp.Orientations` (0.7.6): EasySpin crystal spectra (`MolFrame=[0 0 0]`, one `SampleFrame` row per orientation, `SampleRotation={'z',[0 pi/2]}`) as an exact χ average, 5 cases incl. strain, Boltzmann triplet, frequency sweep, 4000-point Fibonacci sphere; plus EasySpin's powder of the axial case on the normal and the half-bin-shifted axis |
 | `generate_pepper_orientations_qz_refs.m` | `ref_pepper_orientations_qz.mat` | `Exp.Orientations` with field-quadratic `Sys.Ham220`/`Ham222` terms (torchspin `Options.QuadraticZeeman`) and with `Opt.Transitions` (0.9.16, B64): χ-averaged crystal sums as in `generate_pepper_orientations_refs.m`; S = 1, D = [300 30] MHz with lwpp at 1 and 5 orientations, with HStrain at 5 orientations, and level pair [1 2] at 5 orientations (4 cases) |
 | `generate_pepper_transitions_refs.m` | `ref_pepper_transitions.mat` | `Opt.Transitions` (9 cases): S=3/2 central/outer/`'all'` (powder, HStrain, crystal), S=1 half-field line (`'all'`, `[1 3]`), frequency sweep with one pair |
+| `generate_pepper_exactzero_refs.m` | `ref_pepper_exactzero.mat` | Stick spectra (no line width, Harmonic 0) with empty bins (0.9.11, B47): rhombic g = [2 2.05 2.1] field sweep at GridSize [31 1] and [31 4], rhombic frequency sweep, axial (Dinfh zones) field and frequency sweeps (5 cases); checks that bins EasySpin leaves at exactly 0 are exactly 0 |
 | `generate_pepper_narrowlw_refs.m` | `ref_pepper_narrowlw.mat` | Final `Sys.lw` convolution (0.8.5, B13): widths of at most two increments with harmonic 0 not convolved (S=1 triplet frequency sweep, default and `Transitions [1 2]`; field sweeps with a narrow Gaussian / Lorentzian), Voigt widths with Harmonic 1 and `mwPhase` (harmonic and phase on the Lorentzian), narrow Gaussian beside a Lorentzian, Voigt frequency sweep (8 cases) |
+| `generate_pepper_nanlinear_refs.m` | `ref_pepper_nanlinear.mat` | Position interpolation when a transition has no resonance at some knots (0.9.4, B31): S = 5/2 with D and B4 on explicit D2h (Harmonic 1 and 0) and C2h grids, rhombic S = 5/2 on the default grid, truncated ranges (4 cases) |
+| `generate_pepper_dinfh_interp_refs.m` | `ref_pepper_dinfh_interp.mat` | Position interpolation on axial (Dinfh) grids (0.9.7, B30): axial g (GridSize [10 10] and default, Harmonic 1 and 0), Cu(II)-like axial g + 63Cu A (default grid Harmonic 1 and 0, GridSize [10 10]) (6 cases) |
 | `generate_closedphi_interp_refs.m` | `ref_closedphi_interp.mat` | Closed-φ grid interpolation (0.8.9, B25): rhombic g = [2 2.05 2.1] field sweeps at Harmonic 0/1 with Gaussian and Lorentzian `lw`, GridSize [19 4] (also default options) and [31 4], HStrain, 14N hyperfine, a frequency sweep (10 pepper cases); fixed-field salt with `Method 'perturb1'` at [19 4] and [31 4]; central difference d spc/d g_z (h = 1e-4) |
+| `generate_sphgrid_maxphi_refs.m` | `ref_sphgrid_maxphi.mat` | φ range of the D3d/D4h/D6h/Oh/C6h/S6 grids (0.9.3, B36): S = 5/2 with D and a tetragonal B4 at [200 480] mT (orientations without resonances; auto, explicit `D4h` and `D2h`), a trigonal B4 at [0 800] mT (auto and explicit `D3d`, explicit `S6`), a cubic B4 without D at [250 430] mT (Oh), S = 7/2 with a hexagonal B6 at [0 800] mT (auto D6h, explicit `C6h`), GridSize [19 4], 9.5 GHz, Harmonic 1 (9 cases, with EasySpin's hamsymm group); `sphgrid(sym, 7)` knots and weights for all 14 grid symmetries |
+| `generate_interp_nan_edges_refs.m` | `ref_interp_nan_edges.mat` | Grid interpolation next to knots without a resonance (0.9.10, B48, B50): S = 1/2, g = [2 2.05 2.1] at [325 337] mT, GridSize [31 4] (stick, lw 1.5 Harmonic 0 and 1) and [31 1]; S = 5/2 with D and a tetragonal B4 on a D2h grid [19 4] at [290 390] mT (Harmonic 1, stick) and [200 480] mT (stick) (7 cases); `sphgrid` φ/θ of 12 groups at GridSize 7 and 73; private `gridinterp(...,'L1')` on synthetic data with every fifth knot missing (9 grids) |
 | `generate_pepper_zerofield_refs.m` | `ref_pepper_zerofield.mat` | Zero-field frequency sweeps (`Exp.Field = 0`, torchspin `Options.ZeroField`, 0.7.4): S = 1 with D, E (plain, Boltzmann 0.1 K, HStrain), S = 3/2 Kramers, S = 1/2 + 1H isotropic hyperfine (5 cases) |
+| `generate_pepper_zerofield_edge_refs.m` | `ref_pepper_zerofield_edge.mat` | Zero-field lines exactly on bin edges with an interpolated grid (0.9.1, `pepper._zf_const_pos`): S = 1, D = [-700 -1300 2000] MHz, 10 MHz axis, GridSize [19 4] and [10 8], sticks and Gaussian 30 / 300 MHz; full spectra plus one spectrum per level pair (`Opt.Transitions` [2 3], [1 2], [1 3]) |
 | `generate_pepper_quadzeeman_refs.m` | `ref_pepper_quadzeeman.mat` | Field-quadratic `Sys.Ham220`/`Ham222` terms in pepper (S=1 with lwpp and with HStrain, S=3/2), EasySpin field sweeps, and one frequency sweep (`S1_ham2_freqsweep`, added 2026-11-11; needs EasySpin's `resfreqs_matrix.m` Ham check from StollLab/EasySpin d46e5ef9, applied as a one-line patch to the local Dec-2025 copy; the three field-sweep cases regenerated bit-identical); `Options.QuadraticZeeman` (0.7.1) |
 | `generate_orisel_refs.m` | `ref_orisel.mat` | `orisel` (0.9.0, B26; EasySpin main, R2024b, 2026-11-11): `[Weights,Trans]` and the summed weights for 18 cases: 12 with `Exp.Orientations` (a 400-point Fibonacci sphere; rhombic S=1/2 at the gz/gy/gx fields, Cu(II) 63Cu at 2 fields, g=[1.9 2.0 6.0] at g=6 and g=4, S=1 with D and HStrain incl. `AveragedIntensity` false, S=3/2 with D, two coupled electrons, `ExciteWidth` Inf) and 6 on default grids, stored with the orientations orisel.m builds (hamsymm D2h, rotated D2h, C2h from an AFrame, Dinfh, O3, explicit Ci) |
+| `generate_ham_gstrain_refs.m` | `ref_ham_gstrain.mat` | `gStrain` with a `Ham110`/`Ham112` Zeeman term (0.9.13, B56; EasySpin main, R2024b, 2026-11-11): EasySpin spectra of the same systems with the g-equivalent given as `Sys.g` (g = [2.01 2.005 1.998]; along the molecular axes, with `gFrame` [0.3 0.4 0.5], and with a 1H), plus EasySpin's own Ham spectra without strain (equal to the g ones) and with gStrain (all zero, or wrong with `gFrame`) (3 cases) |
+| `generate_astrain_mi_refs.m` | `ref_astrain_mi.mat` | AStrain effective nuclear mI (0.9.25, B68; EasySpin main, R2024b, 2026-11-12): per case pepper spectra (Harmonic 0 and 1, 1024 points, default options) and `resfields` positions, widths, intensities and level pairs at φ = 0.3, θ = 0:10:90° (one `SampleFrame` row `[0 -theta -phi]` each, same `Exp.Range`); 14N and 1H with A = [20 20 90], AStrain 10; 63Cu A = [50 50 500], AStrain [10 10 50] (also with `AFrame` [0 0.4 0]); 14N + gStrain with `gAStrainCorr` +1 and -1 (6 cases) |
+
+| `generate_range_padding_refs.m` | `range_padding_refs.mat` | Range padding before the final line-width convolution (bug B34, 0.9.6; salt.m:858-882, pepper.m:1171-1193): spectra nonzero at the range ends, each at `Opt.PaddingMultiplier` 3 (default), 0 and 1: fixed-field salt 1H `perturb1` (10–19 MHz, lwEndor 0.2) and 1H+14N with Q `matrix` (1.5–19 MHz, lwEndor 0.3); pepper frequency sweep, Lorentzian lw 40 MHz, Harmonic 1; pepper field sweep with HStrain and Gaussian lw 1 mT; rhombic Voigt field sweep cut by the range (not padded by EasySpin) (5 cases) |
+
+| `generate_spinsystem_shapes_refs.m` | `ref_spinsystem_shapes.mat` | SpinSystem input shorthands expanded by validatespinsys.m (0.9.15, B62/B63), each pepper case given in the short form: `g = [gperp gpar]` axial, `gStrain = [x y]`, `HStrain = [x y]`, `A = [Aperp Apar]` (14N), `A = [A1 A2]` for one 1H and two electron spins (5 cases) |
 
 ### MATLAB-sourced .mat files (by module)
 
@@ -61,6 +74,7 @@ Tests comparing against these are true cross-validation.
 `strain_ref_combined.mat`, `strain_ref_dstrain.mat`, `strain_ref_gstrain.mat`,
 `strain_ref_gstrain_astrain.mat`, `strain_ref_hstrain.mat`,
 `strain_ref_tilted_frame.mat` — MATLAB-gen
+`ref_astrain_mi.mat` — MATLAB-gen (`generate_astrain_mi_refs.m`, EasySpin main, R2024b, 2026-11-12; stores each case's `Sys`, `Range` and the `ori` list)
 
 **CW EPR (pepper):**
 `pepper_*.mat` (all 30 files) — MATLAB
@@ -69,7 +83,17 @@ Tests comparing against these are true cross-validation.
 `ref_pepper_orientations_qz.mat` — MATLAB-gen (`generate_pepper_orientations_qz_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt` and the `ori` list)
 `ref_pepper_transitions.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-10; stores each case's `Sys`/`Exp`/`Opt`)
 `ref_pepper_narrowlw.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
+`ref_pepper_nanlinear.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
+`ref_pepper_dinfh_interp.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
+`ref_pepper_exactzero.mat` — MATLAB-gen (`generate_pepper_exactzero_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
 `ref_closedphi_interp.mat` — MATLAB-gen (`generate_closedphi_interp_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
+`ref_sphgrid_maxphi.mat` — MATLAB-gen (`generate_sphgrid_maxphi_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt` and hamsymm group, and `grids` from `sphgrid`)
+`ref_interp_nan_edges.mat` — MATLAB-gen (`generate_interp_nan_edges_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`, `grids` from `sphgrid`, and `interp` from the private `gridinterp`)
+`ref_ham_gstrain.mat` — MATLAB-gen (`generate_ham_gstrain_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `SysG`/`SysH`/`Exp`)
+
+`range_padding_refs.mat` — MATLAB-gen (`generate_range_padding_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`): salt and pepper spectra reaching the range ends at `Opt.PaddingMultiplier` 3, 0, 1
+
+`ref_spinsystem_shapes.mat` — MATLAB-gen (`generate_spinsystem_shapes_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`/`Exp`/`Opt`)
 
 `ref_nucspin_core.mat` — MATLAB-gen (EasySpin R2024b, 2026-11-11; spectra only, the systems are written out in `test_nucspin_keep_fields.py`)
 
@@ -120,6 +144,7 @@ Tests comparing against these are true cross-validation.
 `endorfrq_ref_*.mat` — MATLAB
 `endorfrq_perturb_refs.mat` — MATLAB-gen (`generate_endorfrq_perturb_refs.m`, EasySpin main, R2024b, 2026-11-11; stores each case's `Sys`, `ori`, `Field`)
 `endor_enhancement_refs.mat` — MATLAB-gen (`generate_endor_enhancement_refs.m`, EasySpin main, R2024b, 2026-11-10): endorfrq (powder mode) and fixed-field salt with `Opt.Enhancement` 'off'/'on'
+`endor_tps_selection_refs.mat` — MATLAB-gen (`generate_endor_tps_selection_refs.m`, EasySpin main (~/Downloads/EasySpin-main), MATLAB R2024b `-batch`, 2026-11-11): EasySpin endorfrq's TPS-grid transition selection in endorfrq and fixed-field salt
 
 **Orientation selection:**
 `orisel_*.mat` — MATLAB (EasySpin's own regression tests `orisel_rhombic.m`, `orisel_onenucleus.m`, 2008; used by `test_orisel.py` since 0.9.0, compared after normalization as in EasySpin)
@@ -161,6 +186,19 @@ validate correctness against MATLAB.
 `tests/generate_cardamom_matlab_refs.m` (uses `rng(42)` for reproducibility).
 These are the genuine independent oracles that
 `test_cardamom_matlab_validation.py` compares against.
+
+**Missing knots (B88, B75, 0.9.28, added 2026-11-12):**
+`ref_missing_knots.npz` — Python (`generate_missing_knots_refs.py`, torchspin 0.9.28, torch 2.10,
+single thread). Converged references for field sweeps whose range cuts transitions: pepper
+without interpolation (GridSize [181 1]) on an aligned sweep wide enough that no transition
+leaves it (the script checks that the re-search finds nothing there), cropped to the test's
+axis. 15 spectra: the three B88 cases (63Cu tilted AFrame, 91Zr, S = 5/2 with B4) and the
+inputs of the EasySpin cases in `ref_pepper_nanlinear.mat`, `ref_interp_nan_edges.mat`,
+`ref_sphgrid_maxphi.mat` and `ref_pepper_parallel.mat` (S52_parallel) whose ranges cut
+transitions. Not an EasySpin oracle, but independent of the code under test
+(no missing knots, no interpolation); without interpolation torchspin and EasySpin agree
+(Cu case, Ci [181 1]: cosine 1.000000, B88 EasySpin check). Used by `test_missing_knots.py`
+and the four validation files above.
 
 **MD analysis:**
 `mdhmm_*.mat` (4 files), `mdload_files_*.mat` (2 files) — Python

@@ -467,8 +467,11 @@ def resfields_batch(
     # unchanged, as EasySpin does.
     widths_flat: Optional[torch.Tensor] = None
     if sys is not None:
-        from torchspin.strainwidth import compute_strain_widths_batch, _has_any_strain
+        from torchspin.strainwidth import compute_strain_widths_batch, _has_any_strain, astrain_level_mI
         if _has_any_strain(sys) and B_res_all.numel() > 0:
+            # AStrain: EasySpin's effective mI per level, labeled once at
+            # mean(Exp.Range) along the molecular z axis (resfields.m 774-781)
+            mI_levels = astrain_level_mI(sys, H0, muz, 0.5 * (B_lo + B_hi))
             widths_flat = compute_strain_widths_batch(
                 sys=sys,
                 H0=H0,
@@ -479,6 +482,7 @@ def resfields_batch(
                 pairs_list=None,
                 mwFreq=exp.mwFreq,
                 pairs_flat=torch.stack([pi_bk, pj_bk], dim=1),
+                mI_levels=mI_levels,
                 **({'ho_batch': (Q2[m_idx] if Q2 is not None else None,
                                  Q3[m_idx] if Q3 is not None else None)} if has_ho else {}),
             ).reshape(-1)
