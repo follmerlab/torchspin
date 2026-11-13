@@ -96,6 +96,9 @@ class SpinSystem:
     D:
         Zero-field splitting tensors (MHz).  Shape ``(nElectrons, 3)`` for
         diagonal (Dxx, Dyy, Dzz) or ``(3*nElectrons, 3)`` for full tensors.
+        Shorthands: a scalar ``D`` or, for one electron spin, ``[D]`` (E = 0);
+        ``[D, E]``; ``(nElectrons, 1)`` or ``(nElectrons, 2)`` rows of D or
+        [D, E].  Any other shape raises ``ValueError``.
         Pass ``None`` (default) to omit ZFS entirely.
     DFrame:
         Euler angles for D-tensor frame.  Shape ``(nElectrons, 3)``.
@@ -372,7 +375,18 @@ class SpinSystem:
                 # (n_e, 1) column: one scalar D (E = 0) per electron
                 self.D = (self.D * torch.tensor([-1.0, -1.0, 2.0], dtype=torch.float64) / 3).clone()
             elif self.D.ndim == 1:
-                if self.D.shape[0] == 2:
+                if self.D.shape[0] == 1:
+                    # [D]: one D value (E = 0), as a scalar D. EasySpin
+                    # (validatespinsys.m:208-210) reads numel(Sys.D) == nElectrons
+                    # as one D per electron, so a single value is valid only for
+                    # one electron spin; for several it is 'Sys.D has wrong size.'
+                    if n_e != 1:
+                        raise ValueError(
+                            f'D has wrong size: a one-element D is one D value for one electron spin, '
+                            f'but the system has {n_e}. Give a scalar D (same D, E = 0 for every '
+                            f'electron) or one row per electron spin.')
+                    self.D = (self.D * torch.tensor([-1.0, -1.0, 2.0], dtype=torch.float64) / 3).unsqueeze(0).clone()
+                elif self.D.shape[0] == 2:
                     # EasySpin [D, E] shorthand: convert to [Dxx, Dyy, Dzz]
                     D_val, E_val = self.D[0], self.D[1]
                     Dxx = -D_val / 3 + E_val
@@ -383,9 +397,6 @@ class SpinSystem:
                 elif self.D.shape[0] == 3:
                     # [Dxx, Dyy, Dzz] for one electron
                     self.D = self.D.unsqueeze(0).expand(n_e, 3).clone()
-                elif self.D.shape[0] == 3 * n_e:
-                    # Full 3×3 matrices stacked as vector
-                    self.D = self.D  # keep as is
             elif self.D.ndim == 2 and self.D.shape[1] == 2:
                 # (n_e, 2) EasySpin [D, E] per electron: convert each row
                 D_vals = self.D[:, 0]
@@ -395,6 +406,11 @@ class SpinSystem:
                 Dzz = 2 * D_vals / 3
                 self.D = torch.stack([Dxx, Dyy, Dzz], dim=1).clone()
             # Otherwise assume correct 2D shape
+            if not (self.D.ndim == 2 and tuple(self.D.shape) in ((n_e, 3), (3 * n_e, 3))):
+                raise ValueError(
+                    f'D has wrong size {tuple(self.D.shape)} for {n_e} electron spin(s): expected a '
+                    f'scalar, [D, E], [Dxx, Dyy, Dzz], one row per electron spin ((nElectrons, 1), '
+                    f'(nElectrons, 2) or (nElectrons, 3)) or full tensors (3*nElectrons, 3).')
 
         # --- DFrame ---
         if self.DFrame is None:
