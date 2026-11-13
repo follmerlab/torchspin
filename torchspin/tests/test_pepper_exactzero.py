@@ -68,10 +68,46 @@ def _run(fn, c):
 VAL_TOL = 2e-5
 
 
+# The rhombic field sweeps' only empty EasySpin bins are the first/last 4-6 bins of
+# the range (9 and 12): EasySpin drops the triangles that cross the range ends
+# (B75).  Since 0.9.28 (B88) torchspin clips them, and those bins hold 27 % of the
+# maximum, as on the same grid swept wider (test_range_end_bins_vs_wide_sweep).
+_B75_DEVIATION = pytest.mark.xfail(strict=True, reason=(
+    "Deliberate deviation since 0.9.28 (B88/B75): EasySpin's empty bins here are the range "
+    "ends, where it drops the triangles crossing the range; torchspin clips them (27 % of max)."))
+
+
 def _es_params():
     # pepper_autograd: field sweeps only
-    return [(nm, eng) for nm in _case_names() for eng in ('pepper', 'pepper_autograd')
+    return [pytest.param(nm, eng, marks=[_B75_DEVIATION] if nm.startswith('rhombic_field') else [])
+            for nm in _case_names() for eng in ('pepper', 'pepper_autograd')
             if not (eng == 'pepper_autograd' and '_freq_' in nm)]
+
+
+@pytest.mark.parametrize('name', ['rhombic_field_31x1', 'rhombic_field_31x4'])
+@pytest.mark.parametrize('engine', ['pepper', 'pepper_autograd'])
+def test_range_end_bins_vs_wide_sweep(cases, name, engine):
+    """The range-end bins EasySpin leaves empty equal the same grid swept 200 bins
+    wider on both sides (B75 fixed in 0.9.28): to roundoff (measured <= 9.7e-14 of
+    max) except the first and last bin, which follow the first-bin convention
+    (measured <= 8.0e-5 of max, [31 1]; 3.7e-7, [31 4])."""
+    c = cases[name]
+    fn = pep.pepper if engine == 'pepper' else pag.pepper_autograd
+    x, spc = _run(fn, c)
+    ref = np.asarray(c.spc, dtype=float).ravel()
+    ends = ref == 0
+    assert ends[:4].all() and ends[-4:].all()
+    dx = x[1] - x[0]
+    k = 200
+    wide = Experiment(mwFreq=float(c.Exp.mwFreq), Range=[x[0] - k * dx, x[-1] + k * dx],
+                      nPoints=len(x) + 2 * k, Harmonic=0)
+    w = fn(sys_from_mat(c.Sys), wide, opt_from_mat(c.Opt))[1].detach().cpu().numpy().ravel()[k:k + len(x)]
+    scale = np.abs(w).max()
+    inner = np.zeros_like(ends)
+    inner[1:-1] = ends[1:-1]
+    assert np.abs(spc[inner] - w[inner]).max() < 1e-12 * scale
+    assert np.abs(spc[ends] - w[ends]).max() < 1e-4 * scale
+    assert spc[ends].min() > 0.2 * scale          # EasySpin: 0
 
 
 @pytest.mark.parametrize('name,engine', _es_params())
@@ -222,8 +258,12 @@ def test_projectzones_covered_bins_bit_identical():
 # ---------------------------------------------------------------------------
 
 _SPECTRA = {
+    # rhombic_stick spans the whole spectrum ([315 345] mT): its empty bins are real.
+    # On [325 337] the only empty bins were the range ends, which hold signal since
+    # 0.9.28 (B88/B75).  Measured on [315 345]: 277 empty bins, pre-fix residual in 113
+    # of them (<= 4.9e-14 of max), max |new - old| 2.1e-14 / 4.9e-14 (pepper / autograd).
     'rhombic_stick': (dict(S=0.5, g=[2.0, 2.05, 2.1]),
-                      dict(mwFreq=9.5, Range=[325, 337], nPoints=601, Harmonic=0), dict(GridSize=[31, 1])),
+                      dict(mwFreq=9.5, Range=[315, 345], nPoints=601, Harmonic=0), dict(GridSize=[31, 1])),
     'rhombic_lw_h1': (dict(S=0.5, g=[2.0, 2.05, 2.1], lw=1.5),
                       dict(mwFreq=9.5, Range=[320, 345], nPoints=1024, Harmonic=1), dict()),
     'cu_hyperfine': (dict(S=0.5, g=[2.05, 2.06, 2.25], Nucs='63Cu', A=[[60.0, 70.0, 550.0]], lwpp=1.0),
