@@ -1439,6 +1439,18 @@ a kink): relative norm error 6e-2 / 8e-3 / 1.5e-4 / 2e-8 for steps 1e-4 /
 1e-5 / 1e-6 / 1e-7 in g, identically for `pepper` and `pepper_autograd`.
 Optimizers see an almost-everywhere exact gradient of a piecewise-smooth model.
 
+Isotropic systems (grid symmetry O3, automatic or `GridSymmetry='O3'`) have one
+orientation and no facets: `pepper_autograd` draws every line with an exact template
+at its position, as `pepper` does (Gaussian for `Sys.lw(1)` or a strain width,
+Lorentzian for `Sys.lw(2)` alone, the rest convolved), so line positions,
+intensities and widths are differentiable in g, A, lw, HStrain and Temperature.
+Before 0.9.18 it sent the single orientation to the triangle projection, whose O3
+triangulation is empty, and returned an all-zero spectrum with zero gradient, also
+through `pepper()` with an isotropic parameter that requires grad (B66). A powder
+grid that yields no usable facets now raises `RuntimeError` instead of returning
+zeros; no grid that `Options` accepts (GridSize ≥ 2) does so. Sets of equivalent
+nuclei (`Sys.n > 1`) still raise `NotImplementedError` on every grid, O3 included.
+
 The earlier stand-alone models remain as `method='broadband'` and
 `method='analytical'` (deprecated). They sum discrete orientations without
 interpolation or projection and carry orientation-grid ripple at GridSizes
