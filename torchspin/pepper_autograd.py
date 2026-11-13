@@ -25,6 +25,20 @@ systems: per-line templates as in pepper), ``GridSize`` int or ``[N, Ninterp]``,
 allowed), ``Temperature``, strains, ``Opt.Transitions`` (matrix route only).  Strains (HStrain, gStrain, AStrain on the graph; DStrain magnitudes are
 constants) use the summation branch.  ``ModAmp`` (pseudo-modulation, torch).  Not yet: ``mwPhase``, ordering,
 photoselection, crystals, frequency sweeps (these raise ``NotImplementedError``).
+
+Grid symmetry (``GridSymmetry='auto'``): :func:`torchspin.hamsymm.grid_symmetry`, which
+is ``hamsymm`` unless a symmetry input (tensor, frame, high-order term, strain) requires
+grad.  Then the grid has the symmetry of the differentiated *parameterization* (B1):
+the autograd leaves behind those inputs get a generic perturbation and each input moves
+along ``J @ dp``.  A scalar g keeps O3, ``[g_perp, g_perp, g_par]`` built from two
+leaves keeps Dinfh, but an axial g given as three independent numbers gets D2h, an
+isotropic one D2h, a differentiated frame Ci -- otherwise the gradient along the
+symmetry-breaking directions would be wrong.  Such a run's spectrum then differs from the
+forward-only spectrum (grad-free inputs) by the grid discretization error: 0.1 % for a
+Cu(II) case at GridSize [31, 4], but up to ~17 % for an isotropic system, whose lines the
+projection bins where O3 draws exact templates.  Set ``Options.GridSymmetry`` explicitly
+to compare a gradient run with a forward-only one, or parameterize the symmetry you mean
+(a scalar g, shared leaves).
 """
 from __future__ import annotations
 
@@ -38,7 +52,7 @@ import torch
 
 from torchspin.experiment import Experiment, Options, auto_batch_size
 from torchspin.ham import ham
-from torchspin.hamsymm import hamsymm
+from torchspin.hamsymm import grid_symmetry
 from torchspin.resfields_batch import resfields_batch
 from torchspin.sphgrid import sphgrid
 from torchspin.spinsystem import SpinSystem
@@ -622,7 +636,8 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
     grid_sym = opt.GridSymmetry
     R_sym2mol = torch.eye(3, dtype=_F64)
     if grid_sym in ('auto', '', None):
-        grid_sym, R_sym2mol = hamsymm(sys)
+        # grid valid along the differentiated parameterization (B1)
+        grid_sym, R_sym2mol = grid_symmetry(sys)
     N_coarse, N_interp = opt.grid_size_coarse, opt.grid_size_interp
     nfKnots = (N_coarse - 1) * N_interp + 1 if N_interp > 1 else N_coarse
     phi_arr, theta_arr, _, _ = sphgrid(grid_sym, N_coarse)

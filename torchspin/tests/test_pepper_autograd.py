@@ -260,7 +260,9 @@ def test_perturbation_order_follows_method(method):
     """B17: the powder route of pepper_autograd used second order for Method='perturb1'
     (1.44 relative max deviation from pepper on this grid before 0.8.3)."""
     exp = Experiment(mwFreq=9.5, Range=[260, 360], nPoints=512)
-    opt = Options(Verbosity=0, GridSize=[19, 4], Method=method)
+    # g is three independent numbers that require grad: pepper_autograd's automatic
+    # grid would be D2h (B1, 0.9.26), pepper's Dinfh, so the grid is named
+    opt = Options(Verbosity=0, GridSize=[19, 4], Method=method, GridSymmetry='D2h')
     _, yp = pepper(SpinSystem(g=[_CU_G0], **_CU_AX), exp, opt)
     g = torch.tensor(_CU_G0, requires_grad=True)
     _, ya = pepper_autograd(SpinSystem(g=[g], **_CU_AX), exp, opt)
@@ -347,7 +349,14 @@ def test_pepper_autograd_expands_natural_abundance_and_weight():
     from torchspin.pepper_autograd import pepper_autograd
     exp, opt = _zr_case()
     kw = dict(S=[0.5], Nucs=['Zr'], A=[[780.0] * 3], lw=[1.0, 0.0], weight=0.3)
-    g = torch.tensor([[2.0, 1.9, 1.9]], dtype=torch.float64, requires_grad=True)
+    # g = [g_x, g_perp, g_perp] from two leaves: an axial parameterization, so the
+    # gradient run keeps pepper's automatic grid (Dinfh about x; B1, 0.9.26).  With g
+    # as three independent numbers it would be D2h, and no explicit GridSymmetry
+    # reproduces the x-axis Dinfh grid; that case is
+    # test_pepper_autograd_natural_abundance_three_independent_g_d2h.
+    gx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)
+    gp = torch.tensor(1.9, dtype=torch.float64, requires_grad=True)
+    g = torch.stack([gx, gp, gp]).unsqueeze(0)
     _, y = pepper_autograd(SpinSystem(g=g, **kw), exp, opt)
     with torch.no_grad():
         _, y_ref = pepper(SpinSystem(g=g.detach(), **kw), exp, opt)
@@ -366,6 +375,52 @@ def test_pepper_autograd_expands_natural_abundance_and_weight():
         fd = (loss(torch.tensor(790.0 + h, dtype=torch.float64))
               - loss(torch.tensor(790.0 - h, dtype=torch.float64))) / (2 * h)
     assert abs(a.grad.item() - fd.item()) <= 1e-5 * abs(fd.item())
+
+
+def test_pepper_autograd_natural_abundance_three_independent_g_d2h():
+    """The case above with g as three independent numbers, on an explicit D2h grid
+    (the grid a gradient run picks for that parameterization; B1, 0.9.26).
+    pepper_autograd and pepper agree there to 6.5e-12 (before the per-slot linear
+    interpolation of missing knots, B31/B91, they differed by 1.6 % at
+    GridSize [7, 2]).  Gradients vs converged central differences: dL/dA 1.2e-8
+    (h = 1e-3), dL/dg <= 3.1e-8 (h = 1e-7)."""
+    from torchspin import SpinSystem, pepper
+    from torchspin.pepper_autograd import pepper_autograd
+    exp, _ = _zr_case()
+    opt = Options(GridSize=[7, 2], GridSymmetry='D2h')
+    kw = dict(S=[0.5], Nucs=['Zr'], A=[[780.0] * 3], lw=[1.0, 0.0], weight=0.3)
+    g0 = [2.0, 1.9, 1.9]
+    g = torch.tensor([g0], dtype=torch.float64, requires_grad=True)
+    _, y = pepper_autograd(SpinSystem(g=g, **kw), exp, opt)
+    _, y_ref = pepper(SpinSystem(g=[g0], **kw), exp, opt)
+    y_ref = torch.as_tensor(y_ref)
+    assert (y.detach() - y_ref).norm() / y_ref.norm() < 1e-9
+
+    target = y_ref * 1.1
+
+    def loss_a(a):
+        sys = SpinSystem(S=[0.5], g=[g0], Nucs=['Zr'], A=a * torch.ones(1, 3, dtype=torch.float64),
+                         lw=[1.0, 0.0])
+        return ((pepper_autograd(sys, exp, opt)[1] - target) ** 2).mean()
+    a = torch.tensor(790.0, dtype=torch.float64, requires_grad=True)
+    loss_a(a).backward()
+    h = 1e-3
+    with torch.no_grad():
+        fd = (loss_a(torch.tensor(790.0 + h, dtype=torch.float64))
+              - loss_a(torch.tensor(790.0 - h, dtype=torch.float64))) / (2 * h)
+    assert abs(a.grad.item() - fd.item()) <= 1e-7 * abs(fd.item())
+
+    def loss_g(gv):
+        return ((pepper_autograd(SpinSystem(g=gv.unsqueeze(0), **kw), exp, opt)[1] - target) ** 2).mean()
+    gv = torch.tensor(g0, dtype=torch.float64, requires_grad=True)
+    loss_g(gv).backward()
+    h = 1e-7
+    for i in range(3):
+        e = torch.zeros(3, dtype=torch.float64)
+        e[i] = h
+        with torch.no_grad():
+            fd = ((loss_g(gv.detach() + e) - loss_g(gv.detach() - e)) / (2 * h)).item()
+        assert abs(gv.grad[i].item() - fd) <= 1e-6 * abs(fd), (i, gv.grad[i].item(), fd)
 
 
 def test_q_shorthand_keeps_the_graph():

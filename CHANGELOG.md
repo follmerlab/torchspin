@@ -88,6 +88,40 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   The B48 gradient test runs with `PaddingMultiplier=0` (padding copies the clipped end bins
   225 times and limits central differences to ~1e-6; without it they converge to 1e-8).
 
+## [0.9.26] — 2026-11-12
+
+### Fixed
+
+- **Gradients on systems with an accidental grid symmetry (B1).** The automatic grid was
+  chosen by `hamsymm` at the current values, outside the autograd graph, so a symmetry that
+  the differentiated perturbation breaks was used anyway: an axial g/A given as independent
+  numbers got the Dinfh grid (Cu(II), g = [2.05 2.05 2.25], A = [40 40 550] MHz: dL/dg =
+  [-11.51e6, +0.09e6, -2.78e6], converged central differences -5.7189e6 for g_x and g_y;
+  now [-5.7189e6, -5.7189e6, -2.8021e6]), an isotropic g given as three numbers the O3 grid
+  ([4.57e6, 4.57e6, -4.57e6] vs ~1.598e6 each), an axial g with a rhombic A rotated about z
+  D2h (now C2h), differentiated Euler angles a grid whose frame does not move with them (now
+  Ci). `salt` likewise (14N ENDOR: dA = [-0.217, 0, 0.053], now -0.1079 for x and y, as the
+  central differences).
+
+### Changed
+
+- **The automatic grid follows the differentiated parameterization (B1).** New
+  `torchspin.hamsymm.grid_symmetry`, used by pepper, pepper_autograd, salt, saffron,
+  saffron_thyme, orisel, nucfrq2d and the broadband autograd model. Without grad on a
+  symmetry input nothing changes (bit-identical, no extra cost). With grad, the autograd
+  leaves get a generic perturbation and each input moves along `J @ dp` (double-backward
+  JVP on the existing graph; field-level perturbation if double backward is unsupported);
+  two independent perturbations must agree on group and frame, else Ci. A scalar g keeps
+  O3 and `[g_perp, g_perp, g_par]` from two leaves keeps Dinfh; an axial g given as three
+  independent numbers now uses D2h (0.33 s vs 0.016 s forward + backward for the Cu(II)
+  case), and its spectrum differs from the forward-only one by the grid discretization
+  error (0.1 % there; up to ~17 % for an isotropic g given as three numbers, whose lines the
+  projection bins). Set `Options.GridSymmetry` explicitly to compare the two.
+  In `test_pepper_autograd.py` two pepper == pepper_autograd checks had a grad g given as
+  three numbers (axial values): `test_perturbation_order_follows_method` now names
+  `GridSymmetry='D2h'` on both sides; the isotopologue check builds g from two leaves
+  (`[g_x, g_perp, g_perp]`), which keeps the automatic Dinfh grid about x (no explicit
+  GridSymmetry reproduces that frame). Tolerances unchanged.
 ## [0.9.25] — 2026-11-12
 
 ### Fixed

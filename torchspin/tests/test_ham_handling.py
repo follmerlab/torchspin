@@ -190,11 +190,11 @@ def test_pepper_routes_ham_grad_to_autograd():
     differentiable path (before 0.9.13 pepper returned a detached spectrum)."""
     c = _c(grad=True)
     s = SpinSystem(Ham=_ham(c), **KW)
-    _, y = pepper(s, EXP, Options())
+    _, y = pepper(s, EXP, Options(GridSymmetry='D2h'))
     assert torch.is_tensor(y) and y.requires_grad
     (y * W).sum().backward()
     assert c.grad is not None and bool(torch.all(torch.isfinite(c.grad)))
-    y0 = np.asarray(pepper(SpinSystem(Ham=_ham(_c()), **KW), EXP, Options())[1])
+    y0 = np.asarray(pepper(SpinSystem(Ham=_ham(_c()), **KW), EXP, Options(GridSymmetry='D2h'))[1])
     assert np.max(np.abs(y.detach().numpy() - y0)) < 1e-12 * np.max(np.abs(y0))
 
 
@@ -358,8 +358,8 @@ def test_pepper_gstrain_ham_gframe_converged_reference():
 def test_pepper_autograd_gstrain_ham_matches_g():
     kw = dict(S=[0.5], lw=0.5, gStrain=[0.01, 0.005, 0.002])
     c = _c(grad=True)
-    y_h = pepper_autograd(SpinSystem(Ham=_ham(c), **kw), EXP, Options())[1]
-    y_g = pepper_autograd(SpinSystem(g=G, **kw), EXP, Options())[1]
+    y_h = pepper_autograd(SpinSystem(Ham=_ham(c), **kw), EXP, Options(GridSymmetry='D2h'))[1]
+    y_g = pepper_autograd(SpinSystem(g=G, **kw), EXP, Options(GridSymmetry='D2h'))[1]
     assert float((y_h - y_g).abs().max()) < 1e-11 * float(y_g.abs().max())
     (y_h * W).sum().backward()
     assert bool(torch.all(torch.isfinite(c.grad))) and float(c.grad.abs().max()) > 0

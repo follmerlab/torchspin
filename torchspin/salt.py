@@ -45,7 +45,7 @@ from torchspin.experiment import Experiment, Options
 from torchspin.ham import ham
 from torchspin.ham_nz import ham_nz
 from torchspin.orisel import _orisel_weights
-from torchspin.hamsymm import hamsymm
+from torchspin.hamsymm import grid_symmetry
 from torchspin.resfields_perturb import resfields_perturb, resfields_perturb_batch
 from torchspin.sphgrid import sphgrid
 from torchspin.spinsystem import SpinSystem
@@ -452,7 +452,8 @@ def salt(
     grid_sym = opt.GridSymmetry
     R_sym2mol = torch.eye(3, dtype=torch.float64)
     if grid_sym in ('auto', ''):
-        grid_sym, R_sym2mol = hamsymm(sys)
+        # grid valid along the differentiated parameterization (B1)
+        grid_sym, R_sym2mol = grid_symmetry(sys)
     if zero_field and grid_sym == 'O3':
         # no one-orientation shortcut at zero field: average B1 over a real grid
         grid_sym, R_sym2mol = 'D2h', torch.eye(3, dtype=torch.float64)
