@@ -14,6 +14,55 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.31] — 2026-11-14
+
+### Fixed
+
+- **Frequency-sweep AStrain widths follow `AFrame` and are differentiable in `AStrain` (B90).**
+  `compute_strain_widths_freq_batch` built the AStrain operators as `float(AStrain[c]) * I_c S_c`
+  along the molecular axes: `AFrame` was ignored, and `float()` cut the gradient with respect to
+  `AStrain` (an `AFrame` gradient came only through the eigenvectors). The term of principal
+  value k is now `AStrain_k * m((R'S)_k (R'I)_k)` with R = R_A2M = erot(AFrame)' (as in the
+  field sweep), i.e. AStrain_k times dnu/dA_k, the derivative of the transition frequency with
+  respect to the principal value, with `AStrain` and `AFrame` on the graph. Numbers (S = 1/2,
+  g = 2, 63Cu A = [30 60 200] MHz, AFrame = [0.4 0.9 -0.3], AStrain = [10 20 40] MHz, 340 mT,
+  φ = 0.7, θ = 1.1): the outermost allowed lines had 19.0 and 18.5 MHz instead of 56.9 and
+  56.5 MHz, the next allowed lines 6.5 and 6.0 instead of 18.9 MHz; now every transition equals
+  sqrt(Σ_k (AStrain_k dnu/dA_k)²) from eigenvalue central differences to 8e-8 MHz. A pepper
+  frequency sweep (A = [30 60 450], AStrain = [10 20 80] MHz) with AFrame = [0 π/2 0] equals the
+  untilted system with A and AStrain permuted to 1.4e-13 relative (before: 0.31); with
+  AFrame = [0.4 0.9 -0.3] the spectrum changes by 0.17 relative.
+  Gradients with respect to `AStrain` and `AFrame` match converged central differences to 3e-11
+  and 7e-10 relative. `AFrame = 0` is unchanged (the same operators; pepper spectra with
+  H/g/A strain identical to 3e-16). A width that is exactly zero now has a finite gradient
+  (sqrt guarded at 0) instead of NaN.
+- **Deliberate deviation from EasySpin.** EasySpin's resfreqs_matrix.m (567-583) rotates I with
+  R(c,k) but S with R(k,c), the transpose. That equals dnu/dA_k only when R is symmetric up to
+  signs (AFrame = 0, a swap of two axes such as [0 π/2 0]); a cyclic axis permutation
+  ([π/2 π/2 0]) is already off by 7.3 MHz on the system above, the tilt above by up to 35 MHz.
+  EasySpin (GitHub main, MATLAB
+  R2024b), `resfreqs_matrix` for the system above with Exp.SampleFrame = [0 -1.1 -0.7] (field
+  along [0.6816 0.5741 0.4536] in the molecular frame, as φ = 0.7, θ = 1.1), gives 21.44 and
+  21.86 MHz for the outermost allowed lines and 7.20 and 7.24 MHz for the next, against 56.85,
+  56.48, 18.92 and 18.87 MHz from eigenvalue derivatives; torchspin returns the latter. See
+  KNOWN_LIMITATIONS.md.
+- **`AStrain` (field and frequency sweeps) and `gStrain` (frequency sweeps) with more than one
+  electron spin raise `ValueError` (B89),** as EasySpin does (resfields.m 89-92,
+  resfreqs_matrix.m 102-106). Before, a field sweep raised only together with `gStrain` and
+  otherwise dropped `AStrain` silently (also `pepper_autograd`), and a frequency sweep applied the
+  first electron's `gStrain` and `AStrain`. The check is in `resfields_batch` (also when no line
+  is in range), `compute_strain_widths_batch` and `compute_strain_widths_freq_batch`.
+  Multi-electron `gStrain` in field sweeps (per-electron model) is unchanged.
+
+### Tests
+
+- New `torchspin/tests/test_freq_astrain_frame.py` (15 tests; 12 fail before this change):
+  widths of all transitions against eigenvalue central differences at a generic `AFrame`; a
+  pepper frequency sweep with an axis-swap `AFrame` against the permuted untilted system;
+  `AStrain` and `AFrame` gradients against converged central differences of an independent
+  Hellmann-Feynman implementation (step-size table in the test); `AFrame = 0` against the
+  molecular-axis formula; a finite gradient at zero width; the B89 `ValueError` in every path.
+
 ## [0.9.29] — 2026-11-13
 
 ### Fixed
