@@ -14,7 +14,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
-## [0.9.29] — 2026-11-12
+## [0.9.29] — 2026-11-13
 
 ### Fixed
 
@@ -494,7 +494,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   order (B65).** The second-order terms invert A; `Sys.A = [0 5 10]` raised torch's raw
   `LinAlgError` from `inv`. As EasySpin (resfields_perturb.m:120-127) the message is now "All
   hyperfine coupling constants must be non-zero" (a singular full A too). First order still
-  runs (EasySpin rejects it at every order). Test in `test_resfields_perturb.py`.
+  runs (EasySpin rejects it at every order). Test in `test_resfields_perturb.py`. Superseded in
+  0.9.29: the adjugate gives the A -> 0 limit.
 - **ENDOR transition selection as EasySpin endorfrq, in one place for `endorfrq` and every `salt`
   matrix path (B57/B41, B40, B59).** EasySpin selects the level pairs once (endorfrq.m:258-341):
   on the coarse grid `sphgrid(Opt.TPSGridSymm, Opt.TPSGridSize)` (`'D2h'`, 4) it sums the
