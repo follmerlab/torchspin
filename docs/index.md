@@ -1,9 +1,10 @@
 # torchspin documentation
 
 torchspin is a differentiable PyTorch port of EasySpin. The API mirrors EasySpin's (`SpinSystem`,
-`Experiment`, `Options`, `pepper`, `garlic`, `chili`, `salt`, `saffron`, `cardamom`, `esfit`, …), so the
-[EasySpin documentation](https://easyspin.org/easyspin/documentation/) is the reference for the physics
-and the meaning of parameters; this page collects torchspin's own material.
+`Experiment`, `Options`, `pepper`, `garlic`, `chili`, `salt`, `saffron`, `cardamom`, `esfit`, …), with the
+same units and conventions. The API reference documents every public function and class and the
+parameters it accepts; the [EasySpin documentation](https://easyspin.org/easyspin/documentation/)
+remains a good background reference for the physics. This page collects torchspin's own material.
 
 ## Tutorials (executed notebooks, `examples/notebooks/`)
 
@@ -72,3 +73,10 @@ spin-Hamiltonian programs: [lft.md](lft.md), [lft_gap_analysis.md](lft_gap_analy
 
 `python -m pytest` runs the full suite (about 2800 tests, including the MATLAB-validation modules that
 compare against the stored references in `tests/data`; no MATLAB installation needed).
+
+```{toctree}
+:hidden:
+:maxdepth: 2
+
+user_guide
+```
