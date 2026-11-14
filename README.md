@@ -189,14 +189,15 @@ These match EasySpin, so parameters transfer directly:
 
 ## Documentation
 
-The documentation site, at <https://follmerlab.github.io/torchspin/>, has an
-API reference for every public function and class with the parameters it
-accepts, the tutorials below, and the user guide ([docs/](docs/index.md)). To
-build it locally:
+The documentation site has a user guide, the tutorials below, and an API
+reference for every public function and class with the parameters it accepts.
+Its sources are in [docs/](docs/index.md); CI builds it on every change (the
+HTML is a workflow artifact until GitHub Pages is enabled). To build it
+locally:
 
 ```bash
 pip install -e ".[docs]"
-sphinx-build -b html docs docs/_build/html   # then open docs/_build/html/index.html
+make -C docs html          # then open docs/_build/html/index.html
 ```
 
 ---
