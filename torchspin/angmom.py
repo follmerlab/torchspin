@@ -71,7 +71,7 @@ def wigner3j(j1, j2, j3, m1, m2, m3) -> float:
     j1, j2, j3 : int or half-int
         Angular momentum quantum numbers (non-negative, integer or half-integer).
     m1, m2, m3 : int or half-int
-        Magnetic quantum numbers with ``|mi| <= ji``.
+        Magnetic quantum numbers with ``abs(mi) <= ji``.
 
     Returns
     -------
@@ -83,11 +83,12 @@ def wigner3j(j1, j2, j3, m1, m2, m3) -> float:
     Uses the Racah formula with log-factorials for numerical stability
     (accurate for j up to ~100).  Returns 0 for any selection-rule violation.
 
-    Selection rules (return 0 if violated)
-    - m1 + m2 + m3 = 0
-    - Triangle inequality for (j1, j2, j3)
-    - |mi| <= ji
-    - 2*(ji + mi) is integer (half-integer or integer quantum numbers only)
+    Selection rules (0 is returned if any is violated):
+
+    - ``m1 + m2 + m3 = 0``;
+    - triangle inequality for ``(j1, j2, j3)``;
+    - ``abs(mi) <= ji``;
+    - ``2*(ji + mi)`` is an integer (integer or half-integer quantum numbers).
     """
     # Coerce to float
     j1, j2, j3 = float(j1), float(j2), float(j3)
@@ -579,8 +580,10 @@ def isto(J, kq, q_arg=None) -> np.ndarray:
         a list for a multi-spin product operator.
     kq : array_like or int
         If ``q_arg`` is ``None``:
-          - Shape (nSpins, 2): each row ``[k, q]`` for the corresponding spin.
-          - Shape (nTerms, 3): each row ``[k, q, spin_index]`` (1-based).
+
+        - shape (nSpins, 2): each row ``[k, q]`` for the corresponding spin;
+        - shape (nTerms, 3): each row ``[k, q, spin_index]`` (1-based).
+
         If ``q_arg`` is given, ``kq`` is the rank ``k`` (single-spin shorthand).
     q_arg : int, optional
         When provided, ``kq`` is ``k`` and ``q_arg`` is ``q`` (single-spin call).
