@@ -187,6 +187,20 @@ These match EasySpin, so parameters transfer directly:
 
 ---
 
+## Documentation
+
+The documentation site, at <https://follmerlab.github.io/torchspin/>, has an
+API reference for every public function and class with the parameters it
+accepts, the tutorials below, and the user guide ([docs/](docs/index.md)). To
+build it locally:
+
+```bash
+pip install -e ".[docs]"
+sphinx-build -b html docs docs/_build/html   # then open docs/_build/html/index.html
+```
+
+---
+
 ## Tutorials
 
 Start with `01_torchspin_quickstart.ipynb`, then branch to autograd or fitting
