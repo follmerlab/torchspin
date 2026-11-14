@@ -3,18 +3,13 @@
 Fast alternative to the matrix-diagonalization-based :func:`endorfrq`
 for powder averaging.  Restricted to single-electron systems.
 
-Reference
----------
-  M. Iwasaki, J. Magn. Reson. 16, 417-423 (1974).
-  "Second-order perturbation treatment of the general spin Hamiltonian
-   in an arbitrary coordinate system"
+Restrictions: a single electron spin (``nElectrons == 1``), no
+nucleus-nucleus couplings (``Sys.nn``), no A or D strain, no parallel-mode
+ENDOR.
 
-Restrictions
-------------
-- Single electron spin (nElectrons == 1)
-- No nuclear-nuclear couplings (Sys.nn)
-- No A-strain or D-strain
-- No parallel-mode ENDOR
+Reference: M. Iwasaki, "Second-order perturbation treatment of the general
+spin Hamiltonian in an arbitrary coordinate system", J. Magn. Reson. 16,
+417-423 (1974).
 """
 from __future__ import annotations
 
