@@ -28,13 +28,15 @@ their unit).  Angles in radians (``degrees=True`` for Telser-style input).  Inte
 
     >>> from torchspin.lft import dpn
     >>> E = dpn.levels(2, F2=46000.0, zeta=28.0, units='cm^-1', relative=True)   # C I 2p2
+    >>> [round(float(x), 1) for x in E[[0, 1, 4, 9, 14]]]
+    [0.0, 14.1, 42.0, 11068.1, 27628.1]
     >>> V = dpn.aom_isotropic([[0.0, 0.0, 1.0]], 1000.0)                            # one axial sigma donor
     >>> g = dpn.g_tensor(1, zeta=300.0, V=V, units='cm^-1')
 
 DPN's own matrix
 ----------------
 :func:`dpn_hamiltonian` reproduces what the compiled DPN / DPNFIT diagonalize: the hole route
-for n > 3 (with -V and -|zeta|), the mirror-image AOM for p^1/p^2, the dropped <+-1|V|0>
+for n > 3 (with -V and -abs(zeta)), the mirror-image AOM for p^1/p^2, the dropped ``<+-1|V|0>``
 elements of the AOM (finding DPN-01), DPN's vs DPNFIT's hole signs, and DPNFIT's Zeeman defect
 (DPNFIT-01).  It defaults to DPN's own constants (:data:`DPN_CONSTANTS`).
 
@@ -79,15 +81,32 @@ def _scal(x, device) -> torch.Tensor:
 # ------------------------------------------------------------------------------ operators
 @dataclass(frozen=True, eq=False)
 class PnOperators:
-    """Torch constants of p^n (nd = C(6, n) determinants).
+    """Torch constants of p^n (``nd = C(6, n)`` determinants), returned by :func:`pn_operators`.
 
-    ``pairs``          n(n-1)/2 (coefficient of A on the diagonal)
-    ``coulomb_bary``   (nd, nd) float64: F^2 coefficient measured from the barycenter, c2 + n(n-1)/25
-    ``exc_m``          (3, 3, nd, nd) float64: E[m, m'] (|m = -1, 0, 1>)
-    ``lf_real``        (3, 3, nd, nd) complex128: E_real[a, b] (px, py, pz)
-    ``so``, ``L2``, ``S2`` (nd, nd) float64; ``L``, ``S`` (3, nd, nd) complex128
-    ``term_projectors`` (nterms, nd, nd) float64, DPN term order
-    ``defect_terms``   (nterms,) bool: terms with L = 0 or S = 0 (DPNFIT's Zeeman defect)
+    Attributes
+    ----------
+    n : int
+        Number of p electrons.
+    pairs : int
+        ``n(n-1)/2``, the coefficient of ``A`` on the diagonal.
+    coulomb_bary : torch.Tensor, shape (nd, nd), float64
+        F^2 coefficient measured from the barycenter, ``c2 + n(n-1)/25``.
+    exc_m : torch.Tensor, shape (3, 3, nd, nd), float64
+        Excitation operators ``E[m, m']`` in the ``m = -1, 0, 1`` basis.
+    lf_real : torch.Tensor, shape (3, 3, nd, nd), complex128
+        ``E_real[a, b]`` in the real-orbital basis (px, py, pz).
+    so, L2, S2 : torch.Tensor, shape (nd, nd), float64
+        ``sum_i l_i.s_i``, L^2 and S^2.
+    L, S : torch.Tensor, shape (3, nd, nd), complex128
+        Total orbital and spin angular momentum.
+    term_projectors : torch.Tensor, shape (nterms, nd, nd), float64
+        Projectors onto the free-ion terms, DPN term order.
+    defect_terms : torch.Tensor, shape (nterms,), bool
+        Terms with L = 0 or S = 0 (DPNFIT's Zeeman defect).
+    size : int
+        Property: ``nd``.
+    terms : list
+        Property: the free-ion terms (label, L, S) in DPN order.
     """
 
     n: int
@@ -133,7 +152,30 @@ def _pn_operators(n: int, device: str) -> PnOperators:
 
 
 def pn_operators(n: int, device: str | torch.device = "cpu") -> PnOperators:
-    """Cached torch operators of p^n (n = 0..6) on ``device``."""
+    """Cached torch operators of p^n on ``device``.
+
+    Parameters
+    ----------
+    n : int
+        Number of p electrons, 0 to 6.
+    device : str or torch.device, default 'cpu'
+        Device.
+
+    Returns
+    -------
+    PnOperators
+
+    Raises
+    ------
+    ValueError
+        If ``n`` is not an integer from 0 to 6.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dpn
+    >>> dpn.pn_operators(2).size
+    15
+    """
     if int(n) != n or not 0 <= n <= 6:
         raise ValueError("n must be an integer 0..6")
     return _pn_operators(int(n), str(torch.device(device)))
@@ -145,14 +187,51 @@ def _ops(n_or_ops, device) -> PnOperators:
 
 # ------------------------------------------------------------------------------ Hamiltonian
 def zeeman_operators(n, k=(1.0, 1.0, 1.0), constants: Constants = TORCHSPIN_CONSTANTS, device="cpu") -> torch.Tensor:
-    """mu_i / mu_B = k_i L_i + g_e S_i, shape (..., 3, nd, nd); k is (..., 3), dimensionless."""
+    """Magnetic moment operators in Bohr magnetons, ``k_i L_i + g_e S_i``.
+
+    Parameters
+    ----------
+    n : int or PnOperators
+        Number of p electrons (0 to 6) or cached operators.
+    k : array_like or torch.Tensor, shape (..., 3), default (1.0, 1.0, 1.0)
+        Orbital reduction factors (dimensionless).
+    constants : torchspin.lft.ddn.Constants, default TORCHSPIN_CONSTANTS
+        Supplies ``g_e``.
+    device : str or torch.device, default 'cpu'
+        Device.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, nd, nd), complex128
+    """
     ops = _ops(n, device)
     k = _t(k, ops.device)
     return k[..., :, None, None].to(_C128) * ops.L + constants.g_e * ops.S
 
 
 def field_vector(B0, theta=0.0, phi=0.0, degrees: bool = False) -> torch.Tensor:
-    """Field vector (..., 3) of magnitude ``B0`` (any field unit) along polar angle theta, azimuth phi."""
+    """Field vector of magnitude ``B0`` along polar angle ``theta`` and azimuth ``phi``.
+
+    Parameters
+    ----------
+    B0 : float or array_like or torch.Tensor
+        Field magnitude (any field unit; the simulators take mT).
+    theta, phi : float or array_like or torch.Tensor, default 0.0
+        Direction, radians unless ``degrees``.  Broadcast with ``B0``.
+    degrees : bool, default False
+        Angles in degrees.
+
+    Returns
+    -------
+    torch.Tensor, shape broadcast + (3,), float64
+        ``B0 (sin t cos p, sin t sin p, cos t)``.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dpn
+    >>> dpn.field_vector(350.0, 90.0, 90.0, degrees=True).round(decimals=6).tolist()
+    [0.0, 350.0, 0.0]
+    """
     B0, theta, phi = torch.broadcast_tensors(_t(B0), _t(theta), _t(phi))
     if degrees:
         theta, phi = torch.deg2rad(theta), torch.deg2rad(phi)
@@ -180,11 +259,54 @@ def _hamiltonian_cm(ops: PnOperators, f: float, F2, zeta, A, alpha, V, V_m, k, f
 
 def hamiltonian(n, *, F2=0.0, zeta=0.0, A=0.0, alpha=0.0, V=None, V_m=None, k=(1.0, 1.0, 1.0), field=None,
                 units: str = "MHz", constants: Constants = TORCHSPIN_CONSTANTS, device="cpu") -> torch.Tensor:
-    """Complex Hermitian H (..., nd, nd) of p^n, in ``units``.
+    """Complex Hermitian p^n Hamiltonian in the full determinant basis.
 
-    ``n`` is the electron count (or a cached :class:`PnOperators`).  ``V``: real-orbital ligand
-    field (..., 3, 3) in (px, py, pz).  ``V_m``: a field given directly in the |m = -1, 0, 1>
-    basis (complex; need not be time-even).  ``field`` (..., 3) in mT.
+    Parameters
+    ----------
+    n : int or PnOperators
+        Number of p electrons (0 to 6) or cached operators.
+    F2 : float or torch.Tensor, default 0.0
+        Slater integral F^2 (DPN's "F2", not F_2 = F^2/25), in ``units``.
+    zeta : float or torch.Tensor, default 0.0
+        One-electron spin-orbit coupling constant, in ``units``.
+    A : float or torch.Tensor, default 0.0
+        ``F^0 - 2 F^2/25``, a uniform shift ``A n(n-1)/2``; 0 reproduces DPN's
+        absolute energies.  In ``units``.
+    alpha : float or torch.Tensor, default 0.0
+        Trees correction (coefficient of L^2), in ``units``.
+    V : array_like or torch.Tensor, shape (..., 3, 3), optional
+        Real symmetric ligand field in the real-orbital basis (px, py, pz), in
+        ``units``.
+    V_m : array_like or torch.Tensor, shape (..., 3, 3), optional
+        A ligand field given directly in the ``m = -1, 0, 1`` basis (complex;
+        need not be time-even), in ``units``.
+    k : array_like or torch.Tensor, shape (..., 3), default (1.0, 1.0, 1.0)
+        Orbital reduction factors; enter only the Zeeman term.
+    field : array_like or torch.Tensor, shape (..., 3), optional
+        Magnetic field vector in mT.  Default ``None``: zero field.
+    units : str, default 'MHz'
+        Energy unit of the inputs and the result (``'MHz'``, ``'GHz'``,
+        ``'cm^-1'``, ``'K'``, ``'eV'``, ...).
+    constants : torchspin.lft.ddn.Constants, default TORCHSPIN_CONSTANTS
+        mu_B and g_e.
+    device : str or torch.device, default 'cpu'
+        Device.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., nd, nd), complex128
+        In ``units``, ``nd = C(6, n)``.
+
+    Raises
+    ------
+    ValueError
+        If ``n`` is not an integer from 0 to 6 or ``units`` is unknown.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dpn
+    >>> dpn.hamiltonian(2, F2=46000.0, zeta=28.0, units='cm^-1').shape
+    torch.Size([15, 15])
     """
     ops = _ops(n, device)
     f = _u.energy_factor(units, "cm^-1")
@@ -192,10 +314,37 @@ def hamiltonian(n, *, F2=0.0, zeta=0.0, A=0.0, alpha=0.0, V=None, V_m=None, k=(1
 
 
 def levels(n, *, relative: bool = False, units: str = "MHz", **kw) -> torch.Tensor:
-    """Ascending energies (..., nd) in ``units``; ``relative=True`` puts the ground state at 0.
+    """Ascending energy levels of p^n.
 
-    Keywords as :func:`hamiltonian`.  The gradient of a degenerate eigenvalue is that of its
-    level's mean (exact for the Kramers and orbital degeneracies of p^n).
+    Parameters
+    ----------
+    n : int or PnOperators
+        Number of p electrons (0 to 6) or cached operators.
+    relative : bool, default False
+        Put the ground state at 0.
+    units : str, default 'MHz'
+        Energy unit of the inputs and the result.
+    **kw
+        Keywords of :func:`hamiltonian`.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., nd), float64
+        Eigenvalues in ``units``, ascending.
+
+    Notes
+    -----
+    The gradient of a degenerate eigenvalue is that of its level's mean (exact
+    for the Kramers and orbital degeneracies of p^n).
+
+    Examples
+    --------
+    Spin-orbit splitting of the 2P term of p^1 is ``1.5 zeta``:
+
+    >>> from torchspin.lft import dpn
+    >>> E = dpn.levels(1, zeta=100.0, units='cm^-1', relative=True)
+    >>> [round(float(x), 6) for x in E]
+    [0.0, 0.0, 150.0, 150.0, 150.0, 150.0]
     """
     E = eigvalsh_gauge(hamiltonian(n, units=units, **kw))
     return E - E[..., :1] if relative else E
@@ -203,11 +352,53 @@ def levels(n, *, relative: bool = False, units: str = "MHz", **kw) -> torch.Tens
 
 def g_tensor(n, *, k=(1.0, 1.0, 1.0), units: str = "MHz", constants: Constants = TORCHSPIN_CONSTANTS,
              device="cpu", **kw) -> GTensor:
-    """Zero-field effective-spin-1/2 g of the lowest doublet: (g g^T)_ij = 2 tr(P mu_i P mu_j).
+    """Zero-field effective spin-1/2 g tensor of the lowest doublet of p^n.
 
-    Keywords as :func:`hamiltonian` (without ``field``); only ``gap`` carries ``units``.
-    Meaningful for odd n (Kramers doublets) or any isolated ground doublet (check ``gap``:
-    for p^3 the 4S ground quartet splits only by second-order effects).
+    ``(g g^T)_ij = 2 tr(P mu_i P mu_j)`` with ``P`` the projector onto the two
+    lowest states.
+
+    Parameters
+    ----------
+    n : int or PnOperators
+        Number of p electrons (0 to 6) or cached operators.
+    k : array_like or torch.Tensor, shape (..., 3), default (1.0, 1.0, 1.0)
+        Orbital reduction factors.
+    units : str, default 'MHz'
+        Energy unit of the Hamiltonian keywords and of ``gap``.
+    constants : torchspin.lft.ddn.Constants, default TORCHSPIN_CONSTANTS
+        g_e of the moment operator.
+    device : str or torch.device, default 'cpu'
+        Device.
+    **kw
+        Keywords of :func:`hamiltonian` except ``field``.
+
+    Returns
+    -------
+    torchspin.lft.ddn.GTensor
+        ``ggT``, ``principal`` (ascending), ``g`` and ``gap`` (``units``).
+
+    Raises
+    ------
+    ValueError
+        If ``field`` is given.
+    TypeError
+        For an unknown keyword.
+
+    Notes
+    -----
+    Meaningful for odd n (Kramers doublets) or any isolated ground doublet;
+    check ``gap`` (for p^3 the 4S ground quartet splits only by second-order
+    effects).
+
+    Examples
+    --------
+    p^1 with one axial sigma donor (cm^-1):
+
+    >>> from torchspin.lft import dpn
+    >>> V = dpn.aom_isotropic([[0.0, 0.0, 1.0]], 1000.0)
+    >>> res = dpn.g_tensor(1, zeta=300.0, V=V, units='cm^-1')
+    >>> res.principal.shape
+    torch.Size([3])
     """
     if kw.get("field") is not None:
         raise ValueError("g_tensor is the zero-field doublet g; do not pass field")
@@ -228,32 +419,80 @@ def _u_real(device=None) -> torch.Tensor:
 
 
 def to_m_basis(V) -> torch.Tensor:
-    """Real-orbital (px, py, pz) matrix (..., 3, 3) -> |m = -1, 0, 1> matrix U V U^+ (complex)."""
+    """Convert a real-orbital (px, py, pz) matrix to the ``m = -1, 0, 1`` basis, ``U V U^+``.
+
+    Parameters
+    ----------
+    V : array_like or torch.Tensor, shape (..., 3, 3)
+        Real-orbital matrix, any unit.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3), complex128
+    """
     V = _t(V)
     u = _u_real(V.device)
     return u @ V.to(_C128) @ u.conj().T
 
 
 def crystal_field(Ds=0.0, Dr=0.0) -> torch.Tensor:
-    """Ballhausen-style axial (Ds) and rhombic (Dr) p-shell field (DPNIO.F ll. 235-237).
+    """Ballhausen-style axial (``Ds``) and rhombic (``Dr``) p-shell ligand field (DPNIO.F ll. 235-237).
 
-    In the |m> basis <+-1|V|+-1> = Ds, <0|V|0> = -2 Ds, <1|V|-1> = Dr; real orbitals:
-    diag(Ds - Dr, Ds + Dr, -2 Ds).  A cubic field does not split p orbitals (no Dq).
+    In the ``|m>`` basis: ``<+-1|V|+-1> = Ds``, ``<0|V|0> = -2 Ds``,
+    ``<1|V|-1> = Dr``; in real orbitals ``diag(Ds - Dr, Ds + Dr, -2 Ds)``.  A
+    cubic field does not split p orbitals (no Dq).
+
+    Parameters
+    ----------
+    Ds, Dr : float or torch.Tensor, default 0.0
+        Axial and rhombic parameters (any energy unit; broadcast).
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3), float64
+        Real-orbital field (px, py, pz) in the unit of ``Ds``/``Dr``.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dpn
+    >>> dpn.crystal_field(Ds=100.0, Dr=10.0).diagonal().tolist()
+    [90.0, 110.0, -200.0]
     """
     ds, dr = torch.broadcast_tensors(_t(Ds), _t(Dr))
     return torch.diag_embed(torch.stack([ds - dr, ds + dr, -2.0 * ds], -1))
 
 
 def orbital_energies(e) -> torch.Tensor:
-    """Diagonal real-orbital matrix from (..., 3) energies (E(px), E(py), E(pz)) (DPN option P)."""
+    """Diagonal real-orbital ligand field from p-orbital energies (DPN option P).
+
+    Parameters
+    ----------
+    e : array_like or torch.Tensor, shape (..., 3)
+        ``(E(px), E(py), E(pz))``, any energy unit.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3)
+    """
     return torch.diag_embed(_t(e))
 
 
 def aom_from_frames(R: torch.Tensor, e) -> torch.Tensor:
-    """V = sum_L e_sigma z'z'^T + e_pi_x x'x'^T + e_pi_y y'y'^T.
+    """p-shell AOM ligand field from ligand frames.
 
-    ``R`` (..., nlig, 3, 3) ligand frames (columns x', y', z'; z' from metal to ligand);
-    ``e`` (..., nlig, 3) bonding parameters in the order (e_sigma, e_pi_x, e_pi_y).
+    ``V = sum_L e_sigma z'z'^T + e_pi_x x'x'^T + e_pi_y y'y'^T``.
+
+    Parameters
+    ----------
+    R : torch.Tensor, shape (..., nlig, 3, 3)
+        Ligand frames, columns ``x', y', z'`` (``z'`` from metal to ligand).
+    e : array_like or torch.Tensor, shape (..., nlig, 3)
+        Bonding parameters ``(e_sigma, e_pi_x, e_pi_y)``, any energy unit.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3)
+        Real-orbital field (px, py, pz) in the unit of ``e``.
     """
     e = _t(e, R.device)
     cols = R[..., :, [2, 0, 1]]                                         # modes (sigma, pi_x, pi_y)
@@ -261,18 +500,52 @@ def aom_from_frames(R: torch.Tensor, e) -> torch.Tensor:
 
 
 def aom_from_angles(theta, phi, psi, e, degrees: bool = False) -> torch.Tensor:
-    """AOM from per-ligand angles (..., nlig) and (e_sigma, e_pi_x, e_pi_y) (..., nlig, 3).
+    """p-shell AOM ligand field from per-ligand Euler angles.
 
-    Frame R = Rz(phi) Ry(theta) Rz(psi) (:func:`torchspin.lft.ligand_field.rotation`).
-    DPN's "pi-c (x)" and "pi-s (y)" are ``e_pi_x`` and ``e_pi_y``.
+    Frame ``R = Rz(phi) Ry(theta) Rz(psi)``
+    (:func:`torchspin.lft.ligand_field.rotation`).  DPN's "pi-c (x)" and
+    "pi-s (y)" are ``e_pi_x`` and ``e_pi_y``.
+
+    Parameters
+    ----------
+    theta, phi, psi : array_like or torch.Tensor, shape (..., nlig)
+        Ligand angles, radians unless ``degrees``.
+    e : array_like or torch.Tensor, shape (..., nlig, 3)
+        ``(e_sigma, e_pi_x, e_pi_y)``, any energy unit.
+    degrees : bool, default False
+        Angles in degrees.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3)
+        Real-orbital field (px, py, pz) in the unit of ``e``.
     """
     return aom_from_frames(rotation(theta, phi, psi, degrees), _t(e))
 
 
 def aom_isotropic(n, e_sigma, e_pi=0.0) -> torch.Tensor:
-    """AOM from bond vectors n (..., nlig, 3) (normalized here): sum e_sigma n n^T + e_pi (I - n n^T).
+    """p-shell AOM ligand field from bond vectors with cylindrical pi bonding.
 
-    Smooth in n everywhere (no Euler angles); e_sigma, e_pi broadcast against (..., nlig).
+    ``V = sum_L e_sigma n n^T + e_pi (I - n n^T)``; smooth in ``n``
+    everywhere (no Euler angles).
+
+    Parameters
+    ----------
+    n : array_like or torch.Tensor, shape (..., nlig, 3)
+        Metal-to-ligand bond vectors (normalized here).
+    e_sigma, e_pi : float or array_like or torch.Tensor
+        Bonding parameters, broadcast against (..., nlig); ``e_pi`` default 0.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3)
+        Real-orbital field (px, py, pz) in the unit of ``e_sigma``.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dpn
+    >>> dpn.aom_isotropic([[0.0, 0.0, 1.0]], 1000.0).diagonal().tolist()
+    [0.0, 0.0, 1000.0]
     """
     n = _t(n)
     n = n / torch.linalg.vector_norm(n, dim=-1, keepdim=True)
@@ -283,10 +556,29 @@ def aom_isotropic(n, e_sigma, e_pi=0.0) -> torch.Tensor:
 
 
 def aom(ligands: Iterable[Ligand], device=None) -> torch.Tensor:
-    """p-shell AOM from :class:`torchspin.lft.Ligand` s (angles in radians; e_sigma, e_pi_x, e_pi_y).
+    """p-shell AOM ligand field from :class:`torchspin.lft.Ligand` objects.
 
-    p orbitals have no delta bonding: a ligand with nonzero ``e_delta_*`` raises ValueError
-    (DPNFIT accepts NLAM = 5 and silently corrupts the field, finding DPNFIT-03).
+    Uses the ligands' angles (radians) and ``e_sigma``, ``e_pi_x``,
+    ``e_pi_y``.
+
+    Parameters
+    ----------
+    ligands : iterable of Ligand
+        The ligands; an empty iterable gives a zero field.
+    device : str or torch.device, optional
+        Device of the result.
+
+    Returns
+    -------
+    torch.Tensor, shape (3, 3)
+        Real-orbital field (px, py, pz) in the unit of the bonding parameters.
+
+    Raises
+    ------
+    ValueError
+        If a ligand has nonzero ``e_delta_x2y2`` or ``e_delta_xy`` (p
+        orbitals have no delta bonding; DPNFIT accepts NLAM = 5 and silently
+        corrupts the field, finding DPNFIT-03).
     """
     ligs = list(ligands)
     if not ligs:
@@ -301,11 +593,27 @@ def aom(ligands: Iterable[Ligand], device=None) -> torch.Tensor:
 
 # ------------------------------------------------------------------------------ DPN's own matrix
 def internal_m_matrix(V, lf_type: str = "X", drop_o21: bool = True, np_: int = 1) -> torch.Tensor:
-    """The electron-picture |m> matrix DPN/DPNFIT enter for a (geometric) real-orbital field.
+    """The electron-picture ``|m>`` field DPN/DPNFIT enter for a (geometric) real-orbital field.
 
-    ``lf_type`` 'A' (AOM): for p^1/p^2 (``np_`` = 1, 2) the complex conjugate (mirror image
-    y -> -y; p^3 is geometric), and with ``drop_o21`` <1|V|0> = <0|V|-1> = 0 (finding DPN-01).
-    'X', 'P': the geometric matrix.
+    Parameters
+    ----------
+    V : array_like or torch.Tensor, shape (..., 3, 3)
+        Real-orbital ligand field (px, py, pz).
+    lf_type : {'X', 'A', 'P'}, default 'X'
+        DPN's ligand-field type: ``'X'`` crystal field and ``'P'`` orbital
+        energies give the geometric matrix; ``'A'`` (AOM) gives, for p^1/p^2
+        (``np_`` 1 or 2), the complex conjugate (mirror image y -> -y; p^3 is
+        geometric) and, with ``drop_o21``, ``<1|V|0> = <0|V|-1> = 0`` (finding
+        DPN-01).
+    drop_o21 : bool, default True
+        Drop those AOM elements, as DPN does.
+    np_ : int, default 1
+        DPN's NP (n for n <= 3, else 6 - n).
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3), complex128
+        The ``|m>`` matrix (m = -1, 0, 1), in the unit of ``V``.
     """
     vm = to_m_basis(V)
     if lf_type.upper() != "A":
@@ -337,14 +645,51 @@ def dpn_hamiltonian(n: int, *, F2=0.0, zeta=0.0, V=None, k=(1.0, 1.0, 1.0), alph
                     lf_type: str = "X", program: str = "dpn", drop_o21: bool = True,
                     zeeman_defect: bool | None = None, units: str = "MHz", constants: Constants = DPN_CONSTANTS,
                     device="cpu") -> torch.Tensor:
-    """The matrix DPN (``program='dpn'``) or DPNFIT (``'dpnfit'``) diagonalizes, in ``units``.
+    """The matrix DPN (``program='dpn'``) or DPNFIT (``'dpnfit'``) diagonalizes.
 
-    For n > 3 this is the p^(6-n) hole problem with -V and -|zeta| (DPN flips only the real
-    part of the |m> field, DPNFIT all of it), so its size is C(6, 6 - n).  ``zeta`` enters as
-    |zeta|.  ``lf_type`` as :func:`internal_m_matrix` ('X' crystal field, 'A' AOM, 'P' orbital
-    energies).  ``zeeman_defect`` (default: True for DPNFIT) removes the diagonal B_z Zeeman
-    elements of terms with L = 0 or S = 0 (DPNFIT-01).  ``field`` (..., 3) in mT.  Constants
-    default to DPN's own (:data:`DPN_CONSTANTS`).
+    Reproduces the compiled programs (module docstring).  For n > 3 this is the
+    p^(6-n) hole problem with ``-V`` and ``-abs(zeta)`` (DPN flips only the real
+    part of the ``|m>`` field, DPNFIT all of it), so the basis size is
+    ``C(6, 6 - n)`` (= ``C(6, n)``).
+
+    Parameters
+    ----------
+    n : int
+        Number of p electrons, 0 to 6.
+    F2, zeta, alpha : float or torch.Tensor, default 0.0
+        Slater F^2, spin-orbit constant (enters as ``abs(zeta)``) and Trees
+        correction, in ``units``.
+    V : array_like or torch.Tensor, shape (..., 3, 3), optional
+        Real-orbital ligand field (px, py, pz) in ``units``.
+    k : array_like, shape (3,), default (1.0, 1.0, 1.0)
+        Orbital reduction factors.
+    field : array_like or torch.Tensor, shape (..., 3), optional
+        Field vector in mT.
+    lf_type : {'X', 'A', 'P'}, default 'X'
+        As :func:`internal_m_matrix` (crystal field, AOM, orbital energies).
+    program : {'dpn', 'dpnfit'}, default 'dpn'
+        Which program to reproduce.
+    drop_o21 : bool, default True
+        Drop the ``<+-1|V|0>`` AOM elements (DPN-01).
+    zeeman_defect : bool, optional
+        Remove the diagonal B_z Zeeman elements of terms with L = 0 or S = 0
+        (DPNFIT-01).  Default ``None``: True for ``program='dpnfit'``.
+    units : str, default 'MHz'
+        Energy unit of the inputs and the result.
+    constants : torchspin.lft.ddn.Constants, default DPN_CONSTANTS
+        DPN's own constants.
+    device : str or torch.device, default 'cpu'
+        Device.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., nd, nd), complex128
+        In ``units``.
+
+    Raises
+    ------
+    ValueError
+        If ``program`` is not ``'dpn'`` or ``'dpnfit'``.
     """
     if program not in ("dpn", "dpnfit"):
         raise ValueError("program must be 'dpn' or 'dpnfit'")
@@ -370,9 +715,37 @@ def dpn_hamiltonian(n: int, *, F2=0.0, zeta=0.0, V=None, k=(1.0, 1.0, 1.0), alph
 
 # ------------------------------------------------------------------------------ system
 class PnSystem:
-    """A p^n ion with cached operators: ``PnSystem(n).levels(...)``, ``.g_tensor(...)``, ``.hamiltonian(...)``.
+    """A p^n ion with cached operators.
 
-    ``units`` set here is the default for every call (override per call).
+    ``PnSystem(n).levels(...)``, ``.g_tensor(...)``, ``.hamiltonian(...)`` and
+    ``.zeeman_operators(k)`` call the module functions with the cached
+    operators; ``units`` and ``constants`` set here are the defaults of every
+    call (override per call).
+
+    Parameters
+    ----------
+    n : int
+        Number of p electrons, 0 to 6.
+    units : str, default 'MHz'
+        Default energy unit.
+    constants : torchspin.lft.ddn.Constants, default TORCHSPIN_CONSTANTS
+        Default constants.
+    device : str or torch.device, default 'cpu'
+        Device.
+
+    Attributes
+    ----------
+    size : int
+        Basis size ``C(6, n)``.
+    terms : list
+        Free-ion terms in DPN order.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dpn
+    >>> ion = dpn.PnSystem(3, units='cm^-1')
+    >>> ion.size, ion.levels(F2=40000.0).shape
+    (20, torch.Size([20]))
     """
 
     def __init__(self, n: int, *, units: str = "MHz", constants: Constants = TORCHSPIN_CONSTANTS, device="cpu"):
