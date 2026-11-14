@@ -12,107 +12,196 @@ from typing import List, Optional, Tuple, Union
 
 @dataclass
 class Experiment:
-    """CW EPR experimental parameters.
+    """Experimental parameters for CW EPR simulations (EasySpin ``Exp``).
 
-    Field-swept mode (default)
-    --------------------------
-    Set ``mwFreq`` (GHz) and ``Range`` ([Bmin, Bmax] in mT).
-    Returns field axis in mT.
+    One ``Experiment`` describes the sweep, the detection and the sample.  The
+    sweep mode follows from which fields are set:
 
-    Frequency-swept mode
-    --------------------
-    Set ``Field`` (fixed field in mT) and ``mwRange`` ([nu_lo, nu_hi] in GHz).
-    ``Range`` is not used; ``mwFreq`` is optional.
-    Returns frequency axis in GHz.
+    * **Field sweep** (the default): set ``mwFreq`` (GHz) and ``Range`` or
+      ``CenterSweep`` (mT).  The simulators return a field axis in mT.
+    * **Frequency sweep**: set ``Field`` (mT) and ``mwRange`` or
+      ``mwCenterSweep`` (GHz); ``Range`` is not used.  The simulators return
+      a frequency axis in GHz.
+    * **Fixed field** (ENDOR): set ``Field`` only.  :func:`~torchspin.salt.salt`
+      runs fixed-field ENDOR; :func:`~torchspin.pepper.pepper` treats this as
+      a frequency sweep with an automatic range.
+
+    Fields are validated on construction (see Raises).  A field that a
+    simulator does not read is ignored by it; the "Read by" notes below list
+    the CW simulators that use each field.
 
     Parameters
     ----------
-    mwFreq:
-        Microwave frequency in GHz (field-swept mode).
-    Range:
-        Field sweep range ``[Bmin, Bmax]`` in mT (field-swept mode).
-        Not required when ``mwRange`` or ``CenterSweep`` is set.
-    CenterSweep:
-        Alternative to ``Range``: ``[center, sweep_width]`` in mT
-        (EasySpin ``Exp.CenterSweep``).  Converted to ``Range`` on
-        construction.
-    mwCenterSweep:
-        Alternative to ``mwRange`` for frequency sweeps:
-        ``[center, sweep_width]`` in GHz.  Converted to ``mwRange``.
-    SampleFrame:
-        Euler angles ``[alpha, beta, gamma]`` (rad) of the sample frame for a
-        single-crystal simulation (EasySpin ``Exp.SampleFrame``). ``None`` =
-        powder/isotropic sample. Used by :func:`chili` (and pepper crystals,
-        PORT_SPEC_2 Phase 3).
-    ModAmp:
-        Peak-to-peak field-modulation amplitude in mT (EasySpin
-        ``Exp.ModAmp``).  ``0`` (default) = no modulation; the detection
-        harmonic is then produced by differentiating the lineshape.  When
-        ``> 0``, :func:`garlic` convolves the absorption lineshape and
-        applies pseudo-modulation (:func:`torchspin.dataproc.fieldmod`)
-        at ``Harmonic``, which must be ≥ 1.  Field sweeps only.
-    nPoints:
-        Number of points in the spectrum.  Default 1024.
-    Harmonic:
-        Detection harmonic: 0 = absorption, 1 = first-derivative (default),
-        2 = second-derivative.
-    mwPhase:
-        Detection phase in radians: 0 = pure absorption, pi/2 = dispersion.
-    Temperature:
-        Sample temperature in K.  ``None`` (default) = infinite temperature
-        (equal Boltzmann populations for all levels).
-    Mode:
-        Microwave excitation geometry.
+    mwFreq : float, optional
+        Microwave frequency in GHz.  Required (``> 0``) for field sweeps;
+        not used by frequency sweeps.  Default ``None``.
+    Range : list of float, optional
+        Field sweep range ``[Bmin, Bmax]`` in mT, ``Bmin < Bmax``.  Default
+        ``None``: :func:`~torchspin.pepper.pepper` and
+        :func:`~torchspin.garlic.garlic` then choose the range automatically
+        (pepper: S = 1/2 systems only, from the g and A extremes).
+    CenterSweep : list of float, optional
+        Alternative to ``Range``: ``[center, sweep_width]`` in mT, width
+        ``> 0``.  Converted to ``Range = [center - width/2, center + width/2]``
+        on construction.  Default ``None``.
+    mwCenterSweep : list of float, optional
+        Alternative to ``mwRange``: ``[center, sweep_width]`` in GHz, width
+        ``> 0``.  Converted to ``mwRange`` on construction.  Default ``None``.
+    ModAmp : float, default 0.0
+        Peak-to-peak field-modulation amplitude in mT.  ``0`` = no
+        modulation: the harmonic is produced by differentiating the line
+        shape.  ``> 0``: the absorption spectrum is pseudo-modulated
+        (:func:`torchspin.dataproc.fieldmod`) at ``Harmonic``; pepper and
+        garlic raise ``ValueError`` for ``Harmonic = 0`` and for frequency
+        sweeps.  ``None`` is read as 0.  Read by pepper, garlic and chili.
+    SampleFrame : array_like, shape (3,) or (N, 3), optional
+        Euler angles ``[alpha, beta, gamma]`` in radians of the lab-to-sample
+        frame transformation, one row per sample orientation.  In pepper this
+        describes a single crystal only together with ``MolFrame`` or
+        ``CrystalSymmetry``; on its own it leaves a disordered (powder) sample
+        unchanged.  Also read by chili.  Default ``None`` (no rotation).
+    CrystalSymmetry : int or str, optional
+        Crystal symmetry of a single crystal: space-group number (1-230),
+        space-group symbol or point-group symbol (e.g. ``'P21/c'``,
+        ``'C2h'``).  Determines the symmetry-related sites; ``None`` with
+        ``MolFrame`` set is space group P1 (one site).  Setting it makes
+        pepper simulate a crystal.  Default ``None``.
+    MolFrame : array_like, shape (3,), optional
+        Euler angles in radians of the sample-to-molecular frame
+        transformation of a single crystal.  Setting it makes pepper simulate
+        a crystal.  Default ``None``.
+    SampleRotation : tuple, optional
+        ``(axis, rho)``: rotate the sample about ``axis`` (``'x'``, ``'y'``,
+        ``'z'`` or a lab-frame 3-vector) by ``rho`` radians (a scalar or a
+        list of angles, one sample orientation each).  pepper only.  Default
+        ``None``.
+    nPoints : int, default 1024
+        Number of points of the sweep axis, at least 2.
+    Harmonic : int, optional
+        Detection harmonic: 0 = absorption, 1 = first derivative,
+        2 = second derivative.  Default ``None``, resolved on construction to
+        0 when ``Field`` is set and ``mwFreq`` is not (frequency sweep or
+        fixed field), and to 1 otherwise.  pepper falls back to 0 when the
+        system has no line width and no strain.
+    mwPhase : float, default 0.0
+        Detection phase in radians: 0 = absorption, ``pi/2`` = dispersion.
+        Read by pepper, garlic and chili.
+    Temperature : float, optional
+        Sample temperature in K for Boltzmann populations of the levels.
+        ``None`` (default) = infinite temperature (equal populations).
+        pepper treats a value ``<= 0`` as infinite temperature; garlic raises.
+    lightBeam : str or tuple, optional
+        Photoselection by a polarized light beam (pepper only; requires
+        ``SpinSystem.tdm``): ``''``/``None`` (default, none),
+        ``'perpendicular'`` or ``'parallel'`` (beam along the lab y axis,
+        linear polarization perpendicular or parallel to B0),
+        ``'unpolarized'``, or ``(k, alpha)`` with the propagation direction
+        ``k`` (lab frame: a direction string such as ``'y'`` or ``'-z'``, a
+        3-vector or ``[phi, theta]``) and the angle ``alpha`` of the electric
+        field in the plane perpendicular to ``k`` (radians, ``nan`` =
+        unpolarized).
+    lightScatter : float, default 0.0
+        Isotropic fraction of the photoselection weights, between 0 and 1:
+        weight = ``(1 - lightScatter) * w + lightScatter``.  A value ``>= 1``
+        switches photoselection off.  pepper only.
+    Ordering : float or callable, optional
+        Partial ordering of a disordered sample (pepper only).  A scalar
+        ``lambda`` gives the axial distribution ``exp(lambda * P2(cos beta))``;
+        a callable ``f(alpha, beta, gamma)`` or ``f(beta)`` (Euler angles in
+        radians, sample to molecular frame, array arguments) returns the
+        orientational weights.  Requires a Ci grid; cannot be combined with
+        ``MolFrame``, ``CrystalSymmetry`` or ``Orientations``.  Default
+        ``None`` (isotropic powder).
+    Mode : str, default 'perpendicular'
+        Microwave excitation geometry: ``'perpendicular'`` (B1 perpendicular
+        to B0, standard CW EPR, mainly Delta m_S = +-1 transitions) or
+        ``'parallel'`` (B1 parallel to B0, Delta m_S = 0 transitions, e.g.
+        integer-spin systems).  Used when ``mwMode`` is ``None``.
+    mwMode : str or tuple, optional
+        EasySpin's ``Exp.mwMode``; overrides ``Mode`` when set (pepper and
+        the resonance-field solvers; garlic reads ``Mode`` only).
+        ``'perpendicular'``, ``'parallel'`` or ``(k, mode2)`` with the
+        propagation direction ``k`` (``'x'``/``'y'``/``'z'`` with optional
+        sign, a 3-vector, ``[phi, theta]`` or one polar angle, radians) and
+        ``mode2`` the linear polarization angle (radians) or one of
+        ``'unpolarized'``, ``'circular+'``, ``'circular-'``.  Default
+        ``None``.
+    Field : float, optional
+        Static field in mT for frequency sweeps and fixed-field (ENDOR)
+        experiments; ``None`` (default) for field sweeps.  Must be ``>= 0``;
+        ``Field = 0`` is accepted only by pepper frequency sweeps and salt
+        with ``Options(ZeroField=True)``; every other simulator, and pepper
+        or salt without that option, raises ``ValueError`` when called.
+    mwRange : list of float, optional
+        Frequency sweep range ``[nu_lo, nu_hi]`` in GHz, ``nu_lo < nu_hi``.
+        Requires ``Field``.  Default ``None``.
+    ExciteWidth : float, optional
+        Microwave excitation bandwidth (FWHM) in MHz for orientation selection
+        in fixed-field experiments (salt ENDOR, orisel, saffron).  ``None``
+        (default) = no orientation selection; :func:`~torchspin.orisel.orisel`
+        requires it (``math.inf`` = no selection).
+    Orientations : array_like or torch.Tensor, shape (N, 2), optional
+        pepper and orisel only.  Field directions ``[phi, theta]`` in radians
+        in the molecular frame: B0 points along ``(sin(theta) cos(phi),
+        sin(theta) sin(phi), cos(theta))``, the convention of
+        ``levels(sys, phi, theta, B)`` and ``resfields``.  A single
+        ``[phi, theta]`` pair is ``N = 1``.  pepper then sums the stick
+        spectra of these orientations, each with the powder (B1 averaged
+        about B0) transition rates, without grid interpolation or SOPHE
+        projection; ``Options.GridSize``/``GridSymmetry`` are ignored.  Cannot
+        be combined with ``Ordering``, ``SampleFrame``, ``SampleRotation``,
+        ``MolFrame``, ``CrystalSymmetry``, ``Options.Sites`` or
+        ``Options.separate='transitions'``/``'sites'``.  orisel returns one
+        weight per orientation.  ``None`` (default) = powder average on the
+        simulator's grid.  Tensors are kept as given (may require grad);
+        other inputs are converted to float arrays.
+    OrientationWeights : array_like or torch.Tensor, shape (N,), optional
+        pepper only; requires ``Orientations``.  Non-negative, finite weights,
+        not all zero, used as given (not renormalized): each is the fraction
+        of the full sphere its orientation stands for, so weights summing to
+        1 give the amplitude of pepper's powder spectrum (a solid-angle
+        quadrature of the sphere divided by 4 pi reproduces the powder).
+        ``None`` (default) = equal weights ``1/N``.  May be a tensor that
+        requires grad (``pepper_autograd``).
 
-        - ``'perpendicular'`` (default): B1 ⊥ B0. Standard CW EPR — selects
-          allowed transitions with Δm_S = ±1.
-        - ``'parallel'``: B1 ∥ B0. Selects forbidden transitions with
-          Δm_S = 0, useful for integer-spin half-field lines (e.g.
-          triplets, S=1 systems).
-    Field:
-        Fixed static field in mT (frequency-swept mode).  ``None`` = field-swept.
-        Must be positive; ``Field = 0`` (zero-field frequency sweeps and
-        fixed-field ENDOR) is accepted by :func:`pepper` and :func:`salt` only
-        with ``Options(ZeroField=True)``.  Every other simulator, and pepper/salt
-        without that option, raise the usual "must be positive" error when they
-        are called.
-    mwRange:
-        Microwave frequency sweep range ``[nu_lo, nu_hi]`` in GHz
-        (frequency-swept mode).  ``None`` = field-swept.
-    ExciteWidth:
-        Microwave excitation bandwidth (FWHM, MHz) for orientation
-        selection in fixed-field experiments (e.g. ENDOR via ``salt``).
-        ``None`` (default) = no orientation selection.  Required by
-        :func:`~torchspin.orisel.orisel` (``math.inf``: no selection).
+    Raises
+    ------
+    ValueError
+        On construction, if ``Range`` and ``CenterSweep`` (or ``mwRange`` and
+        ``mwCenterSweep``) are both given; a ``CenterSweep``/``mwCenterSweep``
+        is not ``[center, width]`` with width ``> 0``; ``ModAmp < 0``;
+        ``Field < 0`` in a frequency sweep or fixed-field experiment; ``mwRange`` (frequency sweep) or ``Range`` (field
+        sweep) is not an increasing pair; a field sweep has no positive
+        ``mwFreq``; ``Harmonic`` is not 0, 1 or 2; ``nPoints < 2``; or
+        ``Orientations``/``OrientationWeights`` have the wrong shape, are not
+        finite, or the weights are negative or all zero (or given without
+        ``Orientations``).
 
-    Orientations:
-        pepper and orisel. ``None`` (default) = powder average on the SOPHE grid
-        (orisel: its grid).  orisel only reads the ``(N, 2)`` angles below and
-        returns one weight per orientation.
-        Otherwise an ``(N, 2)`` array-like (or tensor) of field directions
-        ``[phi, theta]`` (radians) in the molecular frame: the static field
-        B0 points along ``(sinθ cosφ, sinθ sinφ, cosθ)``, the convention of
-        ``levels(sys, phi, theta, B)`` and ``resfields``.  A single ``[phi,
-        theta]`` pair is accepted as ``N = 1``.  pepper then sums the stick
-        spectra of these orientations, each with the χ-averaged (B1 ⊥ B0,
-        averaged about B0) transition rates of a powder, without grid
-        interpolation or SOPHE projection.  Cannot be combined with
-        ``Ordering``, ``SampleFrame``, ``SampleRotation``, ``MolFrame`` or
-        ``CrystalSymmetry``; ``Options.GridSize``/``GridSymmetry`` are ignored.
-    OrientationWeights:
-        pepper only; requires ``Orientations``.  ``(N,)`` non-negative weights,
-        used as given (not renormalized): each is the fraction of the full
-        sphere that orientation stands for, so weights summing to 1 give the
-        amplitude of pepper's powder spectrum (a solid-angle quadrature of the
-        sphere divided by 4π reproduces the powder).  ``None`` (default) =
-        equal weights ``1/N``.  May be a tensor that requires grad
-        (``pepper_autograd``).
+    See Also
+    --------
+    Options, SpinSystem, torchspin.pepper.pepper, torchspin.garlic.garlic
 
-    Fixed-field mode (ENDOR)
-    ------------------------
-    Set ``Field`` only (``Range`` and ``mwRange`` both ``None``).  Used by
-    ``salt`` for fixed-field ENDOR; ``mwFreq`` + ``ExciteWidth`` optionally
-    enable orientation selection.
+    Notes
+    -----
+    Single-crystal and ordered-sample conventions follow EasySpin; see
+    KNOWN_LIMITATIONS.md, "Simulator — user-supplied orientations in pepper
+    (0.7.6)" for ``Orientations`` and "Pepper and salt — zero field,
+    ``Options.ZeroField`` (0.7.4)" for ``Field = 0``.
+
+    Examples
+    --------
+    A field sweep at X band; ``Harmonic`` defaults to the first derivative:
+
+    >>> from torchspin import Experiment
+    >>> exp = Experiment(mwFreq=9.5, CenterSweep=[340.0, 20.0], nPoints=512)
+    >>> exp.Range, exp.Harmonic
+    ([330.0, 350.0], 1)
+
+    A frequency sweep at a fixed field; ``Harmonic`` defaults to absorption:
+
+    >>> exp = Experiment(Field=340.0, mwRange=[9.3, 9.7])
+    >>> exp.is_freq_swept, exp.Harmonic
+    (True, 0)
     """
 
     mwFreq: Optional[float] = None
@@ -125,7 +214,7 @@ class Experiment:
     MolFrame: Optional[list] = None            # Euler angles sample->molecule (EasySpin Exp.MolFrame)
     SampleRotation: Optional[tuple] = None     # (axis letter or 3-vector, rho or list of rho) (EasySpin Exp.SampleRotation)
     nPoints: int = 1024
-    Harmonic: Optional[int] = None  # detection harmonic; default 1 for field sweeps, 0 for frequency sweeps (EasySpin)
+    Harmonic: Optional[int] = None  # detection harmonic; None -> 0 if Field is set and mwFreq is not, else 1
     mwPhase: float = 0.0
     Temperature: Optional[float] = None
     lightBeam: Optional[object] = None   # photoexcitation: '', 'perpendicular', 'parallel', 'unpolarized' or (k, alpha) (EasySpin Exp.lightBeam)
@@ -279,166 +368,223 @@ PEPPER_PERTURB_ORDER = {'perturb': 2, 'perturb1': 1, 'perturb2': 2}
 
 @dataclass
 class Options:
-    """Computational options for CW EPR powder simulation.
+    """Computational options for the CW EPR and ENDOR simulators (EasySpin ``Opt``).
+
+    Every simulator reads only the fields it needs and ignores the others; the
+    description of each field names the functions that use it.  Values are
+    validated on construction (see Raises).
 
     Parameters
     ----------
-    Method:
-        Computational method.  Which names are accepted depends on the
-        simulator:
+    Method : str, default 'matrix'
+        Resonance solver.  Accepted on construction: ``'matrix'``,
+        ``'exact'``, ``'hybrid'``, ``'perturb'``, ``'perturb1'`` to
+        ``'perturb5'``; which of them a simulator implements differs:
 
-        :func:`pepper` — ``'matrix'`` (default) exact diagonalization;
-        ``'perturb'``/``'perturb2'`` second-order perturbation theory
-        (``'perturb1'`` first order); ``'hybrid'`` exact core plus
-        perturbational ligand nuclei, selected with ``HybridCoreNuclei``.
-        ``'perturb3'``–``'perturb5'`` are not implemented here and raise rather
-        than quietly running second order.
+        * :func:`~torchspin.pepper.pepper`: ``'matrix'`` (or ``'exact'``),
+          exact diagonalization; ``'perturb'``/``'perturb2'`` second-order
+          and ``'perturb1'`` first-order perturbation theory; ``'hybrid'``,
+          an exactly diagonalized core (all electrons plus
+          ``HybridCoreNuclei``) with the other nuclei treated by perturbation
+          theory.  ``'perturb3'`` to ``'perturb5'`` raise ``ValueError``.
+        * :func:`~torchspin.garlic.garlic`: ``'exact'`` (``'matrix'`` is read
+          as ``'exact'``), the Breit-Rabi fixed-point solver; ``'perturb'``
+          (fifth order) or ``'perturb1'`` to ``'perturb5'`` (that order).
+          The bare name ``'perturb'`` therefore means different orders in
+          pepper and garlic, as in EasySpin.
+        * :func:`~torchspin.salt.salt` finds resonance fields by
+          diagonalization and ENDOR frequencies by first-order perturbation
+          theory for one electron without quadrupole couplings, by matrix
+          diagonalization otherwise (and always with ``Enhancement=True`` or
+          ``SpinSystem.Ham``; an explicit ``'perturb*'`` with
+          ``SpinSystem.Ham`` raises).  Both ENDOR paths give
+          ``abs(<i|mu_perp|j>)**2`` intensities in (MHz/mT)^2.
 
-        :func:`garlic` — ``'exact'`` (Breit–Rabi fixed-point solver, EasySpin
-        default) / ``'perturb'`` / ``'perturb1'``–``'perturb5'`` (perturbation
-        theory of the given order; ``'perturb'`` = 5th order).  Note that the
-        bare name means different orders in the two simulators, as in EasySpin.
+        See KNOWN_LIMITATIONS.md, "Pepper — choosing a method, and what each
+        costs (2026-10-07)".
+    HybridCoreNuclei : int or list of int, optional
+        pepper with ``Method='hybrid'`` only.  1-based indices into
+        ``SpinSystem.Nucs`` of the nuclei kept in the exactly diagonalized
+        core; all electron spins are always in the core.  ``None`` or empty
+        (default) makes every nucleus perturbational.  For Cu(II) with
+        nitrogen ligands, ``[1]`` keeps the copper exact.
+    HybridIntThreshold : float, default 0.005
+        pepper with ``Method='hybrid'`` only.  Nuclear sub-lines whose
+        amplitude summed over the grid is below this fraction of the
+        strongest are dropped.
+    AccumMethod : str, optional
+        garlic only.  How lines are accumulated into the spectrum:
+        ``'binning'`` (nearest-bin stick spectrum, then convolution),
+        ``'linear'`` (each line split between its two neighboring bins,
+        differentiable in the line positions) or ``'explicit'`` (one
+        analytic line shape per line).  ``None`` (default) = ``'explicit'``
+        in the fast-motion regime and ``'binning'`` otherwise.  When the
+        inputs require grad, ``'binning'`` (given or automatic) is replaced by
+        ``'linear'``.  ``Experiment.mwPhase != 0`` needs ``'explicit'``.
+    Accuracy : float, default 1e-12
+        garlic only.  Relative convergence criterion of the Breit-Rabi
+        fixed-point/Newton iterations.
+    MaxIterations : int, default 15
+        garlic only.  Iteration cap of the resonance-position solvers.
+    GridSize : int or list of int, default [19, 4]
+        Powder grid size for pepper (and the orientation grids of orisel,
+        saffron and chili's slow-motion solver).  An integer ``N``: resonances
+        are computed at a grid with ``N`` knots along a quarter meridian (at
+        least 2), without interpolation.  ``[N_coarse, N_interp]``:
+        resonances are computed on the ``N_coarse`` grid and spline
+        interpolated to a fine grid of ``(N_coarse - 1) * N_interp + 1``
+        knots per quarter meridian before the spectrum is accumulated
+        (``N_coarse >= 2``, ``N_interp >= 1``).  The default gives 73 fine
+        knots; increase ``N_coarse`` for strongly anisotropic or narrow-line
+        spectra (:func:`~torchspin.gridcheck.grid_convergence` checks
+        convergence).
+    GridSymmetry : str, default 'auto'
+        Symmetry of the powder grid, i.e. which part of the sphere is
+        sampled.  ``'auto'`` or ``''``: the symmetry of the spin Hamiltonian
+        (including strains) is detected and the matching grid and frame are
+        used.  Otherwise one of ``'O3'`` (isotropic, one orientation),
+        ``'Dinfh'`` (axial, one meridian), ``'D6h'``, ``'D4h'``, ``'Oh'``,
+        ``'D3d'``, ``'Th'``, ``'D2h'`` (one octant), ``'C6h'``, ``'C4h'``,
+        ``'S6'``, ``'C2h'``, ``'Ci'`` (a hemisphere) or ``'C1'`` (the full
+        sphere).  A given symmetry is used in the molecular frame without
+        checking it against the Hamiltonian; ``'Ci'`` is valid for any spin
+        Hamiltonian.  See KNOWN_LIMITATIONS.md, "Automatic grid
+        symmetry — strains are symmetry inputs (deliberate deviation from
+        EasySpin, 0.9.24)".
+    Threshold : float, default 1e-4
+        Relative intensity cutoff: transitions whose intensity stays below
+        ``Threshold`` times the strongest are discarded.  Read by pepper,
+        pepper_autograd, salt, chili and the resonance-field solvers, not by
+        garlic.  In
+        :func:`~torchspin.salt.salt` (all matrix paths) a level pair is kept
+        if its nuclear-moment rate summed over the
+        ``TPSGridSymm``/``TPSGridSize`` grid exceeds ``Threshold`` times the
+        maximum.
+    Verbosity : int, default 0
+        Progress messages printed to stdout: 0 = silent, 1 = progress,
+        2 = detailed (pepper, garlic, salt, chili, cardamom).
+    BatchSize : int, optional
+        Orientations per batched resonance search (pepper,
+        pepper_autograd, salt).  ``None`` (default) = automatic: all
+        orientations at once, capped so that the batched Hamiltonians
+        (orientations x field knots x dim^2) stay below about 400 MB.  ``1``
+        processes orientations one at a time (debugging, low memory).
+    Sites : list of int, optional
+        pepper single-crystal simulations only: 1-based indices of the
+        symmetry-related crystal sites to include.  ``None`` (default) = all
+        sites.  Cannot be combined with ``Experiment.Orientations``.
+    separate : str, default ''
+        Return separate spectra instead of their sum (pepper, garlic).
+        ``''`` = one summed spectrum.  ``'components'``: one row per
+        component and isotopologue (pepper, garlic).  pepper also accepts
+        ``'transitions'`` (one row per transition; not for crystals or
+        ``Experiment.Orientations``), ``'orientations'`` (one row per crystal
+        sample orientation or per ``Experiment.Orientations`` entry) and
+        ``'sites'`` (one row per crystal site).  Rows are stacked along
+        axis 0 of the returned spectrum.
+    IsoCutoff : float, default 1e-4
+        Isotopologues whose abundance is below this fraction of the most
+        abundant one are dropped from the isotope-mixture expansion
+        (``SpinSystem.Nucs`` entries such as ``'Cu'`` or ``'(63,65)Cu'``).
+        Read by pepper, garlic and chili.
+    Stretch : float, default 0.25
+        garlic only.  Padding of the automatic sweep range (when
+        ``Experiment.Range``/``mwRange`` is ``None``), as a fraction of the
+        spread of the line positions.
+    ModellingAccuracy : float, default 2e-6
+        Accuracy of the segment model of the pepper matrix resonance-field
+        search, relative to ``mwFreq``.
+    device : str, default 'cpu'
+        torch device for the large tensors (pepper, pepper_autograd, salt,
+        saffron).  A ``'cuda'`` device without CUDA available falls back to
+        ``'cpu'`` with a ``RuntimeWarning``.
+    QuadraticZeeman : bool, default False
+        Include the field-quadratic and field-cubic terms of
+        ``SpinSystem.Ham`` (orders lB = 2 and 3) in the resonance search, so
+        that the field-dependent Hamiltonian equals ``ham(sys, B)``.
+        ``False``: these terms are dropped.  Supported by pepper and
+        pepper_autograd with ``Method='matrix'`` (field and frequency sweeps,
+        powders and crystals) and by :func:`resfreqs_matrix`; the
+        perturbation and hybrid methods, :func:`resfields`, garlic and salt
+        raise ``NotImplementedError`` when it is on and such terms are
+        present.  Transition moments stay those of the linear moment
+        operators.  See KNOWN_LIMITATIONS.md, "Simulator — field-quadratic
+        Zeeman terms, ``Options.QuadraticZeeman`` (0.7.1)".
+    Enhancement : bool, default False
+        :func:`~torchspin.endorfrq.endorfrq` and salt only.  ``False``: the rf
+        transition operator is the nuclear magnetic moment.  ``True``: the
+        total (electron + nuclear) magnetic moment, which includes hyperfine
+        enhancement; salt then always uses its matrix ENDOR path, and
+        :func:`~torchspin.endorfrq_perturb.endorfrq_perturb` raises.
+        Transition selection still uses the nuclear-only rates, and
+        electronic (EPR) level pairs are excluded.  See KNOWN_LIMITATIONS.md,
+        "ENDOR — hyperfine enhancement (``Options.Enhancement``, 0.7.3)".
+    ZeroField : bool, default False
+        pepper frequency sweeps and salt fixed-field ENDOR only.  ``True``
+        allows ``Experiment.Field = 0`` (zero-field EPR/FDMR, zero-field
+        ENDOR): degenerate levels are grouped into clusters (relative
+        tolerance 1e-9 of the level spread) and each transition between two
+        clusters carries the summed rate of its level pairs, so intensities do
+        not depend on the eigenbasis inside a degenerate subspace; the
+        isotropic O3 shortcut is replaced by a D2h grid.  See
+        KNOWN_LIMITATIONS.md, "Pepper and salt — zero field,
+        ``Options.ZeroField`` (0.7.4)".
+    Transitions : str or list of tuple of int, optional
+        Transition selection for pepper, pepper_autograd and the ENDOR matrix
+        paths of endorfrq and salt.  ``None`` (default): automatic
+        pre-selection with ``Threshold``.  ``'all'``: every level pair
+        ``u < v``, without pre-selection and without the ``Threshold``
+        post-selection.  A list of 1-based level pairs ``(u, v)`` (levels
+        numbered by ascending energy at the resonance field): exactly those
+        transitions, normalized to ``u < v`` with duplicates removed; the
+        ``Threshold`` post-selection still applies.  With ``Method='hybrid'``
+        the levels are those of the exact core.  Not available with
+        ``Method='perturb*'`` or salt's ``ZeroField`` (raises).  See
+        KNOWN_LIMITATIONS.md, "Simulator — transition selection,
+        ``Options.Transitions`` (0.7.5)".
+    PaddingMultiplier : float, default 3.0
+        pepper, pepper_autograd and salt.  When the spectrum is nonzero at the
+        first or last point, both ends are extended by
+        ``round(PaddingMultiplier * max(lw) / increment)`` copies of the edge
+        values before the final line-width convolution and cropped afterwards,
+        so the convolution does not see a step to zero.  ``0`` disables the
+        padding.  Must be a finite number ``>= 0``.  See KNOWN_LIMITATIONS.md,
+        "Pepper and salt — range padding, ``Options.PaddingMultiplier``
+        (0.9.6)".
+    TPSGridSymm : str, default 'D2h'
+        endorfrq and salt only.  Symmetry of the coarse molecular-frame grid
+        on which the automatic ENDOR transition selection sums the
+        nuclear-moment rates (independent of ``GridSize``).
+    TPSGridSize : int, default 4
+        endorfrq and salt only.  Size of that grid.
 
-        :func:`salt` ignores ``Method``: it always finds resonance fields by
-        diagonalization and the ENDOR frequencies by first-order perturbation
-        theory for one electron without quadrupole couplings, and by matrix
-        diagonalization otherwise, when ``Enhancement=True`` or when
-        ``Sys.Ham`` is given (0.9.5; with ``Sys.Ham`` an explicit
-        ``'perturb*'`` method raises).  Both ENDOR paths give
-        |<i|mu_perp|j>|^2 intensities in (MHz/mT)^2 (the
-        first-order one since 0.8.1), so the scale does not depend on the path;
-        EasySpin's default is always ``'matrix'``.
-    HybridCoreNuclei:
-        ``Method='hybrid'`` only.  1-based indices into ``Sys.Nucs`` of the
-        nuclei to keep in the exactly diagonalized core; all electron spins are
-        always in the core.  Empty (the default) makes every nucleus
-        perturbational.  For Cu(II) with nitrogen ligands, ``[1]`` keeps the
-        copper exact and treats the nitrogens perturbationally.
-    HybridIntThreshold:
-        ``Method='hybrid'`` only.  Nuclear sub-lines whose amplitude summed over
-        the grid is below this fraction of the strongest are dropped
-        (EasySpin default 0.005).
-    AccumMethod:
-        garlic only.  Spectrum accumulation: ``'binning'`` (nearest-bin stick
-        spectrum + convolution; default in the isotropic regime), ``'linear'``
-        (line split between its two neighboring bins, EasySpin ``makespec``;
-        differentiable in the line positions and selected automatically when the
-        spin system carries grad tensors) or ``'explicit'`` (per-line
-        Lorentzians; default in the fast-motion regime).  ``None`` = auto.
-    Accuracy:
-        garlic only.  Relative convergence criterion of the Breit–Rabi
-        fixed-point / Newton iterations.  Default ``1e-12`` (EasySpin).
-    MaxIterations:
-        garlic only.  Iteration cap for the resonance-position solvers.
-        Default ``15`` (EasySpin).
-    GridSize:
-        SOPHE grid size, either an integer ``N`` or a two-element list
-        ``[N_coarse, N_interp]``.
+    Raises
+    ------
+    ValueError
+        On construction, if ``Method`` or ``AccumMethod`` is not one of the
+        accepted names; ``GridSize`` is not an integer ``>= 2`` or a list
+        ``[N_coarse >= 2, N_interp >= 1]``; ``PaddingMultiplier`` is not a
+        finite number ``>= 0``; or ``GridSymmetry`` is not ``'auto'``, ``''``
+        or one of the grid symmetries listed above.
 
-        * Integer form: ``N`` — compute at N knots along the quarter
-          meridian, no interpolation.
-        * List form: ``[N_coarse, N_interp]`` — compute resonance fields
-          at a coarse ``N_coarse``-knot grid, then spline-interpolate to a
-          fine grid of ``nfKnots = (N_coarse - 1) * N_interp + 1`` knots
-          before accumulating the spectrum.  Matches MATLAB EasySpin's
-          default ``Opt.GridSize = [19 4]`` (→ nfKnots = 73).
+    Warns
+    -----
+    RuntimeWarning
+        If ``device`` names a CUDA device and CUDA is not available
+        (``device`` is then set to ``'cpu'``).
 
-        Default ``[19, 4]`` gives smooth powder averages without computing
-        resonance fields at every fine-grid orientation.  For isotropic or
-        very fast simulations, pass an integer (e.g. ``GridSize=31``) to
-        skip interpolation.
-    GridSymmetry:
-        Symmetry used to select the powder grid fraction:
+    See Also
+    --------
+    Experiment, SpinSystem, torchspin.pepper.pepper, torchspin.garlic.garlic
 
-        - ``'auto'`` (default): detect the Hamiltonian symmetry via
-          :func:`torchspin.hamsymm` and select the matching grid fraction
-          automatically. Falls back to ``'Ci'`` only when detection fails
-          (e.g. scalar Q tensors or other pathological inputs).
-        - ``'Dinfh'``: axially symmetric — single meridian, phi=0.
-        - ``'D2h'``: rhombic — one octant.
-        - ``'Ci'``: triclinic — full hemisphere (phi 0..2π, theta 0..π/2).
-        - ``'C1'``: no symmetry — full sphere.
-
-    Threshold:
-        Relative intensity cutoff for transitions.  Transitions with
-        intensity below ``Threshold * max_intensity`` are discarded.  In
-        :func:`~torchspin.salt.salt` (all matrix paths) it is EasySpin
-        endorfrq's selection threshold: a level pair is kept if its
-        nuclear-moment rate summed over the ``TPSGridSymm``/``TPSGridSize``
-        grid is ``> Threshold * max`` (0.9.14).
-    Transitions:
-        :func:`pepper` / :func:`~torchspin.pepper_autograd.pepper_autograd`,
-        and the ENDOR matrix paths of :func:`~torchspin.endorfrq.endorfrq` and
-        :func:`~torchspin.salt.salt` (0.9.14; level pairs at the ENDOR field,
-        no selection and no threshold, as EasySpin endorfrq; not with salt's
-        ``ZeroField``) (EasySpin ``Opt.Transitions``).  ``None`` (default): automatic
-        transition pre-selection with ``Threshold``.  ``'all'``: every level
-        pair ``u < v``, with neither pre-selection nor the ``Threshold``
-        intensity post-selection.  A list of 1-based level pairs ``(u, v)``
-        (levels numbered by ascending energy at the resonance field, as in
-        EasySpin): exactly those transitions; pairs are normalized to ``u < v``
-        and duplicates removed; the ``Threshold`` post-selection still applies
-        within the list, as in EasySpin.  With ``Method='hybrid'`` the levels
-        are those of the exactly treated core.  Not available with
-        ``Method='perturb*'`` (raises).
-    TPSGridSymm, TPSGridSize:
-        :func:`~torchspin.endorfrq.endorfrq` and :func:`~torchspin.salt.salt`
-        only (EasySpin's undocumented ``Opt.TPSGridSymm``/``Opt.TPSGridSize``,
-        endorfrq.m:145-146).  Symmetry and size of the coarse grid
-        (``sphgrid``, molecular frame) on which the automatic ENDOR transition
-        selection sums the nuclear-moment rates.  Defaults ``'D2h'`` and 4,
-        as in EasySpin.  The selection does not depend on ``GridSize``.
-    Verbosity:
-        Output verbosity: 0 = silent, 1 = progress, 2 = detailed.
-    BatchSize:
-        Number of orientations per batched resonance search. Default ``None``
-        = automatic: all orientations at once, capped so that the batched
-        Hamiltonians (orientations × field knots × dim²) stay below ~400 MB.
-        Set to 1 for sequential processing (debugging/low-memory systems).
-    Enhancement:
-        :func:`~torchspin.endorfrq.endorfrq` and :func:`~torchspin.salt.salt`
-        only (EasySpin ``Opt.Enhancement``).  ``False`` (default, as in
-        EasySpin): the rf transition operator is the nuclear magnetic moment
-        only.  ``True``: it is the total magnetic moment (electron + nuclear,
-        the moment operators of :func:`~torchspin.ham.ham`), projected on the
-        same rf directions, which includes hyperfine enhancement.  Transition
-        selection (``Threshold``) still uses the nuclear-only rates, and
-        electronic (EPR) level pairs are excluded, as in EasySpin.  ``salt``
-        then always uses the matrix ENDOR path (its automatic first-order
-        perturbation shortcut has no enhancement); ``endorfrq_perturb``
-        raises.
-    ZeroField:
-        :func:`pepper` frequency sweeps and :func:`salt` fixed-field ENDOR only.
-        ``False`` (default): ``Experiment.Field`` must be positive.  ``True``:
-        ``Experiment.Field = 0`` is allowed (zero-field EPR/FDMR, zero-field
-        ENDOR).  The levels are then grouped into degenerate clusters (relative
-        tolerance 1e-9 of the level spread) and every transition between two
-        clusters carries the rate summed over all its level pairs, so that the
-        intensities do not depend on the arbitrary eigenbasis inside a
-        degenerate (e.g. Kramers) subspace.  The isotropic O3 shortcut is
-        replaced by a D2h grid.  See KNOWN_LIMITATIONS.md.
-    QuadraticZeeman:
-        Include the field-quadratic and field-cubic higher-order Zeeman terms of
-        ``Sys.Ham`` (orders lB = 2 and 3) in the resonance search, so that
-        H(B) = H0 − B n·μ + B² n·G2·n + B³ G3[n,n,n] equals ``ham(Sys, B·n)``.
-        Default ``False``: these terms are dropped, as before (H = H0 − B n·μ).
-        Supported by :func:`pepper` and :func:`pepper_autograd` with
-        ``Method='matrix'`` (field and frequency sweeps, powders and crystals)
-        and by :func:`resfreqs_matrix`; the perturbation and hybrid methods,
-        :func:`resfields`, :func:`garlic` and :func:`salt` raise
-        ``NotImplementedError`` when the option is on and such terms are present.
-        Transition moments stay those of the linear moment operators μ, as in
-        EasySpin; the field-to-frequency factor dB/dE uses the full slope.
-    PaddingMultiplier:
-        :func:`pepper`, :func:`~torchspin.pepper_autograd.pepper_autograd` and
-        :func:`salt` (EasySpin ``Opt.PaddingMultiplier``, default 3).  When the
-        spectrum is nonzero at the first or last point of the sweep range, both
-        ends are extended by ``round(PaddingMultiplier * max(lw) / increment)``
-        copies of the edge values before the final line-width convolution
-        (``Sys.lw`` in pepper, ``lw_mhz`` in salt), and cropped afterwards, so
-        the convolution does not see a step to zero at the range ends.  ``0``
-        disables the padding.  An end counts as nonzero above 1e-9 of the
-        spectrum maximum (EasySpin: exactly nonzero); see KNOWN_LIMITATIONS.md.
+    Examples
+    --------
+    >>> from torchspin import Options
+    >>> opt = Options(GridSize=[31, 4], Method='perturb')
+    >>> opt.grid_size_coarse, opt.grid_size_interp
+    (31, 4)
+    >>> Options(GridSize=31).grid_size_interp
+    1
     """
 
     Method: str = 'matrix'
@@ -453,7 +599,7 @@ class Options:
     Verbosity: int = 0
     BatchSize: Optional[int] = None
     Sites: Optional[list] = None      # crystal sites to include (1-based), EasySpin Opt.Sites
-    separate: str = ''                # '', 'orientations', 'sites' (crystals), 'components' (list input)
+    separate: str = ''                # '', 'components', 'transitions', 'orientations', 'sites' (see docstring)
     IsoCutoff: float = 1e-4           # relative abundance cutoff for isotopologues (EasySpin Opt.IsoCutoff)
     Stretch: float = 0.25             # automatic sweep range padding factor (EasySpin garlic Opt.Stretch)
     ModellingAccuracy: float = 2e-6   # resonance search: segment-model accuracy relative to mwFreq (EasySpin Opt.ModellingAccuracy)
