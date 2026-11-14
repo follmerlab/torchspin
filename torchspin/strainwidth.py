@@ -215,7 +215,7 @@ def compute_strain_widths_batch(
     AStrain needs ``mI_levels``, the effective mI of the first nucleus per
     energy-sorted level from :func:`astrain_level_mI` (EasySpin labels the
     levels once, at ``mean(Exp.Range)`` along the molecular z axis, and uses
-    these mI at every orientation; :func:`torchspin.resfields_batch.resfields_batch`
+    these mI at every orientation; ``torchspin.resfields_batch.resfields_batch``
     passes them).  Before 0.9.25 mI was ``<Iz>`` at each orientation's own
     resonance field, which vanishes for the field perpendicular to a large A
     and gave perpendicular lines no AStrain width (B68).

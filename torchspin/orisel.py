@@ -13,7 +13,7 @@ diagonalized at the field, and every level pair ``(u, v)`` contributes its
 transition rate times a Gaussian in frequency centered at ``mwFreq``, whose
 width combines ``ExciteWidth`` and the ``HStrain`` projected on the field
 direction.  The computation is a differentiable torch graph (``g``, ``A``,
-``D``, ``HStrain``, ...), shared with :func:`torchspin.salt.salt`.
+``D``, ``HStrain``, ...), shared with :func:`torchspin.salt`.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ class OriselOptions:
     GridSymmetry : str
         Grid symmetry (``'Dinfh'``, ``'D2h'``, ``'C2h'``, ``'Ci'``, ``'C1'``,
         ...).  ``'auto'`` or ``''`` (default ``'auto'``): determined by
-        :func:`~torchspin.hamsymm.hamsymm`, and the grid is rotated into the
+        :func:`~torchspin.hamsymm`, and the grid is rotated into the
         symmetry frame it returns (EasySpin ``GridFrame``, orisel.m:79-93).  An
         explicit symmetry uses the molecular frame.
     AveragedIntensity : bool
@@ -88,7 +88,7 @@ def _orisel_weights(H0, mux, muy, muz, phi, theta, Field, mwFreq_MHz, ExciteWidt
     """Per-transition orientation-selection weights (EasySpin orisel.m:120-154).
 
     Differentiable torch implementation shared by :func:`orisel` and
-    :func:`torchspin.salt.salt`.
+    :func:`torchspin.salt`.
 
     Parameters
     ----------
@@ -232,7 +232,7 @@ def orisel(sys, exp, opt: Optional[OriselOptions] = None, *, per_transition: boo
         grid.
     opt : OriselOptions, optional
         ``GridSize`` (default 46), ``GridSymmetry`` (default from
-        :func:`~torchspin.hamsymm.hamsymm`, grid in its symmetry frame) and
+        :func:`~torchspin.hamsymm`, grid in its symmetry frame) and
         ``AveragedIntensity`` (default True).
     per_transition : bool, keyword-only
         ``False`` (default): EasySpin's one-output form, weights summed over

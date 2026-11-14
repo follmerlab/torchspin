@@ -2798,7 +2798,7 @@ def esfit(
           defined in a ``torchspin`` module): ``model_fn(p['Sys'],
           p['Exp'])``, or ``model_fn(p['Sys'], p['Exp'], p['Opt'])`` when
           ``p0`` has an ``'Opt'`` entry; the second return value (the
-          spectrum) is the model output. For :func:`~torchspin.garlic.garlic`
+          spectrum) is the model output. For :func:`~torchspin.garlic`
           an unset ``Options.AccumMethod`` is switched to ``'linear'``
           (except in the fast-motion regime or with ``Exp.mwPhase``), because
           the default nearest-bin accumulation is piecewise constant in g

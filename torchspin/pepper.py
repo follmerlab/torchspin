@@ -14,7 +14,7 @@ supported inputs.  Outline of one component simulation::
 
 Components and isotopologues are simulated separately and summed with
 ``Sys.weight`` times abundance.  :func:`pepper` switches to the
-differentiable :func:`torchspin.pepper_autograd.pepper_autograd` when an
+differentiable :func:`torchspin.pepper_autograd` when an
 input requires grad.
 """
 from __future__ import annotations
@@ -1496,7 +1496,7 @@ def pepper(sys_or_list, exp: Experiment, opt: Optional[Options] = None):
         one row per component/isotopologue, transition, crystal orientation
         or site, stacked along axis 0 (for a list of components the rows of
         all components are concatenated).  When an input requires grad, the
-        result of :func:`~torchspin.pepper_autograd.pepper_autograd` on the
+        result of :func:`~torchspin.pepper_autograd` on the
         autograd graph.
 
     Raises
@@ -1539,7 +1539,7 @@ def pepper(sys_or_list, exp: Experiment, opt: Optional[Options] = None):
       L2.  See KNOWN_LIMITATIONS.md, "Pepper — choosing a method, and what
       each costs (2026-10-07)".
     * If any ``SpinSystem``/``Experiment`` tensor requires grad, pepper runs
-      :func:`~torchspin.pepper_autograd.pepper_autograd` instead and returns
+      :func:`~torchspin.pepper_autograd` instead and returns
       a spectrum on the autograd graph (KNOWN_LIMITATIONS.md, "Autograd —
       differentiable pepper").
     * With neither line width nor strain the spectrum is a stick/projection

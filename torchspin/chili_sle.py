@@ -10,7 +10,7 @@ output-scaling logic.  The spin Liouville space uses MATLAB's column-major
 ``vec`` convention throughout so that indices, ``pq`` ordering and the
 detection vector coincide with EasySpin's.
 
-Public entry point: :func:`chili_sle` (called by :func:`torchspin.chili.chili`).
+Public entry point: :func:`chili_sle` (called by :func:`torchspin.chili`).
 """
 from __future__ import annotations
 

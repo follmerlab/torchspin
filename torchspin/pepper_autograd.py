@@ -1,9 +1,9 @@
 """Differentiable ``pepper``: pepper's forward path on the autograd graph.
 
 ``pepper_autograd(sys, exp, opt)`` computes the same rigid-limit powder spectrum as
-:func:`torchspin.pepper.pepper` for the matrix-diagonalization path without strain,
+:func:`torchspin.pepper` for the matrix-diagonalization path without strain,
 using the *same* stages -- resonance-field search with transition tracking
-(:func:`torchspin.resfields_batch.resfields_batch`), EasySpin grid interpolation,
+(``torchspin.resfields_batch.resfields_batch``), EasySpin grid interpolation,
 SOPHE triangle/zone projection, and EasySpin's sampled-kernel convolution and
 harmonic -- but with every stage after the search written in torch, so that
 ``torch.autograd`` propagates gradients from the spectrum to the spin-system
@@ -26,7 +26,7 @@ allowed), ``Temperature``, strains, ``Opt.Transitions`` (matrix route only).  St
 constants) use the summation branch.  ``ModAmp`` (pseudo-modulation, torch).  Not yet: ``mwPhase``, ordering,
 photoselection, crystals, frequency sweeps (these raise ``NotImplementedError``).
 
-Grid symmetry (``GridSymmetry='auto'``): :func:`torchspin.hamsymm.grid_symmetry`, which
+Grid symmetry (``GridSymmetry='auto'``): ``torchspin.hamsymm.grid_symmetry``, which
 is ``hamsymm`` unless a symmetry input (tensor, frame, high-order term, strain) requires
 grad.  Then the grid has the symmetry of the differentiated *parameterization* (B1):
 the autograd leaves behind those inputs get a generic perturbation and each input moves
@@ -70,7 +70,7 @@ _F64 = torch.float64
 
 def _gaussian_t(x: torch.Tensor, x0: float, fwhm, deriv: int) -> torch.Tensor:
     """Area-normalized Gaussian (absorption) and its derivatives, torch port of
-    :func:`torchspin.lineshape.gaussian` (phase 0)."""
+    :func:`torchspin.gaussian` (phase 0)."""
     fwhm = torch.as_tensor(fwhm, dtype=x.dtype, device=x.device)
     sig = fwhm / math.sqrt(8.0 * math.log(2.0))
     k = (x - x0) / (sig * math.sqrt(2.0))
@@ -90,7 +90,7 @@ def _gaussian_t(x: torch.Tensor, x0: float, fwhm, deriv: int) -> torch.Tensor:
 
 def _lorentzian_t(x: torch.Tensor, x0: float, fwhm, deriv: int) -> torch.Tensor:
     """Area-normalized Lorentzian (absorption) and derivatives, torch port of
-    :func:`torchspin.lineshape.lorentzian` (phase 0)."""
+    :func:`torchspin.lorentzian` (phase 0)."""
     fwhm = torch.as_tensor(fwhm, dtype=x.dtype, device=x.device)
     gamma = fwhm / math.sqrt(3.0)
     pre = 2.0 / (math.pi * math.sqrt(3.0))
@@ -131,7 +131,7 @@ def _pos(v) -> bool:
 
 
 def convspec_t(spec: torch.Tensor, dx: float, fwhm_g=0.0, fwhm_l=0.0, deriv: int = 0) -> torch.Tensor:
-    """Differentiable :func:`torchspin.convspec.convspec` (phase 0): Gaussian then
+    """Differentiable :func:`torchspin.convspec` (phase 0): Gaussian then
     Lorentzian sampled kernels; with both widths zero the derivative is taken
     spectrally.  Same numbers as the numpy implementation to rounding."""
     from torchspin.convspec import _fft_convolve
@@ -565,7 +565,7 @@ def _check_facets(grid_sym, N, n_orient, tri, facet_w) -> None:
 
 
 def pepper_autograd(sys_or_list, exp: Experiment, opt: Optional[Options] = None) -> tuple[torch.Tensor, torch.Tensor]:
-    """Rigid-limit powder CW EPR spectrum, identical to :func:`torchspin.pepper.pepper`
+    """Rigid-limit powder CW EPR spectrum, identical to :func:`torchspin.pepper`
     (matrix method, no strain) and differentiable with respect to every spin-system
     tensor that ``requires_grad`` (``g``, ``A``, ``D``, ``lw``/``lwpp`` ...).
 
@@ -573,7 +573,7 @@ def pepper_autograd(sys_or_list, exp: Experiment, opt: Optional[Options] = None)
     ``pepper``, every component is expanded into its isotopologues (natural
     abundance for element names such as ``'Zr'``, or ``Sys.Abund``) and the
     spectra are summed with weight ``Sys.weight`` × abundance. The abundances
-    are constants, so the sum stays on the graph. :func:`torchspin.pepper.pepper`
+    are constants, so the sum stays on the graph. :func:`torchspin.pepper`
     calls this function itself when any input requires grad.
 
     Returns ``(B, spec)``: field axis (mT) and spectrum on the autograd graph.

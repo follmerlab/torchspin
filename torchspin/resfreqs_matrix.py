@@ -247,7 +247,7 @@ def resfreqs_batch(
 ) -> tuple:
     """Resonance frequencies for a batch of orientations at fixed ``exp.Field``
     (frequency-swept spectra), with the same interface and conventions as
-    :func:`torchspin.resfields_batch.resfields_batch` (EasySpin resfreqs_matrix):
+    ``torchspin.resfields_batch.resfields_batch`` (EasySpin resfreqs_matrix):
 
     * positions in **GHz**, all level pairs ``i<j`` (no range filter, so that
       transitions can be tracked across orientations; the accumulation drops
@@ -259,7 +259,7 @@ def resfreqs_batch(
     * a relative intensity threshold ``opt.Threshold`` on |intensity|.
 
     With ``zeeman_ho = (G2, G3)`` (``Options.QuadraticZeeman``, from
-    :func:`torchspin.ham_ezho.field_nonlinear_zeeman_ops`) the Hamiltonian at the
+    ``torchspin.ham_ezho.field_nonlinear_zeeman_ops``) the Hamiltonian at the
     fixed field is H0 − B muzL + B² n·G2·n + B³ G3[n,n,n].
 
     Returns ``(pos_list, intens_list, widths_list[, pairs_list])`` with one
@@ -268,7 +268,7 @@ def resfreqs_batch(
     ``zero_field=True`` (``Exp.Field = 0`` with ``Options.ZeroField``): the
     Hamiltonian is ``H0`` for every orientation and is diagonalized once; the
     levels are grouped into degenerate clusters
-    (:func:`torchspin._zerofield.level_clusters`) and each returned transition
+    (``torchspin._zerofield.level_clusters``) and each returned transition
     is a pair of clusters, with the rate·polarization summed over all its level
     pairs, the position the difference of the cluster mean energies, and the
     level pair ``(first level of the lower cluster, first level of the upper

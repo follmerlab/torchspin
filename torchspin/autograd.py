@@ -2,7 +2,7 @@
 
 :func:`differentiable_spectrum` builds a :class:`~torchspin.spinsystem.SpinSystem`
 from parameter tensors and, by default (``method='pepper'``), evaluates it with
-:func:`torchspin.pepper_autograd.pepper_autograd` -- pepper's own forward path
+:func:`torchspin.pepper_autograd` -- pepper's own forward path
 (resonance-field search with transition tracking, EasySpin grid interpolation,
 SOPHE triangle/zone projection, EasySpin convolution and harmonic) written on
 the autograd graph.  The forward output equals :func:`torchspin.pepper` to
@@ -583,7 +583,7 @@ def differentiable_spectrum(
     :class:`~torchspin.experiment.Experiment` (field sweep) and
     :class:`~torchspin.experiment.Options` from the arguments and, with the
     default ``method='pepper'``, evaluates them with
-    :func:`torchspin.pepper_autograd.pepper_autograd`, whose forward output
+    :func:`torchspin.pepper_autograd`, whose forward output
     equals :func:`torchspin.pepper` to rounding.  ``torch.autograd`` then
     propagates gradients to every argument passed as a tensor with
     ``requires_grad=True``: ``g``, ``A``, ``D``, ``lw_mT`` and
@@ -638,7 +638,7 @@ def differentiable_spectrum(
         temperature (equal populations).  A 0-d tensor that requires grad
         gives temperature gradients.
     method : {'pepper', 'broadband', 'analytical'}, default 'pepper'
-        ``'pepper'``: :func:`~torchspin.pepper_autograd.pepper_autograd`.
+        ``'pepper'``: :func:`~torchspin.pepper_autograd`.
         ``'broadband'`` (diagonalize H(B) at every field point, soft Gaussian
         per transition) and ``'analytical'`` (closed-form S = 1/2 resonance
         fields; used only when ``Nucs``, ``D`` are ``None`` and ``S = 0.5``,

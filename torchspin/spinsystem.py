@@ -275,7 +275,7 @@ class SpinSystem:
         ``(rho, basis)`` with ``basis`` one of ``'zerofield'``, ``'eigen'``,
         ``'xyz'``, ``'coupled'``, ``'uncoupled'``; a density matrix in the
         uncoupled product basis; ``'T0'`` or ``'singlet'``.  See
-        :mod:`torchspin.initstate`.  Default ``None``.
+        ``torchspin.initstate``.  Default ``None``.
     tdm : str or array_like, optional
         Transition dipole moment direction in the molecular frame for
         photoselection (``Experiment.lightBeam``, pepper): a string such as

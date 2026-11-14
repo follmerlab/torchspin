@@ -22,8 +22,8 @@ class Experiment:
     * **Frequency sweep**: set ``Field`` (mT) and ``mwRange`` or
       ``mwCenterSweep`` (GHz); ``Range`` is not used.  The simulators return
       a frequency axis in GHz.
-    * **Fixed field** (ENDOR): set ``Field`` only.  :func:`~torchspin.salt.salt`
-      runs fixed-field ENDOR; :func:`~torchspin.pepper.pepper` treats this as
+    * **Fixed field** (ENDOR): set ``Field`` only.  :func:`~torchspin.salt`
+      runs fixed-field ENDOR; :func:`~torchspin.pepper` treats this as
       a frequency sweep with an automatic range.
 
     Fields are validated on construction (see Raises).  A field that a
@@ -37,8 +37,8 @@ class Experiment:
         not used by frequency sweeps.  Default ``None``.
     Range : list of float, optional
         Field sweep range ``[Bmin, Bmax]`` in mT, ``Bmin < Bmax``.  Default
-        ``None``: :func:`~torchspin.pepper.pepper` and
-        :func:`~torchspin.garlic.garlic` then choose the range automatically
+        ``None``: :func:`~torchspin.pepper` and
+        :func:`~torchspin.garlic` then choose the range automatically
         (pepper: S = 1/2 systems only, from the g and A extremes).
     CenterSweep : list of float, optional
         Alternative to ``Range``: ``[center, sweep_width]`` in mT, width
@@ -51,7 +51,7 @@ class Experiment:
         Peak-to-peak field-modulation amplitude in mT.  ``0`` = no
         modulation: the harmonic is produced by differentiating the line
         shape.  ``> 0``: the absorption spectrum is pseudo-modulated
-        (:func:`torchspin.dataproc.fieldmod`) at ``Harmonic``; pepper and
+        (:func:`torchspin.fieldmod`) at ``Harmonic``; pepper and
         garlic raise ``ValueError`` for ``Harmonic = 0`` and for frequency
         sweeps.  ``None`` is read as 0.  Read by pepper, garlic and chili.
     SampleFrame : array_like, shape (3,) or (N, 3), optional
@@ -138,7 +138,7 @@ class Experiment:
     ExciteWidth : float, optional
         Microwave excitation bandwidth (FWHM) in MHz for orientation selection
         in fixed-field experiments (salt ENDOR, orisel, saffron).  ``None``
-        (default) = no orientation selection; :func:`~torchspin.orisel.orisel`
+        (default) = no orientation selection; :func:`~torchspin.orisel`
         requires it (``math.inf`` = no selection).
     Orientations : array_like or torch.Tensor, shape (N, 2), optional
         pepper and orisel only.  Field directions ``[phi, theta]`` in radians
@@ -381,18 +381,18 @@ class Options:
         ``'exact'``, ``'hybrid'``, ``'perturb'``, ``'perturb1'`` to
         ``'perturb5'``; which of them a simulator implements differs:
 
-        * :func:`~torchspin.pepper.pepper`: ``'matrix'`` (or ``'exact'``),
+        * :func:`~torchspin.pepper`: ``'matrix'`` (or ``'exact'``),
           exact diagonalization; ``'perturb'``/``'perturb2'`` second-order
           and ``'perturb1'`` first-order perturbation theory; ``'hybrid'``,
           an exactly diagonalized core (all electrons plus
           ``HybridCoreNuclei``) with the other nuclei treated by perturbation
           theory.  ``'perturb3'`` to ``'perturb5'`` raise ``ValueError``.
-        * :func:`~torchspin.garlic.garlic`: ``'exact'`` (``'matrix'`` is read
+        * :func:`~torchspin.garlic`: ``'exact'`` (``'matrix'`` is read
           as ``'exact'``), the Breit-Rabi fixed-point solver; ``'perturb'``
           (fifth order) or ``'perturb1'`` to ``'perturb5'`` (that order);
           ``'hybrid'`` raises ``ValueError``.  The bare name ``'perturb'`` therefore means different orders in
           pepper and garlic, as in EasySpin.
-        * :func:`~torchspin.salt.salt` finds resonance fields by
+        * :func:`~torchspin.salt` finds resonance fields by
           diagonalization and ENDOR frequencies by first-order perturbation
           theory for one electron without quadrupole couplings, by matrix
           diagonalization otherwise (and always with ``Enhancement=True`` or
@@ -436,7 +436,7 @@ class Options:
         knots per quarter meridian before the spectrum is accumulated
         (``N_coarse >= 2``, ``N_interp >= 1``).  The default gives 73 fine
         knots; increase ``N_coarse`` for strongly anisotropic or narrow-line
-        spectra (:func:`~torchspin.gridcheck.grid_convergence` checks
+        spectra (:func:`~torchspin.grid_convergence` checks
         convergence).
     GridSymmetry : str, default 'auto'
         Symmetry of the powder grid, i.e. which part of the sphere is
@@ -456,7 +456,7 @@ class Options:
         ``Threshold`` times the strongest are discarded.  Read by pepper,
         pepper_autograd, salt, chili and the resonance-field solvers, not by
         garlic.  In
-        :func:`~torchspin.salt.salt` (all matrix paths) a level pair is kept
+        :func:`~torchspin.salt` (all matrix paths) a level pair is kept
         if its nuclear-moment rate summed over the
         ``TPSGridSymm``/``TPSGridSize`` grid exceeds ``Threshold`` times the
         maximum.
@@ -511,11 +511,11 @@ class Options:
         operators.  See KNOWN_LIMITATIONS.md, "Simulator — field-quadratic
         Zeeman terms, ``Options.QuadraticZeeman`` (0.7.1)".
     Enhancement : bool, default False
-        :func:`~torchspin.endorfrq.endorfrq` and salt only.  ``False``: the rf
+        :func:`~torchspin.endorfrq` and salt only.  ``False``: the rf
         transition operator is the nuclear magnetic moment.  ``True``: the
         total (electron + nuclear) magnetic moment, which includes hyperfine
         enhancement; salt then always uses its matrix ENDOR path, and
-        :func:`~torchspin.endorfrq_perturb.endorfrq_perturb` raises.
+        :func:`~torchspin.endorfrq_perturb` raises.
         Transition selection still uses the nuclear-only rates, and
         electronic (EPR) level pairs are excluded.  See KNOWN_LIMITATIONS.md,
         "ENDOR — hyperfine enhancement (``Options.Enhancement``, 0.7.3)".
