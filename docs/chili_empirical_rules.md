@@ -31,14 +31,17 @@ were "general + MpSymm at half amplitude" for a rhombic basis and "plain general
    rule does: cosine 0.999992 and amplitude 1.0000.
 3. **The rhombic/axial split has no physical meaning.** The identity holds equally for axial bases.
    The split only marks where, in the stored cases, the plain-basis Lanczos happened to fail.
-4. **Suspected defect: the amplitude rule is wrong with `highField=True`.** Nothing is removed there,
+4. **Defect, being fixed: the amplitude rule is wrong with `highField=True`.** Nothing is removed there,
    so the factor should be 1. torchspin returns half the amplitude of the plain general solution.
    No stored case covers this.
-5. **Suspected defect, shared with EasySpin's general method: an explicit `MpSymm=True` is wrong with
-   director tilt** (an orienting potential on a powder grid): cosine 0.726. The automatic rule never
+5. **Defect, being fixed, shared with EasySpin's general method: an explicit `MpSymm=True` is wrong
+   with director tilt** (an orienting potential on a powder grid): cosine 0.726. The automatic rule never
    selects it there.
 
-Neither defect has been fixed. Both are recorded here as evidence for Alec.
+These two defects, and the early Lanczos stop in finding 2, are **being fixed (B114–B116, branch
+`fix/chili-mpsymm`)**. This page records the evidence for them. The coordinator could not reproduce
+the early stop on a nitroxide with LLMK [10 7 6 2]. The reproducing case here uses the default
+LLMK [14 7 2 6] at τc = 100 ns (Exp. 1, 3, 4), and [10 5 4 4] (Exp. 2).
 
 ## Basis of the rules
 
@@ -238,7 +241,7 @@ negative-frequency term, and is confirmed numerically. What remains empirical is
 the `fast` builder computes the converged $I_{\rm plain}$. That needs the MATLAB checks below. It
 should not be built into the code as an assumption.
 
-**Proposed code direction (not implemented).** Replace the empirical condition with the derived one:
+**Proposed code direction (input to the B114–B116 fix; not implemented on this branch).** Replace the empirical condition with the derived one:
 
 - Apply the M–pS–pI pruning whenever there is no director tilt, for any spin system.
 - Scale by 1/2 only when pSmin = −1. With `highField=True` the factor is 1.
