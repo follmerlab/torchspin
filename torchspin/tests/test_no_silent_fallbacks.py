@@ -46,7 +46,7 @@ def test_spidyan_pulse_overlap_raises():
     exp = {'Field': 340.0, 'mwFreq': 9.5,
            'Sequence': [{'tp': 0.016, 'Flip': np.pi / 2}, -0.010,
                         {'tp': 0.016, 'Flip': np.pi}, 0.2]}
-    with pytest.raises(ValueError, match='[Pp]ulse overlap'):
+    with pytest.raises(ValueError, match=r'[Pp]ulse overlap detected between events \[1, 3\] \(1-based'):
         spidyan(_s12(), exp)
 
 

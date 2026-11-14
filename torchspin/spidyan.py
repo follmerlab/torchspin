@@ -329,7 +329,7 @@ def _reorder_events(event_lengths, pulse_list):
         overlap_events = np.where(np.sum(event_matrix[:, overlaps] == 2, axis=1) > 0)[0]
         raise ValueError(
             "Pulse overlap detected between events "
-            f"{[int(i) for i in overlap_events]} (0-based event indices); "
+            f"{[int(i) + 1 for i in overlap_events]} (1-based positions in the sequence); "
             "pulses must not overlap in time (check negative delays)."
         )
 
