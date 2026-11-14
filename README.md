@@ -33,16 +33,30 @@ validated against MATLAB and what is not.
 pip install torchspin                 # core
 pip install "torchspin[plot]"         # + matplotlib for the plotting helpers
 pip install "torchspin[gui]"          # + the interactive fitting panel (torchspin.fitgui)
+pip install "torchspin[notebooks]"    # + Jupyter and everything the tutorials need
 ```
 
-CPU-only PyTorch, to avoid the large CUDA wheels:
+torchspin cannot choose the PyTorch build for you. Install the build you want first, and torchspin keeps
+it:
 
 ```bash
+# CPU only (on Linux this avoids several GB of CUDA packages)
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install torchspin
+
+# NVIDIA GPU on Windows, or a specific CUDA version on Linux (pick the cuXXX for your driver)
+pip install torch --index-url https://download.pytorch.org/whl/cu130
+pip install torchspin
+
+# uv
+uv pip install torchspin --torch-backend=cpu      # or auto, or cu130
 ```
 
-Requires Python 3.10+, PyTorch 2.0+, NumPy 1.23+, SciPy 1.10+.
+On Linux, plain `pip install torchspin` already installs a CUDA build of PyTorch. On macOS torchspin runs
+on the CPU (MPS lacks float64). Requires Python 3.10+, PyTorch 2.2+, NumPy 1.23+, SciPy 1.10+.
+
+**[docs/installation.md](docs/installation.md)** covers the details: per-platform notes, keeping an
+existing PyTorch, uv projects, the extras, and what package metadata can and cannot enforce.
 
 ---
 
