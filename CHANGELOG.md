@@ -14,6 +14,60 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.29] — 2026-11-13
+
+### Fixed
+
+- **Zero hyperfine principal values give the exact A -> 0 limit in all three perturbation
+  modules (B65, B79).** The second-order invariant A2 = det(A) u'·inv(A)·k (Iwasaki 1974) needs
+  only det(A)·inv(A) = adj(A), a polynomial in the entries of A. `resfields_perturb`,
+  `resfields_perturb_batch`, `resfreqs_perturb` and `endorfrq_perturb` now use the adjugate
+  (new private `torchspin/_adjugate.py`, `_adjugate3`) instead of `torch.linalg.inv` and
+  `torch.linalg.det`, so a zero principal value, two zeros or a singular full `Sys.A` is
+  defined, continuous and differentiable. This replaces the `ValueError` of 0.9.23 (#69,
+  `resfreqs_perturb`/`endorfrq_perturb`) and the one of 0.9.14 (#63, B65, `resfields_perturb`);
+  before that, `resfields_perturb(_batch)` raised torch's raw `LinAlgError` ("linalg.inv: The
+  diagonal element 1 is zero") for `Sys.A = [0 5 10]`. Numbers (S = 1/2, g = [2 2.05 2.1],
+  1H A = [5 8 0] MHz, 340 mT, φ = 0.3, θ = 0.7): `endorfrq_perturb` first line
+  15.593819600 MHz, the same as A_z = 1e-9 MHz to 1e-9 MHz (0.9.22 and earlier: 15.59326 from a
+  zero matrix for inv(A); 0.9.23: `ValueError`). Over 1H, 14N and 63Cu, one zero, two zeros and
+  a rotated rank-2 full A, S = 1/2 and 1, |f(0) − f(eps)| ≤ 4.6e-4·eps mT for the fields,
+  1.3e-5·eps GHz for `resfreqs_perturb` and 0.98·eps MHz for `endorfrq_perturb` (eps in MHz,
+  1e-6 and 1e-8). In the EPR modules k = A·u/|A·u|, so A2 = det(A)/|A·u|, which vanishes for a
+  singular A and enters only for S > 1/2 (factor 1 − 2mS); in `endorfrq_perturb` k is the
+  direction of the field at the nucleus and A2 is non-zero at S = 1/2. Gradients of
+  `resfields_perturb(_batch)` with respect to A at a zero principal value match central
+  differences to 3e-10 (S = 1, 63Cu). With an `AFrame`, R·diag(50, 30, 0)·R' is singular only
+  to roundoff and `inv` did not raise, but the det·inv gradient was wrong (dB/dA_z 5.8e-4
+  against 3.9e-5 mT/MHz from finite differences). Results for non-singular A change by roundoff
+  only: a sweep of 60 random systems (1-3 nuclei of 1H/2H/13C/14N/55Mn/63Cu, diagonal A with
+  frames and full non-symmetric A, S = 1/2, 1, 3/2 with tilted D, orders 1 and 2,
+  4 orientations, all four functions; 88176 values) is bit-identical except 24
+  `endorfrq_perturb` values, max relative change 4.8e-16; A2 itself, on 20000 random matrices,
+  changes by at most 2.7e-13 relative.
+- **Deliberate deviation from EasySpin.** EasySpin's resfields_perturb.m and resfreqs_perturb.m
+  (lines 120-127) raise 'All hyperfine coupling constants must be non-zero.' for any zero entry
+  of a diagonal `Sys.A`, at every order; endorfrq_perturb.m has no check, and inv(A) (.m:176)
+  warns and the frequencies are NaN. torchspin returns the A -> 0 limit in all three. Matrix
+  diagonalization agrees at A = 0 to the usual perturbation accuracy (S = 1/2, the systems
+  above: within 1.6·Amax³/E0², E0 = 9700 MHz). See KNOWN_LIMITATIONS.md.
+
+### Removed
+
+- `_check_nonzero_hyperfine` in `resfreqs_perturb.py` and `endorfrq_perturb.py` (0.9.23) and its
+  `ValueError`.
+
+### Tests
+
+- New `torchspin/tests/test_zero_hyperfine_limit.py` (118 tests; 84 fail before this change):
+  continuity at eps = 1e-6 and 1e-8 for the four functions (1H, 14N, 63Cu; one zero with and
+  without a frame, two zeros, rank-2 full A; S = 1/2 and 1); agreement with `resfields`,
+  `resfreqs_matrix` and `endorfrq` at A = 0; gradients at a zero principal value against central
+  differences; `_adjugate3` against det·inv, at singular matrices and with `gradcheck`.
+- `test_perturb_zero_hyperfine.py`: the five tests that asserted the 0.9.23 `ValueError` now
+  check the A -> 0 limit (A_z = 1e-9) instead; the first-order and non-zero-A reference tests
+  are unchanged (non-zero A still matches the stored values to rtol 1e-13).
+
 ## [0.9.28] — 2026-11-12
 
 ### Fixed
@@ -488,7 +542,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   order (B65).** The second-order terms invert A; `Sys.A = [0 5 10]` raised torch's raw
   `LinAlgError` from `inv`. As EasySpin (resfields_perturb.m:120-127) the message is now "All
   hyperfine coupling constants must be non-zero" (a singular full A too). First order still
-  runs (EasySpin rejects it at every order). Test in `test_resfields_perturb.py`.
+  runs (EasySpin rejects it at every order). Test in `test_resfields_perturb.py`. Superseded in
+  0.9.29: the adjugate gives the A -> 0 limit.
 - **ENDOR transition selection as EasySpin endorfrq, in one place for `endorfrq` and every `salt`
   matrix path (B57/B41, B40, B59).** EasySpin selects the level pairs once (endorfrq.m:258-341):
   on the coarse grid `sphgrid(Opt.TPSGridSymm, Opt.TPSGridSize)` (`'D2h'`, 4) it sums the

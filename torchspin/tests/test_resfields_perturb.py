@@ -279,20 +279,28 @@ def test_perturb_field_range_filtering():
 
 
 # ---------------------------------------------------------------------------
-# B65 (0.9.14): zero hyperfine principal value in second-order perturbation theory
+# B65 (0.9.14 raised, 0.9.29 limit): zero hyperfine principal value in second order
 # ---------------------------------------------------------------------------
 
-def test_resfields_perturb_zero_hyperfine_raises():
-    """EasySpin resfields_perturb.m:120-127: 'All hyperfine coupling constants must be non-zero.'
-    torchspin raised torch's raw LinAlgError from inv(A)."""
+def test_resfields_perturb_zero_hyperfine_limit():
+    """EasySpin resfields_perturb.m:120-127 raises 'All hyperfine coupling constants must be
+    non-zero.'; torchspin raised torch's raw LinAlgError from inv(A) (B65), then (0.9.14) a
+    ValueError.  Since 0.9.29 the adjugate gives the A -> 0 limit (test_zero_hyperfine_limit.py)."""
     from torchspin.resfields_perturb import resfields_perturb_batch
-    s = SpinSystem(S=[0.5], g=[[2.0, 2.0, 2.1]], Nucs='1H', A=[[0.0, 5.0, 10.0]])
     exp = Experiment(Range=[300, 360], mwFreq=9.7)
-    with pytest.raises(ValueError, match="hyperfine coupling constants must be non-zero"):
-        resfields_perturb(s, 0.3, 0.7, exp)
-    with pytest.raises(ValueError, match="hyperfine coupling constants must be non-zero"):
-        resfields_perturb_batch(s, torch.tensor([0.3]), torch.tensor([0.7]), exp, Options())
-    resfields_perturb(s, 0.3, 0.7, exp, order=1)     # first order needs no inverse
+    phi, theta = torch.tensor([0.3], dtype=torch.float64), torch.tensor([0.7], dtype=torch.float64)
+    out = {}
+    for z in (0.0, 1e-9):
+        s = SpinSystem(S=[0.5], g=[[2.0, 2.0, 2.1]], Nucs='1H', A=[[z, 5.0, 10.0]])
+        B, I = resfields_perturb(s, 0.3, 0.7, exp)
+        Bb, Ib = resfields_perturb_batch(s, phi, theta, exp, Options())
+        out[z] = (B, I, Bb[0], Ib[0])
+    for a, b in zip(out[0.0], out[1e-9]):
+        assert a.numel() > 0 and torch.isfinite(a).all()
+        torch.testing.assert_close(a, b, rtol=0, atol=1e-12)
+    torch.testing.assert_close(out[0.0][0], out[0.0][2], rtol=0, atol=1e-10)   # single == batch
+    s0 = SpinSystem(S=[0.5], g=[[2.0, 2.0, 2.1]], Nucs='1H', A=[[0.0, 5.0, 10.0]])
+    resfields_perturb(s0, 0.3, 0.7, exp, order=1)     # first order needs no inverse
 
 
 if __name__ == "__main__":

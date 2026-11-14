@@ -1105,17 +1105,41 @@ in a different order and a full 3×3 Q was misread (B20, B27; see CHANGELOG).
   (.m:281) with P already made traceless, so its first term is always 0 (tr(P²) was presumably
   meant). With `nuclei=[...]` the intensities still carry ∏(2I+1) over all nuclei of the system,
   as with EasySpin's `Opt.Nuclei`. `Sys.gnscale` is ignored (see § ENDOR (`salt`)).
-- **Deliberate deviation (0.9.23, B79).** A zero hyperfine principal value (or a singular full A)
-  at second order raises `ValueError: ... All hyperfine coupling constants must be non-zero`,
-  EasySpin's message from resfreqs_perturb.m/resfields_perturb.m. EasySpin's endorfrq_perturb.m
-  has no check: inv(A) (.m:176) warns and the frequencies are NaN. Before 0.9.23 torchspin used a
-  zero matrix for inv(A) and returned wrong second-order frequencies. `resfreqs_perturb` raises
-  the same; first order (no inverse) runs in both, whereas EasySpin's resfreqs_perturb rejects
-  every order. For the A -> 0 limit use a small non-zero value.
+- **Deliberate deviation (0.9.29, B79): zero hyperfine principal values.** A zero principal value
+  or a singular full A gives the exact A -> 0 limit; EasySpin's endorfrq_perturb.m has no check,
+  and inv(A) (.m:176) warns and the frequencies are NaN. See § Perturbation theory — zero
+  hyperfine principal values (0.9.29). (0.9.23 raised `ValueError`; before that torchspin used a
+  zero matrix for inv(A) and returned wrong second-order frequencies.)
 - **Not ported.** One orientation per call (no orientation list), no `Transitions` or
   `Info.Selectivity` output, no `Exp.ExciteWidth` orientation selection (.m:310-339). The function
   is not differentiable: values pass through `float()` and a tensor that requires grad gives an
   output without grad. Use `endorfrq` (matrix diagonalization) or `salt` for these.
+
+## Perturbation theory — zero hyperfine principal values: deliberate deviation from EasySpin (0.9.29)
+
+`resfields_perturb`, `resfields_perturb_batch`, `resfreqs_perturb` and `endorfrq_perturb` accept a
+zero hyperfine principal value, several zeros, or a singular full `Sys.A`, and return the exact
+A -> 0 limit at every order. The second-order invariant A2 = det(A) u'·inv(A)·k needs only
+det(A)·inv(A) = adj(A), and torchspin computes the adjugate directly (a polynomial in A, so the
+result is continuous and differentiable in A there).
+
+- **EasySpin.** resfields_perturb.m and resfreqs_perturb.m (lines 120-127) raise 'All hyperfine
+  coupling constants must be non-zero.' for any zero entry of a diagonal `Sys.A`, at every order;
+  a singular full A is not checked. endorfrq_perturb.m has no check: inv(A) (.m:176) warns and
+  the frequencies are NaN.
+- **Accuracy.** The result at A_z = 0 differs from A_z = eps by at most 4.6e-4·eps mT (fields),
+  1.3e-5·eps GHz (`resfreqs_perturb`) or 0.98·eps MHz (`endorfrq_perturb`), eps in MHz (1H, 14N,
+  63Cu, S = 1/2 and 1). It agrees with matrix diagonalization as well as perturbation theory does
+  for a non-zero A: within 1.6·Amax³/E0² at S = 1/2. For non-singular A the results are those of
+  det(A)·inv(A) up to roundoff (max relative change 4.8e-16 on a random sweep).
+- **Where A2 matters.** In the EPR modules k = A·u/|A·u|, so A2 = det(A)/|A·u| vanishes for a
+  singular A, and it enters the fields only for S > 1/2 (factor 1 − 2mS). In `endorfrq_perturb` k
+  is the direction of the field at the nucleus and A2 is non-zero for S = 1/2.
+- **History.** Up to 0.9.22 `resfreqs_perturb` and `endorfrq_perturb` used a zero matrix for
+  inv(A) (wrong `endorfrq_perturb` frequencies, B79) and `resfields_perturb` raised torch's raw
+  `LinAlgError` (B65); 0.9.14 (`resfields_perturb`) and 0.9.23 (the other two) raised
+  `ValueError` with EasySpin's message. With an `AFrame` the rotated matrix is singular only to
+  roundoff, so `inv` did not raise, but gradients with respect to A were wrong.
 
 ## ENDOR — hyperfine enhancement (`Options.Enhancement`, 0.7.3)
 

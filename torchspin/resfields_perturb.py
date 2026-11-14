@@ -30,27 +30,7 @@ from torchspin.spinsystem import SpinSystem
 from torchspin.experiment import Experiment, Options
 from torchspin.constants import PLANCK, BMAGN, BOLTZMANN
 from torchspin.rotations import erot
-
-
-def _check_nonzero_hyperfine(sys: SpinSystem, iNuc: int, A_mat: torch.Tensor) -> None:
-    """Second-order terms need inv(A): raise as EasySpin for a zero principal value.
-
-    EasySpin resfields_perturb.m:120-127 raises 'All hyperfine coupling
-    constants must be non-zero.' for any zero entry of a diagonal ``Sys.A``;
-    torchspin raised torch's ``LinAlgError`` from ``inv`` instead (B65).  A
-    singular full ``Sys.A`` raises the same error.  EasySpin checks at every
-    perturbation order; torchspin only where the inverse is used (second
-    order), as the first-order fields do not need it.
-    """
-    if sys.fullA:
-        singular = bool(torch.linalg.matrix_rank(A_mat.detach()) < 3)
-    else:
-        singular = bool((sys.A[iNuc, :].detach() == 0).any())
-    if singular:
-        raise ValueError(
-            f"resfields_perturb: All hyperfine coupling constants must be non-zero "
-            f"(nucleus {iNuc + 1}, {sys.Nucs[iNuc]}): second-order perturbation theory "
-            "needs inv(A). Use a small non-zero value, or matrix diagonalization.")
+from torchspin._adjugate import _adjugate3
 
 
 def resfields_perturb_batch(
@@ -226,8 +206,7 @@ def resfields_perturb_batch(
     # Hyperfine: precompute per-nucleus quantities, vectorized over orientations
     nK_batch_list = []    # (M,) per nucleus
     k_batch_list = []     # (M, 3) per nucleus
-    invA_list_prep = []
-    det_A_list_prep = []
+    adjA_list_prep = []   # adj(A) = det(A) inv(A), defined for a singular A too
     tr_AA_list_prep = []
 
     if n_nuclei > 0:
@@ -239,10 +218,8 @@ def resfields_perturb_batch(
             nK_batch_list.append(nK_b)
             k_batch_list.append(k_b)
             if order >= 2:
-                _check_nonzero_hyperfine(sys, iNuc, A_mat)
-                invA_list_prep.append(torch.linalg.inv(A_mat))   # once
+                adjA_list_prep.append(_adjugate3(A_mat))         # once (tensor: on the graph)
                 tr_AA_list_prep.append((A_mat @ A_mat).trace())  # once (tensor: on the graph)
-                det_A_list_prep.append(torch.linalg.det(A_mat))  # once (tensor: on the graph)
 
         # nK_all: (M, n_nuclei)
         nK_all_batch = torch.stack(nK_batch_list, dim=1)
@@ -313,9 +290,8 @@ def resfields_perturb_batch(
                 for iNuc in range(n_nuclei):
                     A_mat = A_list[iNuc]
                     k_b = k_batch_list[iNuc]          # (M, 3)
-                    invA = invA_list_prep[iNuc]        # (3, 3)
+                    adjA = adjA_list_prep[iNuc]        # (3, 3)
                     tr_AA = tr_AA_list_prep[iNuc]
-                    det_A = det_A_list_prep[iNuc]
                     mI_vals = mI_combos[:, iNuc]       # (n_combos,)
                     I_nuc = sys.I[iNuc]
 
@@ -324,9 +300,9 @@ def resfields_perturb_batch(
                     k_AA_k_b = (Ak_b * Ak_b).sum(dim=1)     # (M,)
 
                     A1_sq_b = k_AA_k_b - k_A_u_b ** 2       # (M,)
-                    # A2: det_A * (u @ invA @ k) per orientation
-                    invA_k_b = k_b @ invA.T                  # (M, 3)
-                    A2_b = det_A * (u_batch * invA_k_b).sum(dim=1)  # (M,)
+                    # A2: det(A) u·inv(A)·k = u·adj(A)·k per orientation
+                    adjA_k_b = k_b @ adjA.T                  # (M, 3)
+                    A2_b = (u_batch * adjA_k_b).sum(dim=1)   # (M,)
 
                     Au_b = u_batch @ A_mat.T                 # (M, 3)
                     Au_norm_sq_b = (Au_b * Au_b).sum(dim=1)  # (M,)
@@ -611,9 +587,8 @@ def resfields_perturb(
     # Precompute hyperfine quantities
     k_list = []  # unit vectors k for each nucleus
     nK_list = []  # |A·u| for each nucleus
-    invA_list = []
+    adjA_list = []   # adj(A) = det(A) inv(A), defined for a singular A too
     tr_AA_list = []
-    det_A_list = []
 
     if n_nuclei > 0:
         for iNuc in range(n_nuclei):
@@ -625,10 +600,8 @@ def resfields_perturb(
             k_list.append(k)
 
             if order >= 2:
-                _check_nonzero_hyperfine(sys, iNuc, A_mat)
-                invA_list.append(torch.linalg.inv(A_mat))
+                adjA_list.append(_adjugate3(A_mat))
                 tr_AA_list.append((A_mat @ A_mat).trace())
-                det_A_list.append(torch.linalg.det(A_mat))
 
     # Loop over electron spin transitions (mS → mS-1)
     for idx_mS in range(n_transitions):
@@ -680,7 +653,7 @@ def resfields_perturb(
 
                     # Iwasaki A invariants
                     A1_sq = k_AA_k - k_A_u ** 2
-                    A2 = det_A_list[iNuc] * (u @ invA_list[iNuc] @ k_vec)
+                    A2 = u @ adjA_list[iNuc] @ k_vec   # det(A) u·inv(A)·k
                     A3 = (
                         tr_AA_list[iNuc]
                         - torch.linalg.norm(A_mat @ u) ** 2

@@ -1,13 +1,13 @@
-"""B79 (0.9.23): zero hyperfine principal value in second-order resfreqs_perturb/endorfrq_perturb.
+"""B79: zero hyperfine principal value in second-order resfreqs_perturb/endorfrq_perturb.
 
-The second-order hyperfine terms use inv(A).  torchspin wrapped torch.linalg.inv
-in ``except Exception`` and substituted a zero matrix, so a zero principal value
-gave a silently wrong second-order result (endorfrq_perturb, S=1/2, 1H
-A=[5 8 0]: 15.59326 MHz vs the A_z -> 0 limit 15.59382 MHz).  EasySpin
-resfreqs_perturb.m / resfields_perturb.m:120-127 raise 'All hyperfine coupling
-constants must be non-zero.'; endorfrq_perturb.m has no check and returns NaN.
-torchspin now raises a ValueError with EasySpin's message at second order (the
-same check as resfields_perturb, B65).  First order needs no inverse and runs.
+The second-order hyperfine terms use det(A) inv(A).  Before 0.9.23 torchspin wrapped
+torch.linalg.inv in ``except Exception`` and substituted a zero matrix, so a zero principal
+value gave a silently wrong second-order result (endorfrq_perturb, S=1/2, 1H A=[5 8 0]:
+15.59326 MHz vs the A_z -> 0 limit 15.59382 MHz).  0.9.23 raised EasySpin's ValueError
+('All hyperfine coupling constants must be non-zero.', resfreqs_perturb.m /
+resfields_perturb.m:120-127; endorfrq_perturb.m has no check and returns NaN).  Since 0.9.29
+the modules use the adjugate adj(A) = det(A) inv(A), a polynomial in A, and return the exact
+A -> 0 limit; these tests check that limit (more in test_zero_hyperfine_limit.py).
 """
 import pytest
 import torch
@@ -18,7 +18,6 @@ from torchspin.endorfrq_perturb import endorfrq_perturb
 from torchspin.resfreqs_perturb import resfreqs_perturb
 from torchspin.rotations import erot
 
-MSG = "All hyperfine coupling constants must be non-zero"
 B0 = 340.0
 PHI, THETA = 0.3, 0.7
 EXP = Experiment(Field=B0, mwFreq=9.7)
@@ -36,48 +35,63 @@ def _sys_full_singular():
     return SpinSystem(S=0.5, g=[2.0, 2.05, 2.1], Nucs='1H', A=A_full.tolist())
 
 
-# --- second order raises -----------------------------------------------------
+# --- second order gives the A -> 0 limit (0.9.23 raised here) ----------------
 
-def test_resfreqs_perturb_zero_diagonal_A_raises():
-    with pytest.raises(ValueError, match=MSG):
-        resfreqs_perturb(_sys_diag(0.0), PHI, THETA, EXP, order=2)
-    with pytest.raises(ValueError, match=MSG):   # default order is 2
-        resfreqs_perturb(_sys_diag(0.0), PHI, THETA, EXP)
-
-
-def test_endorfrq_perturb_zero_diagonal_A_raises():
-    with pytest.raises(ValueError, match=MSG):
-        endorfrq_perturb(_sys_diag(0.0), B0, PHI, THETA, order=2)
-    with pytest.raises(ValueError, match=MSG):
-        endorfrq_perturb(_sys_diag(0.0), B0, PHI, THETA)
+def _assert_limit(fn, s0, s_eps, atol):
+    v0, i0 = fn(s0)
+    ve, ie = fn(s_eps)
+    assert torch.isfinite(v0).all() and torch.isfinite(i0).all()
+    torch.testing.assert_close(v0, ve, rtol=0, atol=atol)
+    torch.testing.assert_close(i0, ie, rtol=1e-12, atol=0)
 
 
-def test_zero_A_with_frame_raises():
-    s = _sys_diag(0.0, AFrame=[[0.3, 0.5, 0.2]])
-    with pytest.raises(ValueError, match=MSG):
-        resfreqs_perturb(s, PHI, THETA, EXP, order=2)
-    with pytest.raises(ValueError, match=MSG):
-        endorfrq_perturb(s, B0, PHI, THETA, order=2)
+def _rq(s, **kw):
+    return resfreqs_perturb(s, PHI, THETA, EXP, **kw)
 
 
-def test_singular_full_A_raises():
+def _en(s, **kw):
+    return endorfrq_perturb(s, B0, PHI, THETA, **kw)
+
+
+def test_resfreqs_perturb_zero_diagonal_A_limit():
+    _assert_limit(lambda s: _rq(s, order=2), _sys_diag(0.0), _sys_diag(1e-9), 1e-14)
+    _assert_limit(_rq, _sys_diag(0.0), _sys_diag(1e-9), 1e-14)     # default order is 2
+
+
+def test_endorfrq_perturb_zero_diagonal_A_limit():
+    _assert_limit(lambda s: _en(s, order=2), _sys_diag(0.0), _sys_diag(1e-9), 1e-9)
+    _assert_limit(_en, _sys_diag(0.0), _sys_diag(1e-9), 1e-9)
+    nu, _ = _en(_sys_diag(0.0))
+    assert abs(float(nu[0]) - 15.59382) < 1e-5       # was 15.59326 with the zero matrix
+
+
+def test_zero_A_with_frame_limit():
+    s0, s9 = _sys_diag(0.0, AFrame=[[0.3, 0.5, 0.2]]), _sys_diag(1e-9, AFrame=[[0.3, 0.5, 0.2]])
+    _assert_limit(lambda s: _rq(s, order=2), s0, s9, 1e-14)
+    _assert_limit(lambda s: _en(s, order=2), s0, s9, 1e-9)
+
+
+def test_singular_full_A_limit():
     s = _sys_full_singular()
     assert s.fullA
-    with pytest.raises(ValueError, match=MSG):
-        resfreqs_perturb(s, PHI, THETA, EXP, order=2)
-    with pytest.raises(ValueError, match=MSG):
-        endorfrq_perturb(s, B0, PHI, THETA, order=2)
+    R = torch.as_tensor(erot([0.3, 0.5, 0.2]), dtype=torch.float64)
+    A9 = R.T @ torch.diag(torch.tensor([5.0, 8.0, 1e-9], dtype=torch.float64)) @ R
+    s9 = SpinSystem(S=0.5, g=[2.0, 2.05, 2.1], Nucs='1H', A=A9.tolist())
+    _assert_limit(lambda s: _rq(s, order=2), s, s9, 1e-14)
+    _assert_limit(lambda s: _en(s, order=2), s, s9, 1e-9)
 
 
-def test_second_nucleus_named_in_error():
-    s = SpinSystem(S=0.5, g=[2.0, 2.05, 2.1], Nucs='1H,13C', A=[[5.0, 8.0, 12.0], [3.0, 0.0, 6.0]])
-    with pytest.raises(ValueError, match=r"nucleus 2, 13C"):
-        resfreqs_perturb(s, PHI, THETA, EXP, order=2)
-    with pytest.raises(ValueError, match=r"nucleus 2, 13C"):
-        endorfrq_perturb(s, B0, PHI, THETA, order=2)
-    # endorfrq_perturb only checks the nuclei it computes
-    nu, _ = endorfrq_perturb(s, B0, PHI, THETA, order=2, nuclei=[0])
+def test_second_nucleus_zero_limit():
+    def mk(z):
+        return SpinSystem(S=0.5, g=[2.0, 2.05, 2.1], Nucs='1H,13C',
+                          A=[[5.0, 8.0, 12.0], [3.0, z, 6.0]])
+    _assert_limit(lambda s: _rq(s, order=2), mk(0.0), mk(1e-9), 1e-14)
+    _assert_limit(lambda s: _en(s, order=2), mk(0.0), mk(1e-9), 1e-9)
+    # the first nucleus alone does not depend on the second's A
+    nu, _ = _en(mk(0.0), order=2, nuclei=[0])
+    nu9, _ = _en(mk(1e-9), order=2, nuclei=[0])
     assert torch.isfinite(nu).all()
+    torch.testing.assert_close(nu, nu9, rtol=0, atol=0)
 
 
 # --- first order still runs and is continuous in A_z -> 0 -------------------
