@@ -328,7 +328,9 @@ def _reorder_events(event_lengths, pulse_list):
         overlaps = np.where(pulse_cols > 1)[0]
         overlap_events = np.where(np.sum(event_matrix[:, overlaps] == 2, axis=1) > 0)[0]
         raise ValueError(
-            f"Pulse overlap detected between events: {list(overlap_events)}"
+            "Pulse overlap detected between events "
+            f"{[int(i) + 1 for i in overlap_events]} (1-based positions in the sequence); "
+            "pulses must not overlap in time (check negative delays)."
         )
 
     # Handle zero-duration pulses
@@ -882,6 +884,22 @@ def _liouvillian(Ham, Gamma, eq_state_vec, dt):
     sigma_ss : ndarray
         Steady-state density vector.
     """
+    # Non-finite inputs used to be replaced silently by a zero steady state
+    # (relaxation toward rho = 0), which hid bad T1/T2/eqState values (B80).
+    if not np.all(np.isfinite(Ham)):
+        raise ValueError(
+            "spidyan: the spin Hamiltonian contains non-finite (NaN/Inf) "
+            "values; check the spin system parameters and Exp.Field.")
+    if not np.all(np.isfinite(Gamma)):
+        raise ValueError(
+            "spidyan: the relaxation superoperator contains non-finite "
+            "(NaN/Inf) values; check Sys.T1 and Sys.T2 (they must be "
+            "finite-rate, i.e. not NaN and not so small that 1/T overflows).")
+    if not np.all(np.isfinite(eq_state_vec)):
+        raise ValueError(
+            "spidyan: the equilibrium state (Sys.eqState, or the initial "
+            "state when eqState is not given) contains non-finite "
+            "(NaN/Inf) values.")
     n = Ham.shape[0]
     I_n = np.eye(n)
     # EasySpin writes the commutator superoperator as kron(I,H) - kron(H.',I),
@@ -893,18 +911,15 @@ def _liouvillian(Ham, Gamma, eq_state_vec, dt):
     ham_su = np.kron(Ham, I_n) - np.kron(I_n, Ham.T)
     L_full = -1j * ham_su - Gamma
     sigma_ss = Gamma @ eq_state_vec
-    # Solve for steady state. Use pinv as fallback for singular matrices.
+    # Solve -L sigma_ss = Gamma rho_eq. -L is singular when some coherence or
+    # population is not relaxed (e.g. T2 = inf with degenerate levels); the
+    # right-hand side has no component along that null space, so the
+    # pseudo-inverse gives the correct (minimum-norm) steady state.
     neg_L = -L_full
-    if np.any(~np.isfinite(neg_L)) or np.any(~np.isfinite(sigma_ss)):
-        sigma_ss = np.zeros_like(sigma_ss)
-    else:
-        try:
-            sigma_ss = la.solve(neg_L, sigma_ss)
-        except (la.LinAlgError, ValueError):
-            try:
-                sigma_ss = np.linalg.pinv(neg_L) @ sigma_ss
-            except Exception:
-                sigma_ss = np.zeros_like(sigma_ss)
+    try:
+        sigma_ss = la.solve(neg_L, sigma_ss)
+    except la.LinAlgError:
+        sigma_ss = np.linalg.pinv(neg_L) @ sigma_ss
     L = la.expm(L_full * dt)
     return L, sigma_ss
 
@@ -1028,13 +1043,12 @@ def _thyme(sigma, Ham0, det_ops, events, relaxation, vary):
 
         # Determine event order
         if n_events > 1:
-            try:
-                sequence, new_event_lengths = _reorder_events(
-                    event_lengths, is_pulse
-                )
-            except ValueError:
-                sequence = list(range(n_events))
-                new_event_lengths = event_lengths
+            # Overlapping pulses raise (EasySpin s_reorder_events.m:
+            # 'Pulse Overlap'); they used to fall back silently to the
+            # unreordered sequence (B80).
+            sequence, new_event_lengths = _reorder_events(
+                event_lengths, is_pulse
+            )
         else:
             sequence = [0]
             new_event_lengths = event_lengths
