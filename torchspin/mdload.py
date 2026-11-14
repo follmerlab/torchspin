@@ -109,11 +109,28 @@ def _read_dcd(filename, atom_indices=None):
         istart = struct.unpack('<i', header[8:12])[0]
         nsavc = struct.unpack('<i', header[12:16])[0]
 
-        # Check for CHARMM extra block (unit cell info)
-        charmm_flag = struct.unpack('<i', header[80:84])[0]
-        has_extra_block = (charmm_flag & 0x1) != 0
-
-        delta = struct.unpack('<f', header[40:44])[0]
+        # CHARMM vs X-PLOR layout, as in md_readdcd.m. `header` starts at
+        # file offset 4, so header[k] is file byte k + 4. The int32 at file
+        # offset 84 (header[80:84]) is the CHARMM VERSION (24 in the bundled
+        # NAMD files), not a flag word (B97: its bit 0 was read as the
+        # unit-cell flag). VERSION > 0 means CHARMM: the int32 at file offset
+        # 48 is 1 when every frame starts with a unit-cell record (6 float64,
+        # 56 bytes with its markers) and the int32 at file offset 52 is 1 when
+        # every frame has a fourth coordinate record after z. VERSION == 0
+        # means X-PLOR: no extra records, and DELTA is a float64 at offset 44.
+        version = struct.unpack('<i', header[80:84])[0]
+        is_charmm = version > 0
+        if is_charmm:
+            has_extra_block = struct.unpack('<i', header[44:48])[0] == 1
+            # md_readdcd.m maps the 4-dims flag onto its unit-cell flag (and
+            # skips 56 bytes before x), which misreads such files; the 4th
+            # dimension is a coordinate-sized record after z, skipped below.
+            has_4dims = struct.unpack('<i', header[48:52])[0] == 1
+            delta = struct.unpack('<f', header[40:44])[0]
+        else:
+            has_extra_block = False
+            has_4dims = False
+            delta = struct.unpack('<d', header[40:48])[0]
         dt_internal = delta * max(nsavc, 1)
         dt = dt_internal * 48.88821e-15  # AKMA to seconds
 
@@ -158,6 +175,10 @@ def _read_dcd(filename, atom_indices=None):
                         frame[dim, :] = coords[atom_indices]
                     else:
                         frame[dim, :] = coords
+                if has_4dims:  # CHARMM 4th dimension: skip the record
+                    rec4 = struct.unpack('<i', f.read(4))[0]
+                    if len(f.read(rec4 + 4)) < rec4 + 4:
+                        raise EOFError
 
                 frames_list.append(frame)
             except (struct.error, EOFError, ValueError):
