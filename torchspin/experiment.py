@@ -389,8 +389,8 @@ class Options:
           theory.  ``'perturb3'`` to ``'perturb5'`` raise ``ValueError``.
         * :func:`~torchspin.garlic.garlic`: ``'exact'`` (``'matrix'`` is read
           as ``'exact'``), the Breit-Rabi fixed-point solver; ``'perturb'``
-          (fifth order) or ``'perturb1'`` to ``'perturb5'`` (that order).
-          The bare name ``'perturb'`` therefore means different orders in
+          (fifth order) or ``'perturb1'`` to ``'perturb5'`` (that order);
+          ``'hybrid'`` raises ``ValueError``.  The bare name ``'perturb'`` therefore means different orders in
           pepper and garlic, as in EasySpin.
         * :func:`~torchspin.salt.salt` finds resonance fields by
           diagonalization and ENDOR frequencies by first-order perturbation
