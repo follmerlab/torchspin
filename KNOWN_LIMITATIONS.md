@@ -427,6 +427,49 @@ up to 0.9.20 (B74). Since 0.9.21 torchspin reverses each lower row before resamp
   by torchspin on the same fine knots without interpolation (`*_c1_vs_no_interpolation`).
   `test_gridinterp_l1_vs_easyspin[C1-*]` remains xfail (B58 and this deviation).
 
+## Centered projection bins: deliberate deviation from EasySpin (0.9.35, B85)
+
+The SOPHE projection (pepper, pepper_autograd, salt's fixed-field powder; `torchspin._projection`)
+gives axis point x_k the facet density integrated against the hat of half-width dx centered on
+x_k (linear interpolation / cloud-in-cell); a facet of zero width is split linearly between the
+two nearest points. EasySpin's `projecttriangles.c`/`projectzones.c` integrate over the box
+[x_k, x_k + dx), report it at x_k, and truncate facets narrower than one bin into one box.
+
+- **Why.** EasySpin's convention puts every projected spectrum half an increment low (best-fit
+  shift +0.49 dx against a converged reference), while its template paths (isotropic, crystal,
+  `Exp.Orientations`, lisum1i) are centered; and the truncating sub-bin deposit has no position
+  dependence. Rhombic S = 1/2, 512 points over 40 mT, lw 1 mT: max error against a converged
+  reference 9.4 % -> 0.65 % (lw 0.3 mT: 31 % -> 3.8 %; best-fit shift +0.49 -> -0.005 dx). An
+  isotropic g on a forced/auto D2h grid (three g leaves on the graph): spectrum vs the O3
+  template 2.8-5.5 % -> 2-5e-4 at 4096 points, and d/ds of g = s[1 1 1] +999.7 (0.9.34; the
+  true value is -13770) -> -11452 at 512 points (dx/sigma = 0.28) and within 3.2 % of the O3
+  gradient at 4096 points. The position derivative of a point mass split linearly is the chord
+  slope of the sampled line, first order in dx; central differences agree with autograd to 1e-10.
+- **Intensity.** The hats are a partition of unity: sum(spec)·dx equals the projected intensity
+  to roundoff (<= 2.4e-14 relative; 0.9.34 left 2.9e-12 from its running sums). Mass within
+  one increment beyond the first or last point goes partly to the missing neighbor and is
+  dropped, as mass outside the range was before.
+- **Smoothing.** The hat has variance dx²/6 against the box's dx²/12, so narrow lines are
+  broadened by dx²/12 more than in EasySpin; this, not the shift, is what remains against
+  EasySpin mapped onto centered bins.
+- **EasySpin comparisons.** 168 comparisons moved (spectra built by projection; cosine typically
+  0.98-0.999, stick spectra and very narrow lines down to 0.95). They stay as they were, strict
+  xfail with the measured numbers (`torchspin/tests/_b85.py`), and are re-run in
+  `test_b85_easyspin_centered.py` against EasySpin's spectrum mapped onto centered bins
+  ((-b[k-2] + 13 b[k-1] + 13 b[k] - b[k+1])/24): 73 pass with their original tolerances; 95 have
+  tolerances calibrated to EasySpin's box binning (1e-5..1e-9, stick spectra) and are strict
+  xfail there too, with both numbers.
+- **torchspin-only references.** The converged references of `ref_missing_knots.npz` were
+  regenerated with the centered bins. Sixteen coarse-grid ([19 4]) vs converged-grid bounds,
+  measured before 0.9.35 with about 10 % margin, are exceeded by 2-27 % (e.g. case3 max
+  deviation 1.35e-2 -> 1.54e-2, bound 1.42e-2): the orientation-grid error seen through the
+  hat instead of the box. They and one central-difference check of d/dlw (step-sensitive:
+  1.1e-7 against a 4e-8 bound) are strict xfail pending a re-baselining decision.
+- **Other binning.** pepper's stick-accumulation branches (unreachable since every non-O3 grid
+  without strain projects) now split linearly too. The template paths were already centered.
+  salt's field-swept and isotropic fixed-field stick paths round to the nearest point
+  (centered, no gradient; B86), garlic rounds or splits linearly, makespec splits linearly.
+
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
 The edge-bin integrals of `projecttriangles` were written as differences of O(bin index)
@@ -434,10 +477,11 @@ terms (`b − (a + first + 1)/2`). For a triangle much narrower than a bin that 
 bin edge, rounding of those terms was amplified by the 1/width² ramp slope: area errors
 up to tens of percent per triangle (salt's zero-field 1H line was 2.6 % too large before
 a workaround). Fixed in `pepper._ramp_bins` and `pepper_autograd._ramp_bins_t`, which now
-use only the small overlaps with the edge bins. EasySpin's `projecttriangles.c`, and
-torchspin's line-by-line port `pepper._projecttriangles_loop` (kept as the test reference
-for the vectorised projection), still use the old expressions; in these geometries torchspin
-now deliberately deviates from them, toward the exact integral.
+use only the small overlaps with the edge bins. EasySpin's `projecttriangles.c` still uses the
+old expressions; in these geometries torchspin deliberately deviates from it, toward the exact
+integral. Since 0.9.35 (B85) the projection is `torchspin._projection` (centered hat bins), which
+forms every term from the overlap with a half-hat and the relative position inside the facet,
+and deposits facets inside one axis interval exactly as a point mass at their centroid.
 
 ## `nucspinrmv` / `nucspinkeep` / `nucspinadd` keep every field (fixed 0.8.2)
 
@@ -515,12 +559,13 @@ make pepper sum stick spectra over the given field directions with χ-averaged r
 - **No interpolation, no projection.** The spectrum is a plain weighted sum; a quadrature
   must be fine enough for the line width (a 20000-point Fibonacci sphere reproduces the
   1 mT-broadened powder of a rhombic nitroxide to 1e-4 of the maximum).
-- **Half-bin offset against the powder.** pepper's powder projection (like EasySpin's
-  `projectzones`/`projecttriangles`) puts bin k on [x_k, x_k + dx); the template paths
-  (crystal, isotropic, Orientations; EasySpin `lisum1i`) centre it on x_k. A full-sphere
-  quadrature therefore differs from the powder spectrum by a shift of dx/2 — 3 % of the
-  maximum for an axial S = 1/2 with 1 mT lines at 1024 points over 50 mT, in EasySpin as
-  in torchspin. Compare with the powder on the axis shifted by −dx/2.
+- **Half-bin offset against the powder (fixed 0.9.35, B85).** Before 0.9.35 pepper's powder
+  projection (like EasySpin's `projectzones`/`projecttriangles`) put bin k on [x_k, x_k + dx)
+  while the template paths centre it on x_k, so a full-sphere quadrature differed from the
+  powder by a shift of dx/2 (3 % of the maximum for an axial S = 1/2 with 1 mT lines at 1024
+  points over 50 mT). The projection is centered now; a 20000-point Fibonacci sphere matches
+  the powder to 5.9e-5 (absorption) and 1.5e-3 (first harmonic) without any shift. EasySpin
+  keeps the offset.
 - **Strain.** The powder strain branch (EasySpin's facet summation with Λ smoothing) is
   an approximation; a fine quadrature with per-line strain widths differs from it by
   ~0.7 % of the maximum.
@@ -658,16 +703,17 @@ and `resfreqs_perturb` always). A negative field still raises in the constructor
   ⟨u|∂H|u⟩ is replaced by its cluster mean tr(P_a ∂H)/n_a. This is exact for Kramers
   doublets, where time-even operators are proportional to the identity. For accidental
   non-Kramers degeneracies it ignores the splitting the strain itself would cause.
-- **Lines on a bin edge.** At B = 0 every orientation puts a line at one frequency, so the
-  powder projection drops the whole line into the bin that contains it (bin k covers
-  [x_k, x_k + dx), as in EasySpin, and as a very narrow line at B → 0⁺ does). A line exactly on
-  a bin edge then lands in either neighbor depending on the last bit of round-off, which can
-  differ between machines (a one-bin shift; 4 % of the maximum for a 300 MHz line at 10 MHz
-  bins). Avoid axes whose points coincide with the zero-field splittings, or compare on the
-  axis shifted by dx/2. With an interpolated grid (e.g. GridSize [19 4]) the single-bin deposit
-  relies on `pepper._zf_const_pos`, which gives every interpolated orientation the coarse
-  position; interpolation round-off would otherwise split a line on an edge between the two bins
-  (5-39 % in the lower bin). Tested against EasySpin in `test_pepper_zerofield_edge.py` (0.9.1).
+- **Lines between axis points.** At B = 0 every orientation puts a line at one frequency, so
+  the powder projection deposits it as one point mass, split linearly between the two nearest
+  axis points (centered hat bins since 0.9.35, B85; a line exactly on x_k goes to x_k, as in
+  EasySpin). Before 0.9.35 the whole line went into the box [x_k, x_k + dx) that contains it,
+  as in EasySpin, and a line exactly on a box edge landed in either neighbor depending on the
+  last bit of round-off (4 % of the maximum for a 300 MHz line at 10 MHz bins); the linear split
+  changes only by ulps there. With an interpolated grid (e.g. GridSize [19 4])
+  `pepper._zf_const_pos` gives every interpolated orientation the coarse position, so the facets
+  have zero width exactly. Tested against EasySpin in `test_pepper_zerofield_edge.py` (0.9.1);
+  a 4000-point Fibonacci sphere matches the zero-field powder to 0.077 % (0.74 % before, on the
+  dx/2-shifted axis).
 - **Not supported.** Non-equilibrium populations (`Sys.initState`) raise with
   `ZeroField`. Frequency sweeps have no differentiable pepper path (`pepper_autograd`
   raises for them, as before). The zero-field resonances from `resfreqs_batch`
@@ -1040,10 +1086,11 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
 - **Absolute scale vs EasySpin.** The fixed-field spectrum is the per-bin,
   orientation-averaged amplitude: EasySpin's `salt` output times Δx/(8π²) (Δx = rf bin width
   in MHz; EasySpin integrates over χ with 2π and returns a density), for every path.
-- **Bin positions.** The triangle/zone projection assigns a line to the bin whose lower edge
-  is at or below it (a line at 13.408 MHz with Δx = 0.01 lands in the 13.40 bin), so lines
-  sit on average half a bin low. EasySpin's `salt` does exactly the same (verified, identical
-  bins and values), so this is kept.
+- **Bin positions (deliberate deviation since 0.9.35, B85).** The triangle/zone projection
+  centers axis point k on f_k (hat bins; a line at 13.408 MHz with Δx = 0.01 goes 20 % to
+  13.40 and 80 % to 13.41). EasySpin's `salt` assigns it to the bin whose lower edge is at or
+  below it (13.40), half a bin low on average, as torchspin did before 0.9.35. See
+  § Centered projection bins.
 - **gnscale.** The first-order path (frequencies and intensities) ignores `Sys.gnscale`, as
   EasySpin's `endorfrq_perturb.m` does; the matrix path applies it (via `ham_nz`).
 - **Equivalent nuclei.** `salt` raises for `Sys.n > 1`, as EasySpin does (salt.m:135-136).

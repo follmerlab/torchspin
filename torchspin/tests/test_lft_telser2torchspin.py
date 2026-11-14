@@ -614,8 +614,9 @@ def test_ddpowh_fdmr_matches_pepper_frequency_sweep():
 
 
 def test_ddpowh_endor_matches_salt():
-    """14N ENDOR (Q != 0: salt's matrix path).  salt labels each frequency bin by its lower edge, so its
-    spectrum is compared half a bin later (telser-tools docs/ddpowh.md)."""
+    """14N ENDOR (Q != 0: salt's matrix path).  Since 0.9.35 (B85) salt centers axis point k on f_k
+    (hat bins); before, it labelled each frequency bin by its lower edge and its spectrum was compared
+    half a bin later (telser-tools docs/ddpowh.md)."""
     from torchspin.salt import salt
 
     ddpowh, inp = _ddpowh("gen_endor_n14")
@@ -625,7 +626,6 @@ def test_ddpowh_endor_matches_salt():
     assert s0["exp"].Field == pytest.approx(331.1) and s0["salt"]["lw_mhz"] == pytest.approx(0.4)
     f, y = salt(cv.sys, s0["exp"], Options(GridSize=[61, 4], Threshold=0.0, Verbosity=0), **s0["salt"])
     f, y = f.numpy(), y.numpy()
-    y = np.interp(f, f + 0.5 * (f[1] - f[0]), y)
     dev, corr = _norm_dev(sp.y, y)
     assert dev < 6e-3 and corr > 0.99999, (dev, corr)
 

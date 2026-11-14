@@ -1,5 +1,8 @@
 """SOPHE triangle projection of near-zero-width triangles straddling a bin edge (B18).
 
+Since 0.9.35 (B85) the reference is the centered hat-bin projection (see
+torchspin._projection); before, it was the box [x_k, x_k + dx) of EasySpin.
+
 The edge-bin integrals of the tent ramps used to be written as differences of
 O(bin index) terms, e.g. ``b − (a + first + 1)/2``.  With ``f0 ∝ 1/width²`` the
 rounding of those terms (~ulp(index)) was amplified to a relative error of order
@@ -29,27 +32,35 @@ def _proj_t(P, amp=(1.0, 1.0, 1.0), area=1.0, x0=5.0, delta=0.01, n=1001):
 
 
 def _exact(bin_coords, n):
-    """Exact bin contents (unit mass) of the tent on the float bin coordinates."""
+    """Exact axis-point contents (unit mass) of the tent on the float bin coordinates,
+    centered hat bins (0.9.35, B85): the mass m_j and first moment mu_j of the part of the
+    tent in [j, j + 1] go m_j - mu_j to point j and mu_j to point j + 1."""
     L, M, R = (Fraction(float(v)) for v in sorted(bin_coords))
-    out = np.zeros(n)
-    if R == L:
-        k = int(np.trunc(float(L)))
+    out = [Fraction(0)] * (n + 2)
+
+    def add(k, v):
         if 0 <= k < n:
-            out[k] = 1.0
-        return out
+            out[k] += v
+    if R == L:
+        j = int(np.floor(float(L)))
+        add(j, 1 - (L - j)); add(j + 1, L - j)
+        return np.array([float(v) for v in out[:n]])
     W = R - L
 
-    def cdf(u):
-        if u <= L:
-            return Fraction(0)
-        if u >= R:
-            return Fraction(1)
-        if u <= M:
-            return (u - L) ** 2 / (W * (M - L))
-        return 1 - (R - u) ** 2 / (W * (R - M))
-    for k in range(max(int(L) - 1, 0), min(int(R) + 2, n)):
-        out[k] = float(cdf(Fraction(k + 1)) - cdf(Fraction(k)))
-    return out
+    cuts = sorted({L, M, R} | {Fraction(k) for k in range(int(np.floor(float(L))) + 1, int(np.ceil(float(R))))})
+    for p, q in zip(cuts[:-1], cuts[1:]):
+        j = int(np.floor(float((p + q) / 2)))
+        mid = (p + q) / 2
+        # density linear on [p, q]: endpoint values from the piece containing it
+        if q <= M:
+            rp, rq = 2 * (p - L) / (W * (M - L)), 2 * (q - L) / (W * (M - L))
+        else:
+            rp, rq = 2 * (R - p) / (W * (R - M)), 2 * (R - q) / (W * (R - M))
+        rm = (rp + rq) / 2
+        m = (q - p) * (rp + rq) / 2
+        mu = (q - p) / 6 * (rp * (p - j) + 4 * rm * (mid - j) + rq * (q - j))   # Simpson, exact
+        add(j, m - mu); add(j + 1, mu)
+    return np.array([float(v) for v in out[:n]])
 
 
 def _fuzz_triangles(seed, count, x0, delta, n):
