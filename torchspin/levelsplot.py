@@ -162,88 +162,74 @@ def levelsplot(
             )
 
     # --- Plot resonance transitions ---
+    # EasySpin levelsplot.m:244-272.  No blanket try/except: errors in the
+    # resonance computation propagate (B78).
     if compute_resonances:
-        try:
-            from torchspin.resfields import resfields
-            from torchspin.experiment import Experiment
+        B_res, intensities, transitions = _resonances(sys, phi, theta, chi, Bvec, mwFreq)
 
-            exp = Experiment(
-                mwFreq=mwFreq,
-                Range=[Bvec[0], Bvec[-1]],
-                SampleFrame=[-chi, -theta, -phi],
-            )
-            res_opt_dict = {'Threshold': 0, 'Freq2Field': 0}
-            B_res, intensities, _, transitions = resfields(sys, exp, res_opt_dict)
+        if len(B_res) > 0:
+            tp_max = np.max(np.abs(intensities))
+            if tp_max > 0:
+                intensities = intensities / tp_max
+            abs_int = np.abs(intensities)
 
-            if len(B_res) > 0:
-                B_res = np.asarray(B_res)
-                intensities = np.asarray(intensities)
-                transitions = np.asarray(transitions)
+            # Sort by intensity (weakest first) so that stronger lines are drawn on top
+            idx = np.argsort(abs_int, kind='stable')
+            B_res = B_res[idx]
+            abs_int = abs_int[idx]
+            intensities = intensities[idx]
+            transitions = transitions[idx]
 
-                tp_max = np.max(np.abs(intensities))
-                if tp_max > 0:
-                    intensities = intensities / tp_max
-                abs_int = np.abs(intensities)
+            # Energy levels at each resonance field
+            zL = np.array(ang2vec(phi, theta), dtype=np.float64).ravel()
+            H0, mux, muy, muz = ham(sys, B0=None)
+            muzL = zL[0] * mux + zL[1] * muy + zL[2] * muz
 
-                # Sort by intensity (weakest first)
-                idx = np.argsort(abs_int)
-                B_res = B_res[idx]
-                abs_int = abs_int[idx]
-                intensities = intensities[idx]
-                transitions = transitions[idx]
+            allowed_color = np.array([1, 0, 0])
+            forbidden_color = np.array([0.8, 0.8, 0.8])
 
-                # Compute energy levels at each resonance field
-                zL = np.array(ang2vec(phi, theta), dtype=np.float64).ravel()
-                zL_tensor = torch.tensor(zL, dtype=torch.float64)
-                H0, mux, muy, muz = ham(sys, B0=None)
-                muzL = zL[0] * mux + zL[1] * muy + zL[2] * muz
+            for iF in range(len(B_res)):
+                if abs_int[iF] < opt.PlotThreshold:
+                    continue
 
-                allowed_color = np.array([1, 0, 0])
-                forbidden_color = np.array([0.8, 0.8, 0.8])
+                H = H0 - muzL * float(B_res[iF])
+                E_i = torch.linalg.eigvalsh(H).detach().cpu().numpy()
+                E_i = np.sort(E_i.real) - opt.Offset
+                E_i_plot = _convert_energy_values(E_i, opt.Units)
 
-                for iF in range(len(B_res)):
-                    if abs_int[iF] < opt.PlotThreshold:
-                        continue
+                t = transitions[iF]
+                trans_color = abs_int[iF] * allowed_color + (1 - abs_int[iF]) * forbidden_color
 
-                    H = H0 - muzL * B_res[iF]
-                    E_i = torch.linalg.eigvalsh(H).detach().cpu().numpy()
-                    E_i = np.sort(E_i.real) - opt.Offset
-                    E_i_plot = _convert_energy_values(E_i, opt.Units)
-
-                    t = transitions[iF]
-                    trans_color = abs_int[iF] * allowed_color + (1 - abs_int[iF]) * forbidden_color
-
-                    ax_main.plot(
-                        [B_res[iF] * Bscale, B_res[iF] * Bscale],
-                        [E_i_plot[t[0]] * Escale, E_i_plot[t[1]] * Escale],
-                        color=trans_color,
-                        linewidth=opt.TransLineWidth,
-                    )
-
-                # Stick spectrum
-                if opt.StickSpectrum and ax_stick is not None:
-                    ax_stick.axhline(y=0, color='k', linewidth=0.5)
-                    for iF in range(len(B_res)):
-                        ax_stick.plot(
-                            [B_res[iF] * Bscale, B_res[iF] * Bscale],
-                            [0, intensities[iF]],
-                            color=line_color,
-                            linewidth=2,
-                        )
-                    if np.any(intensities < 0):
-                        ax_stick.set_ylim(-1.1, 1.1)
-                    else:
-                        ax_stick.set_ylim(0, 1.1)
-                    ax_stick.set_ylabel('rel. intensity')
-            else:
-                ax_main.text(
-                    0.05, 0.05, 'no EPR resonances in field range',
-                    transform=ax_main.transAxes, color='red',
-                    verticalalignment='bottom',
+                ax_main.plot(
+                    [B_res[iF] * Bscale, B_res[iF] * Bscale],
+                    [E_i_plot[t[0]] * Escale, E_i_plot[t[1]] * Escale],
+                    color=trans_color,
+                    linewidth=opt.TransLineWidth,
+                    gid='transition',
                 )
-        except Exception:
-            # If resfields fails, just skip resonance plotting
-            pass
+
+            # Stick spectrum
+            if opt.StickSpectrum and ax_stick is not None:
+                ax_stick.axhline(y=0, color='k', linewidth=0.5)
+                for iF in range(len(B_res)):
+                    ax_stick.plot(
+                        [B_res[iF] * Bscale, B_res[iF] * Bscale],
+                        [0, intensities[iF]],
+                        color=line_color,
+                        linewidth=2,
+                        gid='line',
+                    )
+                if np.any(intensities < 0):
+                    ax_stick.set_ylim(-1.1, 1.1)
+                else:
+                    ax_stick.set_ylim(0, 1.1)
+                ax_stick.set_ylabel('rel. intensity')
+        else:
+            ax_main.text(
+                0.05, 0.05, 'no EPR resonances in field range',
+                transform=ax_main.transAxes, color='red',
+                verticalalignment='bottom',
+            )
 
     # --- Labels and formatting ---
     ax_main.set_ylabel(f'energy ({energy_unit})')
@@ -277,6 +263,54 @@ def levelsplot(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _resonances(sys, phi, theta, chi, Bvec, mwFreq):
+    """Resonance fields, intensities and level pairs at one orientation.
+
+    EasySpin levelsplot.m:246-249: ``resfields(Sys, Exp, Opt)`` with
+    ``Exp.SampleFrame = [-chi -theta -phi]`` and ``Opt.Threshold = 0``,
+    ``Opt.Freq2Field = 0``.  The lab axes in the molecular frame are the rows of
+    ``erot([phi, theta, chi])``: B0 along ``zL`` (the direction given by
+    ``ori``), B1 along ``xL`` (EasySpin's default perpendicular mode).
+
+    Returns ``(B_res (mT), intensities, transitions)``; ``transitions`` holds
+    0-based level indices (lower, upper) in ascending-energy order.  The
+    intensities are transition rates without the frequency-to-field factor and
+    at infinite temperature; levelsplot only uses them relative to the largest.
+    """
+    from torchspin.resfields_batch import resfields_batch
+    from torchspin.experiment import Experiment, Options
+    from torchspin.rotations import erot
+
+    H0, mux, muy, muz = ham(sys, B0=None)
+    R = erot([phi, theta, chi]).to(dtype=torch.float64, device=H0.device)
+    exp = Experiment(mwFreq=float(mwFreq), Range=[float(Bvec[0]), float(Bvec[-1])])
+    res_opt = Options()
+    res_opt.Threshold = 0.0
+    f64 = dict(dtype=torch.float64, device=H0.device)
+    with torch.no_grad():
+        B_l, I_l, _, P_l = resfields_batch(
+            H0, mux, muy, muz,
+            torch.tensor([phi], **f64), torch.tensor([theta], **f64),
+            exp, res_opt, sys=None, return_pairs=True, R_batch=R.unsqueeze(0),
+        )
+        if P_l[0] is None or B_l[0].numel() == 0:
+            return np.zeros(0), np.zeros(0), np.zeros((0, 2), dtype=int)
+        B_res = B_l[0]
+        pairs = P_l[0].to(torch.long)
+        # Freq2Field = 0: undo resfields_batch's factor dB/dE = 1/|<v|muzL|v> - <u|muzL|u>|
+        # (it leaves the factor at 1 for slopes below 1e-5 MHz/mT; so does this).
+        muzL = R[2, 0] * mux + R[2, 1] * muy + R[2, 2] * muz
+        _, V = torch.linalg.eigh(H0.unsqueeze(0) - B_res.to(H0.dtype).view(-1, 1, 1) * muzL)
+        d = (V.conj() * (muzL @ V)).sum(dim=-2).real          # <k|muzL|k>, (nRes, nStates)
+        r = torch.arange(B_res.numel(), device=H0.device)
+        slope = (d[r, pairs[:, 1]] - d[r, pairs[:, 0]]).abs()
+        slope = torch.where(slope > 1e-5, slope, torch.ones_like(slope))
+        intensities = I_l[0] * slope
+    return (B_res.cpu().numpy().astype(np.float64),
+            intensities.cpu().numpy().astype(np.float64),
+            pairs.cpu().numpy())
+
 
 def _parse_orientation(ori):
     """Parse orientation to (phi, theta, chi) in radians."""
