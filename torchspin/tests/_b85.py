@@ -57,14 +57,6 @@ CENTERED_ENV = 'TORCHSPIN_B85_CENTERED'
 
 MOVED: dict = {}
 CENTERED_RESIDUAL: dict = {}
-MOVED_TORCHSPIN: dict = {}
-
-REASON_TORCHSPIN = ("Moved by the centered projection bins (B85, 0.9.35); torchspin-only reference (the converged "
-                    "references were regenerated with 0.9.35), bound measured before 0.9.35, not re-baselined: ")
-
-
-def xfail_b85_torchspin(detail: str):
-    return pytest.mark.xfail(strict=True, reason=REASON_TORCHSPIN + detail)
 
 
 def _is_spec_field(name) -> bool:
@@ -657,42 +649,18 @@ CENTERED_RESIDUAL.update({
         'vs centered EasySpin: assert 0.9999979270049659 > 0.999999 (vs stored EasySpin: assert 0.9992100730429933 > 0.999999); the tolerance was calibrated to EasySpin box binning',
 })
 
-# torchspin-only references (not EasySpin): coarse-grid vs converged-grid bounds and a central-difference
-# check, measured before 0.9.35 and moved by the projection kernel.  Not covered by the approved
-# EasySpin pattern; kept strict xfail pending a decision on re-baselining (see CHANGELOG 0.9.35).
-MOVED_TORCHSPIN.update({
-    'test_interp_nan_edges_matlab_validation.py::test_spectrum_vs_converged[b50_h1-pepper]':
-        "0.9.35: ('b50_h1', 'pepper', 7.620439299815818e-05, 0.015007303707138469); 0.9.34 passed",
-    'test_interp_nan_edges_matlab_validation.py::test_spectrum_vs_converged[b50_h1-pepper_autograd]':
-        "0.9.35: ('b50_h1', 'pepper_autograd', 7.62043927563516e-05, 0.01500730367423602); 0.9.34 passed",
-    'test_interp_nan_edges_matlab_validation.py::test_spectrum_vs_converged[b50_stick_wide-pepper]':
-        "0.9.35: ('b50_stick_wide', 'pepper', 2.8415039162954514e-05, 0.025371291272747495); 0.9.34 passed",
-    'test_interp_nan_edges_matlab_validation.py::test_spectrum_vs_converged[b50_stick_wide-pepper_autograd]':
-        "0.9.35: ('b50_stick_wide', 'pepper_autograd', 2.8415039187712487e-05, 0.025371291299348907); 0.9.34 passed",
-    'test_missing_knots.py::test_gradient_vs_central_differences[case1-lw]':
-        "0.9.35: ('case1', 'lw', array([6.15579339]), array([6.15579405]), 1.073521638912593e-07); 0.9.34 passed",
-    'test_missing_knots.py::test_vs_converged_reference[case3-19x4-pepper]':
-        "0.9.35: ('case3', 'pepper', 8.963489991253848e-05, 0.015353808310878885); 0.9.34 passed",
-    'test_missing_knots.py::test_vs_converged_reference[case3-19x4-pepper_autograd]':
-        "0.9.35: ('case3', 'pepper_autograd', 8.963489985513995e-05, 0.015353808302537745); 0.9.34 passed",
-    'test_pepper_nanlinear_matlab_validation.py::test_nanlinear_vs_converged[s52_b4_C2h_h1-pepper]':
-        "0.9.35: ('s52_b4_C2h_h1', 'pepper', 9.031449741647712e-05, 0.015340235110567957); 0.9.34 passed",
-    'test_pepper_nanlinear_matlab_validation.py::test_nanlinear_vs_converged[s52_b4_C2h_h1-pepper_autograd]':
-        "0.9.35: ('s52_b4_C2h_h1', 'pepper_autograd', 9.03144973590786e-05, 0.015340235102150884); 0.9.34 passed",
-    'test_pepper_nanlinear_matlab_validation.py::test_nanlinear_vs_converged[s52_b4_D2h_h1-pepper]':
-        "0.9.35: ('s52_b4_D2h_h1', 'pepper', 8.963489991253848e-05, 0.015353808310878885); 0.9.34 passed",
-    'test_pepper_nanlinear_matlab_validation.py::test_nanlinear_vs_converged[s52_b4_D2h_h1-pepper_autograd]':
-        "0.9.35: ('s52_b4_D2h_h1', 'pepper_autograd', 8.963489985513995e-05, 0.015353808302537745); 0.9.34 passed",
-    'test_pepper_nanlinear_matlab_validation.py::test_nanlinear_vs_converged[s52_rhombic_h1-pepper]':
-        "0.9.35: ('s52_rhombic_h1', 'pepper', 1.1887583114544853e-06, 0.0018221315110593284); 0.9.34 passed",
-    'test_pepper_nanlinear_matlab_validation.py::test_nanlinear_vs_converged[s52_rhombic_h1-pepper_autograd]':
-        "0.9.35: ('s52_rhombic_h1', 'pepper_autograd', 1.188758303238835e-06, 0.001822131498003283); 0.9.34 passed",
-    'test_sphgrid_maxphi_matlab_validation.py::test_spectrum_vs_converged[d4h_d2hgrid_wide-pepper]':
-        "0.9.35: ('d4h_d2hgrid_wide', 'pepper', 8.963489991253848e-05, 0.015353808310878885); 0.9.34 passed",
-    'test_sphgrid_maxphi_matlab_validation.py::test_spectrum_vs_converged[d4h_d2hgrid_wide-pepper_autograd]':
-        "0.9.35: ('d4h_d2hgrid_wide', 'pepper_autograd', 8.963489985513995e-05, 0.015353808302537745); 0.9.34 passed",
-    'test_sphgrid_maxphi_matlab_validation.py::test_spectrum_vs_converged[oh_auto-pepper]':
-        "0.9.35: ('oh_auto', 'pepper', 0.002453717596823446, 0.07328379909540493); 0.9.34 passed",
-    'test_sphgrid_maxphi_matlab_validation.py::test_spectrum_vs_converged[oh_auto-pepper_autograd]':
-        "0.9.35: ('oh_auto', 'pepper_autograd', 0.0024537175953391888, 0.07328379907211692); 0.9.34 passed",
-})
+
+
+# ---------------------------------------------------------------------------
+# Converged references (field axis 16-32x finer, GridSize [181 1], point values at x_k)
+# ---------------------------------------------------------------------------
+
+def converged_refs(path):
+    """``np.load(path)`` (ref_missing_knots.npz) as a dict, plus the converged references of
+    ``ref_converged_b85.npz`` (generate_converged_b85_refs.py) under ``'b85:<case>'``."""
+    from pathlib import Path
+    path = Path(path)
+    out = dict(np.load(path))
+    for k, v in np.load(path.parent / 'ref_converged_b85.npz').items():
+        out['b85:' + k] = v
+    return out

@@ -35,6 +35,7 @@ import pytest
 import torch
 from scipy.io import loadmat
 
+from torchspin.tests._b85 import converged_refs
 from torchspin import SpinSystem, Experiment, Options, pepper
 from torchspin.pepper_autograd import pepper_autograd
 
@@ -52,10 +53,13 @@ AMP_TOL = 1e-4
 # EasySpin case -> converged reference, and bounds on (1 - cosine, max|dev|)
 # against it (interior; measured x 1.05, see the module docstring)
 CONV = {
-    's52_b4_D2h_h1': ('case3', 1.01e-4, 1.42e-2),
+    # *_h1 cases: B85 (0.9.35) against the converged reference (16-32x finer axis, [181 1], point
+    # values at x_k; ref_converged_b85.npz), measured x 1.05; 0.9.34: 1 - cos 3.67e-2 (D2h, C2h),
+    # 2.54e-3 (rhombic), max dev 0.337, 0.337, 8.72e-2
+    's52_b4_D2h_h1': ('b85:case3', 3.49e-4, 3.70e-2),
     's52_b4_D2h_h0': ('case3_h0', 2.45e-6, 3.47e-3),
-    's52_b4_C2h_h1': ('case3_c2h', 1.02e-4, 1.42e-2),
-    's52_rhombic_h1': ('case3r', 1.22e-6, 1.81e-3),
+    's52_b4_C2h_h1': ('b85:case3_c2h', 3.49e-4, 3.70e-2),
+    's52_rhombic_h1': ('b85:case3r', 4.05e-6, 3.56e-3),
 }
 # measured vs EasySpin since 0.9.28 (1 - cosine, amplitude ratio)
 DEVIATION = {
@@ -129,7 +133,7 @@ def test_nanlinear_vs_converged(cases, name, func):
     fn = pepper if func == 'pepper' else pepper_autograd
     x, spc = fn(sys, exp, opt)
     x = x.detach().cpu().numpy().ravel(); spc = spc.detach().cpu().numpy().ravel()
-    r = np.load(CONVERGED)
+    r = converged_refs(CONVERGED)
     assert np.allclose(x, r[rn + '_x'], rtol=0, atol=1e-9)
     c, d = gen.metrics(spc, r[rn], gen.interior(x, sys))
     print(f'{name} {func}: 1 - cosine {c:.4e}, max dev {d:.4e}')

@@ -56,10 +56,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   numbers (`_b85.MOVED`, applied in conftest); `test_b85_easyspin_centered.py` re-runs them
   against EasySpin mapped onto centered bins: 73 pass with their original tolerances, 95 (box-
   binning-calibrated tolerances, stick spectra) are strict xfail there with both numbers.
-- `ref_missing_knots.npz` regenerated with the centered bins. Sixteen coarse- vs converged-grid
-  bounds (measured before with ~10 % margin) are exceeded by 2-27 % and one d/dlw
-  central-difference check by 1.1e-7 (bound 4e-8); strict xfail (`_b85.MOVED_TORCHSPIN`)
-  pending a re-baselining decision.
+- `ref_missing_knots.npz` regenerated with the centered bins. The sixteen coarse- vs
+  converged-grid checks the centered bins moved (case3/d4h_d2hgrid_wide/s52_b4_D2h_h1,
+  s52_b4_C2h_h1, s52_rhombic_h1, b50_h1, b50_stick_wide, oh_auto; pepper and pepper_autograd) now
+  compare with `ref_converged_b85.npz` (`generate_converged_b85_refs.py`: field axis 16-32x finer,
+  GridSize [181 1], point values at x_k), bounds = measured x 1.05; 0.9.34 fails all of them
+  (e.g. case3 max deviation 0.337 vs bound 3.70e-2). The case1 d/dlw central-difference check in
+  `test_missing_knots.py` is removed: its reference is limited by a ~5e-8 step in the weighted sum
+  as a function of lw (root-search round-off, identical on 0.9.34; the 4e-8 bound held by
+  chance); lw is now checked against the converged gradient.
+- `test_projection_accuracy.py`: rhombic lw 0.3 mT, 512 points vs a converged reference (max
+  error 3.73e-2, 0.9.34 0.321), d/dlw and d/dg_y vs converged values (1.1e-3 and 3.3e-5;
+  0.9.34 5.2e-2 and 3.3e-3), isotropic-direction gradient at 4096 points vs converged O3
+  (3.2e-2; 0.9.34 wrong sign). All four fail on 0.9.34.
+- Kernel choice: a centered box with a linear split below one bin (branch `dev/b85-box`, not
+  merged) was compared against converged references: 5-30 % lower forward error for narrow
+  lines, but d/dg_y 2.0e-3 (hat 3.3e-5) and a gradient kink at facet width dx; the hat was kept
+  (KNOWN_LIMITATIONS.md).
 - Rewritten for the new kernel: `test_projecttriangles_edge_bins.py` (exact rational hat
   reference), the B47 helper tests of `test_pepper_exactzero.py` (the `_ramp_bins` source
   patches are gone; uncovered bins exactly 0 vs the loop reference), the reference loops

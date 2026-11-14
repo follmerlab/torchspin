@@ -52,8 +52,6 @@ def _mark_b85_moved(items):
         nid = item.nodeid.split('tests/')[-1]
         if nid in table:
             item.add_marker(_b85.xfail_b85(table[nid]))
-        elif nid in _b85.MOVED_TORCHSPIN:
-            item.add_marker(_b85.xfail_b85_torchspin(_b85.MOVED_TORCHSPIN[nid]))
 
 
 if os.environ.get('TORCHSPIN_B85_CENTERED'):

@@ -37,6 +37,7 @@ import pytest
 import torch
 from scipy.io import loadmat
 
+from torchspin.tests._b85 import converged_refs
 from torchspin.experiment import Experiment, Options
 from torchspin.pepper import pepper
 from torchspin.pepper_autograd import pepper_autograd
@@ -60,7 +61,10 @@ DEVIATION = {
 }
 CONV = {
     'd4h_auto_wide': ('case3', 4.82e-5, 7.34e-3), 'd4h_explicit_wide': ('case3', 4.82e-5, 7.34e-3),
-    'd4h_d2hgrid_wide': ('case3', 1.01e-4, 1.42e-2), 'oh_auto': ('oh_auto', 2.13e-3, 6.72e-2),
+    # d4h_d2hgrid_wide, oh_auto: B85 (0.9.35) against the converged reference (16-32x finer axis,
+    # [181 1], point values at x_k; ref_converged_b85.npz), measured x 1.05; 0.9.34:
+    # 1 - cos 3.67e-2 / 4.32e-2, max dev 0.337 / 0.315
+    'd4h_d2hgrid_wide': ('b85:case3', 3.49e-4, 3.70e-2), 'oh_auto': ('b85:oh_auto', 2.52e-3, 7.81e-2),
 }
 
 # Measured with the fix (pepper and pepper_autograd, all 9 cases): cosine
@@ -157,7 +161,7 @@ def test_spectrum_vs_converged(ref, name, func):
     rn, cmax, dmax = CONV[name]
     x, spc = (pepper if func == 'pepper' else pepper_autograd)(sys, exp, opt)
     x = x.detach().numpy(); spc = spc.detach().numpy()
-    r = np.load(CONVERGED)
+    r = converged_refs(CONVERGED)
     assert np.allclose(x, r[rn + '_x'], rtol=0, atol=1e-9)
     cs, d = gen.metrics(spc, r[rn], gen.interior(x, sys))
     print(f'{name} {func}: 1 - cosine {cs:.3e}, max dev {d:.3e}')
