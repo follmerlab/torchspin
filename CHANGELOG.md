@@ -88,6 +88,40 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   The B48 gradient test runs with `PaddingMultiplier=0` (padding copies the clipped end bins
   225 times and limits central differences to ~1e-6; without it they converge to 1e-8).
 
+## [0.9.26] — 2026-11-12
+
+### Fixed
+
+- **Gradients on systems with an accidental grid symmetry (B1).** The automatic grid was
+  chosen by `hamsymm` at the current values, outside the autograd graph, so a symmetry that
+  the differentiated perturbation breaks was used anyway: an axial g/A given as independent
+  numbers got the Dinfh grid (Cu(II), g = [2.05 2.05 2.25], A = [40 40 550] MHz: dL/dg =
+  [-11.51e6, +0.09e6, -2.78e6], converged central differences -5.7189e6 for g_x and g_y;
+  now [-5.7189e6, -5.7189e6, -2.8021e6]), an isotropic g given as three numbers the O3 grid
+  ([4.57e6, 4.57e6, -4.57e6] vs ~1.598e6 each), an axial g with a rhombic A rotated about z
+  D2h (now C2h), differentiated Euler angles a grid whose frame does not move with them (now
+  Ci). `salt` likewise (14N ENDOR: dA = [-0.217, 0, 0.053], now -0.1079 for x and y, as the
+  central differences).
+
+### Changed
+
+- **The automatic grid follows the differentiated parameterization (B1).** New
+  `torchspin.hamsymm.grid_symmetry`, used by pepper, pepper_autograd, salt, saffron,
+  saffron_thyme, orisel, nucfrq2d and the broadband autograd model. Without grad on a
+  symmetry input nothing changes (bit-identical, no extra cost). With grad, the autograd
+  leaves get a generic perturbation and each input moves along `J @ dp` (double-backward
+  JVP on the existing graph; field-level perturbation if double backward is unsupported);
+  two independent perturbations must agree on group and frame, else Ci. A scalar g keeps
+  O3 and `[g_perp, g_perp, g_par]` from two leaves keeps Dinfh; an axial g given as three
+  independent numbers now uses D2h (0.33 s vs 0.016 s forward + backward for the Cu(II)
+  case), and its spectrum differs from the forward-only one by the grid discretization
+  error (0.1 % there; up to ~17 % for an isotropic g given as three numbers, whose lines the
+  projection bins). Set `Options.GridSymmetry` explicitly to compare the two.
+  In `test_pepper_autograd.py` two pepper == pepper_autograd checks had a grad g given as
+  three numbers (axial values): `test_perturbation_order_follows_method` now names
+  `GridSymmetry='D2h'` on both sides; the isotopologue check builds g from two leaves
+  (`[g_x, g_perp, g_perp]`), which keeps the automatic Dinfh grid about x (no explicit
+  GridSymmetry reproduces that frame). Tolerances unchanged.
 ## [0.9.25] — 2026-11-12
 
 ### Fixed
@@ -142,6 +176,39 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   0.0002; tolerance 0.10 → 0.001, peak ratio 20 % → 0.2 %).
   `test_resfields_single_autograd.py::test_compute_strain_widths_equals_batch` passes the
   mI labels to the batch call (same tolerance).
+
+## [0.9.24] — 2026-11-12
+
+### Fixed
+
+- **Strains are part of the automatic grid symmetry (B82, deliberate deviation from
+  EasySpin).** `hamsymm` ignored HStrain, gStrain, AStrain and DStrain, so an axial g with a
+  rhombic strain got the Dinfh grid, one meridian: S = 1/2, g = [2.05 2.05 2.15], lw 0.3,
+  HStrain = [200 20 20] MHz (or gStrain = [0.02 0.002 0.002]), 9.5 GHz, GridSize [31 4] was
+  79 % (76 %) of the maximum off the D2h spectrum, while D2h [31 4] and [91 4] agree to 0.9 %
+  (0.4 %). EasySpin's hamsymm has the same gap (78.7 % / 76.0 % in MATLAB,
+  `tests/data/ref_hamsymm_strain.mat`). Each strain now enters as one more tensor in its own
+  frame (HStrain molecular, gStrain g, AStrain A, DStrain D), in both the geometric and the
+  eigenvalue analysis, for every consumer of the automatic symmetry; strain-free systems keep
+  EasySpin's group and frame (bit-identical spectra). Two EasySpin DStrain references
+  (`multidstrain`, `multidstrain_31`) are now strict xfails: EasySpin is 5.9 % off a fine D2h
+  grid there, torchspin 0.2 % / 0.07 %. `orisel`'s default grid for a tilted g with
+  molecular-frame HStrain is Ci instead of EasySpin's D2h (the EasySpin weight check in
+  `test_orisel.py` runs that case on EasySpin's own orientations).
+- **saffron, saffron_thyme, nucfrq2d and the broadband autograd model used hamsymm's grid in
+  the wrong frame (B83).** They dropped the symmetry frame (pepper rotates the grid into the
+  molecular frame) and replaced a hamsymm error by a silent C1 grid. A tilted system now gives
+  the result of the untilted one (saffron 3pESEEM: was 1.9 % off; saffron_thyme 2pESEEM 111 %;
+  nucfrq2d missed part of the frequency range; broadband, axial g along x vs z: 78 %); hamsymm
+  errors propagate. New `torchspin.hamsymm.grid_angles_to_molecular`.
+- **gStrain with a g given as `Ham110`/`Ham112` (0.9.13, B56) in the strain tensor of the
+  grid symmetry.** `SpinSystem` sets `g = 0` for such systems, and the gStrain tensor divided by
+  it (inf, a wrong grid; with a gFrame `eigh` failed before the strain widths' own check). It now
+  uses the g-equivalent principal values (`ham_linear_g`, diagonal in the g frame) that the
+  strain widths use. With a gFrame the Ham and the g system both get Ci, in different frames
+  (spectra 1.0e-3 of the maximum apart; on the same Ci grid 7.8e-14). Against EasySpin's g
+  spectrum (EasySpin's grid ignores the strain) that case is a strict xfail (cosine 0.997209);
+  against a converged C1 [91 1] grid 1 - cos is 1.07e-7 (EasySpin 2.78e-3).
 
 ## [0.9.23] — 2026-11-12
 
@@ -232,6 +299,90 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - New `torchspin/tests/test_resfields_single_autograd.py` (44 tests; 42 fail on 0.9.13).
 
+## [0.9.19] — 2026-11-12
+
+### Fixed
+
+- **`levelsplot(..., mwFreq=...)` draws the resonance transitions again; errors in the resonance
+  computation propagate (B78).** levelsplot.py:167-176 called `resfields(sys, exp, dict)`, but
+  `resfields` takes `(H0, mux, muy, muz, phi, theta, exp, opt)`; the `TypeError` was swallowed by
+  a bare `except Exception: pass` (levelsplot.py:244), so no transition line, stick spectrum or
+  "no EPR resonances" note was ever drawn. Now as EasySpin levelsplot.m:244-272: the resonances
+  of the one orientation (`resfields_batch`, `Threshold` 0, lab axes `erot([phi, theta, chi])` as
+  EasySpin's `Exp.SampleFrame = [-chi -theta -phi]`, B1 along lab x), intensities without the
+  dB/dE factor (`Freq2Field` 0), relative to the largest, lines below `PlotThreshold` skipped,
+  each drawn between its two levels at the resonance field and colored between the allowed and
+  forbidden colors by relative intensity. Against EasySpin's own levelsplot figure (5 cases,
+  S = 1/2 with 14N, S = 1, S = 3/2): same lines, fields within 2.9e-5 mT (torchspin's are exact
+  roots; EasySpin's are spline-model roots), relative intensities within 1.9e-4 (EasySpin
+  interpolates eigenvectors between knots; against its resfields with `RediagLimit` 2 the
+  difference is 6e-9). The `try`/`except` is gone. The level diagram itself is unchanged. EasySpin
+  references: tests/data/ref_levelsplot.mat.
+## [0.9.18] — 2026-11-11
+
+### Fixed
+
+- **`pepper_autograd` no longer returns an all-zero spectrum for isotropic systems (B66).**
+  On the O3 grid (automatic for isotropic g and A without ZFS, or `GridSymmetry='O3'`) it sent
+  the single orientation to the triangle projection, whose O3 triangulation is empty, and
+  returned zeros with zero gradient. Because `pepper` routes to pepper_autograd when an input
+  requires grad, `pepper` with an isotropic `g` tensor that requires grad returned zeros as
+  well, so a fit of any isotropic system saw no spectrum and no gradient. S = 1/2, g = 2.0,
+  lw [1 0], 9.5 GHz, Range [330 350]: 0.0 before, 738.23 now (pepper 738.23). pepper_autograd
+  now takes pepper's O3 branch: every line gets an exact template at its position (Gaussian
+  for `Sys.lw(1)` or a strain width, Lorentzian for `Sys.lw(2)` alone, the rest convolved),
+  with the same resonance search (matrix or perturbation, `Opt.Transitions`,
+  `QuadraticZeeman`), Temperature, mwMode, HStrain/HStrainL and ModAmp. It equals pepper to
+  ≤ 5e-11 on 55 isotropic cases and EasySpin to cosine > 0.999995 and amplitude 1 ± 1e-5
+  (tests/data/ref_pepper_isotropic.mat); gradients w.r.t. g, A, lw and HStrain match central
+  differences of pepper. A powder grid that yields no usable facets now raises
+  `RuntimeError` instead of returning zeros. pepper itself is unchanged.
+## [0.9.17] — 2026-11-11
+
+### Fixed
+
+- **Euler frame angles stay on the autograd graph (B3).** A `gFrame`, `AFrame`, `DFrame`,
+  `QFrame`, `eeFrame`, `nnFrame`, `sigmaFrame` or `BFrame` tensor with `requires_grad=True`
+  used to get no gradient, without a warning: every call site read the angles with
+  `.tolist()` or `float()` before `erot`. `erot` now builds the matrix from torch operations
+  when an angle requires grad (same formula; otherwise the float path as before), and the
+  angles are passed as tensors in `ham_ez`, `ham_hf`, `ham_zf` (D and the Stevens `BFrame`
+  rotation, now a torch Wigner D), `ham_nq`, `ham_ee`, `ham_nn`, `ham_nz`, `strainwidth`
+  (gStrain, AStrain and DStrain frames), `resfields_perturb`, `resfreqs_perturb`,
+  `endorfrq_perturb`, `resfields_hybrid` and `salt`. The zero-angle check that skips the
+  rotation is made on detached values and does not skip a frame that requires grad. With a
+  nonzero `BFrame` the Stevens `B` coefficients were detached too; they are not any more.
+  `pepper` routes a system whose only grad tensor is a frame to `pepper_autograd`, `saffron`
+  switches to its differentiable time-domain accumulation for frames as it does for tensors,
+  and `salt`'s field-swept mode raises `NotImplementedError` for grad frames as it does for
+  g, A, D, Q and ee. Gradients equal central differences (`ham`, `levels`, batched strain
+  widths: 1e-8; `pepper_autograd` powder, perturbation and `Exp.Orientations`, `salt`
+  fixed-field, `saffron`: 1e-5), also at beta = 0 and beta = pi.
+- **`hamsymm` with a frame that requires grad.** The eigenvalue path (full tensors, Stevens
+  terms) called `.numpy()` on the frame and raised `RuntimeError`. `hamsymm` now runs without
+  a graph: the point group and grid frame are a discrete decision on the detached values.
+- Values without grad are unchanged: 466 arrays (`ham`, `H0`, `muz` for 150 random systems
+  with every frame type, 16 `pepper` spectra with strains) and 30 outputs of `ham`, `pepper`
+  (matrix and perturb), strain widths, `salt` and `saffron` with tilted frames were
+  bit-identical to 0.9.0. The test suite checks the property within the build: with a frame
+  that requires grad the same 30 configurations give the float path's values (bit-identical;
+  `ham` with `BFrame` within 4 ulp, `pepper_autograd` with a grad `gFrame` within 1e-11),
+  and a tensor frame without grad is bit-identical to a list.
+## [0.9.16] — 2026-11-11
+
+### Fixed
+
+- **`pepper_autograd` with `Exp.Orientations` now honors `Options.QuadraticZeeman` and
+  `Options.Transitions`, as `pepper` does (B64).** Its orientation branch called
+  `resfields_batch` without the higher-order Zeeman operators and without the user's level
+  pairs, so the spectrum silently equaled the one without the option: for S = 1,
+  D = [300 30] MHz with `Sys.Ham220`/`Ham222` and `QuadraticZeeman=True` it differed from pepper
+  by 1.04 (one orientation) and 1.03 (five) of the maximum, and with `Transitions=[[1,2]]` by
+  1.00 and 0.39. Both now equal pepper to ≤ 5e-14. `Method='perturb'` with either option now
+  raises on this path too, as in pepper and on the powder path. The powder path, and every
+  spectrum without these options, is unchanged. EasySpin references:
+  tests/data/ref_pepper_orientations_qz.mat (crystal sums as the exact χ average; 2.5e-3 with
+  Ham2xx, which is EasySpin's linear-moment dB/dE, and 1.9e-4 for the level-pair selection).
 ## [0.9.15] — 2026-11-11
 
 ### Fixed

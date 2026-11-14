@@ -283,7 +283,7 @@ def orisel(sys, exp, opt: Optional[OriselOptions] = None, *, per_transition: boo
             AveragedIntensity=getattr(opt, 'AveragedIntensity', True))
 
     from torchspin.ham import ham
-    from torchspin.hamsymm import hamsymm
+    from torchspin.hamsymm import grid_symmetry
     from torchspin.sphgrid import sphgrid
 
     Field = _required(exp, 'Field', 'mT')
@@ -313,7 +313,7 @@ def orisel(sys, exp, opt: Optional[OriselOptions] = None, *, per_transition: boo
     else:
         sym = opt.GridSymmetry
         if sym in ('auto', ''):
-            sym, R = hamsymm(sys)
+            sym, R = grid_symmetry(sys)
             grid_frame = R.T          # EasySpin GridFrame: v_mol = GridFrame @ v_sym
         else:
             grid_frame = torch.eye(3, dtype=torch.float64)

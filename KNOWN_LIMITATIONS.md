@@ -172,6 +172,16 @@ list is read as a MATLAB row vector. Deliberate differences from EasySpin:
 - **Not checked:** `sigma`, `sigmaFrame`, `nn`, `nnFrame` (wrong shapes still fail late) and
   negative widths (`lw`, strains), which EasySpin rejects.
 
+## `levelsplot` resonances (fixed 0.9.19)
+
+Before 0.9.19 `levelsplot(..., mwFreq=...)` drew no transitions: the resonance call raised a
+`TypeError` that was swallowed (B78). It now follows EasySpin levelsplot.m:244-272 and errors
+propagate. Differences from EasySpin, both from torchspin diagonalizing exactly at every resonance
+field: fields differ by up to 2.9e-5 mT (EasySpin's are roots of its spline level model) and
+relative intensities (line colors, stick heights) by up to 1.9e-4 (EasySpin interpolates
+eigenvectors between knots, `RediagLimit` 0.95; see § Pepper — round 3). Field-quadratic and higher
+`Sys.Ham*` terms are dropped, as for the level diagram (§ Simulator — field-quadratic Zeeman terms).
+
 ## `SpinSystem` field assignment normalizes (0.8.7)
 
 Since 0.8.7 `sys.<field> = value` rebuilds the spin system with the new value, so the
@@ -523,6 +533,8 @@ make pepper sum stick spectra over the given field directions with χ-averaged r
 - **pepper_autograd**: field sweeps only (no frequency sweeps, photoselection,
   `initState`, `mwPhase`, hybrid, `Opt.separate`, as for its powder path). Gradients
   w.r.t. the orientation angles flow through the resonance search but are not tested.
+  `Options.QuadraticZeeman` and `Options.Transitions` apply as in pepper (before 0.9.16
+  this path ignored both; B64).
 ## Simulator — transition selection, `Options.Transitions` (0.7.5)
 
 `Options.Transitions` (EasySpin `Opt.Transitions`) replaces pepper's automatic
@@ -753,7 +765,8 @@ terms are included as H(B) = H0 − B n·μ + B² n·G2·n + B³ G3[n,n,n], whic
 `ham(Sys, B·n)`.
 
 - **Supported:** `pepper` and `pepper_autograd` with `Method='matrix'` (powder
-  grids including O3, crystals, field and frequency sweeps, strains), `levels`,
+  grids including O3, crystals, `Exp.Orientations` (pepper_autograd from 0.9.16),
+  field and frequency sweeps, strains), `levels`,
   `resfreqs_matrix`, and `resfields_batch`/`resfreqs_batch` (keyword
   `zeeman_ho=`).
 - **Raise `NotImplementedError`** when the option is on and a nonzero lB ≥ 2 term
@@ -821,6 +834,90 @@ Hamiltonian.
   checked for shape and Hermiticity (1e-10 relative), and `coeff` must be real.
 - **Gradients.** Reverse mode works through `levels`, `ham` and `pepper_autograd`; forward
   mode (dual numbers) works through `ham`/`levels`, not through pepper (known issue).
+
+## Automatic grid symmetry — strains are symmetry inputs (deliberate deviation from EasySpin, 0.9.24)
+
+`hamsymm`, and with it the automatic `GridSymmetry` of pepper, pepper_autograd, salt, saffron,
+saffron_thyme, orisel, nucfrq2d and the broadband autograd model, treats every strain as one
+more tensor in its own frame, because the strain widths depend on the field direction (B82):
+
+- `HStrain` / `HStrainL`: `diag(HStrain²)` in the molecular frame.
+- `gStrain`: per electron `G∘G` with `G = R_g2M diag(gStrain/g) R_g2M'` (the element-wise
+  square the width formula uses, so a tilted g frame can give a lower group than g itself).
+- `AStrain` (single electron, first nucleus): `A∘A` and `G∘A`, A frame.
+- `DStrain`: Dinfh about the D-frame z axis without E strain, otherwise D2h in the D frame
+  (also with `DStrainCorr`).
+
+The geometric analysis combines them after the Hamiltonian tensors; the eigenvalue analysis
+also compares the strain widths at its probe directions. Strain-free systems, and strains that
+share the Hamiltonian's symmetry, get exactly EasySpin's group and frame.
+
+EasySpin's hamsymm.m has no strain term (its `p_gridsetup.m` only lowers Dinfh to D2h for
+`initState`, which torchspin's pepper keeps). For S = 1/2, g = [2.05 2.05 2.15], lw 0.3 mT,
+HStrain = [200 20 20] MHz (or gStrain = [0.02 0.002 0.002]), 9.5 GHz, GridSize [31 4], EasySpin
+picks Dinfh and its spectrum is 78.7 % (76.0 %) of the maximum off its own D2h spectrum, while
+D2h [31 4] and [91 4] agree to 0.9 % (0.4 %) (EasySpin main, MATLAB R2024b,
+`tests/data/generate_hamsymm_strain_refs.m`; torchspin < 0.9.24 behaved the same). torchspin's
+default spectrum now matches EasySpin's forced-D2h one. Consequences:
+
+- Two `test_pepper_dstrain_matlab_validation.py` EasySpin cases (two S = 1 spins with axial D
+  and E strain) are strict xfails: EasySpin's Dinfh spectrum is 5.9 % off a fine D2h grid,
+  torchspin's default 0.2 %; with Dinfh forced, torchspin still reproduces EasySpin.
+- `orisel` with a molecular-frame `HStrain` can return a lower-symmetry (larger) default grid
+  than EasySpin (tilted rhombic g + HStrain: Ci instead of D2h).
+- Systems with strain can take longer (more orientations).
+
+Since 0.9.24 saffron, saffron_thyme, nucfrq2d and the broadband autograd model also apply
+hamsymm's symmetry frame (rotate the grid into the molecular frame, as pepper does) and let
+hamsymm errors propagate; before, a tilted symmetry frame gave wrong results there (B83).
+
+## Automatic grid symmetry — differentiated parameters (0.9.26)
+
+The powder grid is chosen outside the autograd graph, so it must hold along every
+direction the gradient measures, not only at the current values (B1). Before 0.9.26 an
+axial g with grad used the Dinfh grid (Cu(II), g = [2.05 2.05 2.25], A = [40 40 550] MHz:
+dL/dg = [-11.51e6, +0.09e6, -2.78e6] vs converged central differences -5.7189e6 for g_x
+and g_y), an isotropic g the O3 grid ([4.57e6, 4.57e6, -4.57e6] vs ~1.598e6 each), and salt
+likewise (14N ENDOR dA = [-0.217, 0, 0.053] vs -0.1079 for x and y).
+
+`torchspin.hamsymm.grid_symmetry` (used wherever the symmetry is automatic):
+
+- **No symmetry input requires grad** (tensors, frames, `B`, `Ham`, `CF*`, `H0Extra`,
+  strains): exactly `hamsymm`, bit-identical results, no extra cost.
+- **Otherwise: the symmetry of the parameterization.** The autograd leaves behind the
+  grad-requiring inputs get a deterministic generic perturbation `dp`; each input moves
+  along `J @ dp` (double-backward Jacobian-vector product on the existing graph; the graph
+  is kept and nothing is written to `.grad`), scaled to 1e-6 relative (Euler angles
+  1e-2 rad, above the 0.2° collinearity tolerance), and `hamsymm` runs on that copy. An
+  input that is itself a leaf (a tensor passed straight to `SpinSystem`) is its own
+  parameterization. Results: a scalar g keeps O3; `[g_perp, g_perp, g_par]` from two leaves
+  keeps Dinfh; an axial g given as three independent numbers gets D2h, an isotropic one
+  D2h; an axial g with a rhombic A rotated about z C2h; differentiated Euler angles or
+  full-tensor entries Ci.
+- **Frame check.** Two independent perturbations are compared; if their groups differ or
+  their frames are not the same axes up to order and sign (the symmetry frame moves with
+  the parameters), the grid is Ci, which is exact for any Hamiltonian.
+- **Fallback.** If the graph does not support double backward, every grad-requiring input
+  is perturbed on its own (field-level), which is never less safe but may cost a lower
+  group (a scalar g would get D2h).
+- **Cost.** The decision itself takes ~0.5 ms (two `hamsymm` runs and one JVP; the
+  first call in a process ~0.2 s for autograd set-up). A gradient run on an axial system
+  given as three independent numbers uses D2h: forward + backward 0.33 s vs 0.016 s on
+  Dinfh (Cu(II), GridSize [31 4], 1024 points).
+- **Spectra.** A gradient run whose parameterization breaks an accidental symmetry differs
+  from the forward-only spectrum by the grid discretization error: 0.1 % of the maximum
+  for that Cu(II) case, but for an isotropic g given as three numbers the projection bins
+  every line (all orientations resonate at one field) where O3 draws an exact template:
+  17 % (first harmonic, lw 1 mT, 512 points over 60 mT; 2.6 % with 4096 points), as `pepper`
+  with a forced D2h grid. Set `Options.GridSymmetry` explicitly to compare gradient and
+  forward-only runs, or parameterize the symmetry you mean (a scalar g, shared leaves).
+- The gradient is the exact derivative of the forward model on the chosen grid. Along
+  directions that keep the accidental symmetry (g_z of an axial g given as three numbers)
+  the forward-only model stays on its own grid, so its finite difference differs by the
+  same discretization error.
+- At exactly isotropic g the `pepper_autograd` gradient on any fixed non-O3 grid (D2h, Ci)
+  is off the central difference by ~8e-4 relative (coincident resonance fields in the
+  projection); 1e-4 away from isotropy it is exact.
 
 ## `orisel` — differences from EasySpin (0.9.0)
 
@@ -1443,6 +1540,18 @@ a kink): relative norm error 6e-2 / 8e-3 / 1.5e-4 / 2e-8 for steps 1e-4 /
 1e-5 / 1e-6 / 1e-7 in g, identically for `pepper` and `pepper_autograd`.
 Optimizers see an almost-everywhere exact gradient of a piecewise-smooth model.
 
+Isotropic systems (grid symmetry O3, automatic or `GridSymmetry='O3'`) have one
+orientation and no facets: `pepper_autograd` draws every line with an exact template
+at its position, as `pepper` does (Gaussian for `Sys.lw(1)` or a strain width,
+Lorentzian for `Sys.lw(2)` alone, the rest convolved), so line positions,
+intensities and widths are differentiable in g, A, lw, HStrain and Temperature.
+Before 0.9.18 it sent the single orientation to the triangle projection, whose O3
+triangulation is empty, and returned an all-zero spectrum with zero gradient, also
+through `pepper()` with an isotropic parameter that requires grad (B66). A powder
+grid that yields no usable facets now raises `RuntimeError` instead of returning
+zeros; no grid that `Options` accepts (GridSize ≥ 2) does so. Sets of equivalent
+nuclei (`Sys.n > 1`) still raise `NotImplementedError` on every grid, O3 included.
+
 The earlier stand-alone models remain as `method='broadband'` and
 `method='analytical'` (deprecated). They sum discrete orientations without
 interpolation or projection and carry orientation-grid ripple at GridSizes
@@ -1452,7 +1561,16 @@ derivative), against 0.9998–1.0000 / 0.999 for `pepper`; the ripple only falls
 below 1 % of the signal around GridSize 91. Do not train models on their output.
 
 Strains are differentiable (HStrain, gStrain, AStrain; DStrain magnitudes
-are constants). Not yet differentiable (`pepper_autograd` raises
+are constants). Euler frame angles of the spin system (`gFrame`, `AFrame`,
+`DFrame`, `QFrame`, `eeFrame`, `nnFrame`, `sigmaFrame`, `BFrame`) are
+differentiable since 0.9.17 (before, they were detached silently). The
+automatic grid follows the differentiated parameterization (0.9.26, § Automatic
+grid symmetry — differentiated parameters): with differentiated frame angles the
+symmetry frame moves with them, so the grid is Ci, and the spectrum can differ
+from the forward-only one (detached values, possibly a higher group) by the grid
+discretization error; fix `GridSymmetry` to compare the two. The crystal frames
+`Exp.SampleFrame` and `Exp.MolFrame` are
+not differentiable (crystals raise, below). Not yet differentiable (`pepper_autograd` raises
 `NotImplementedError`, `pepper()` itself is unchanged): `Exp.mwPhase`,
 partial ordering, photoselection, crystals, frequency sweeps, `Sys.initState`.
 `salt` (fixed-field mode) and `garlic` (all modes) are

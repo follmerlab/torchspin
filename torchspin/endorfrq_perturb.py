@@ -144,7 +144,7 @@ def endorfrq_perturb(
         g = sys.g[:3, :].to(dt)
     else:
         g_diag = torch.diag(sys.g[0, :].to(dt))
-        R_g2M = erot(sys.gFrame[0, :].detach().tolist()).T
+        R_g2M = erot(sys.gFrame[0, :]).T
         Rg = torch.as_tensor(R_g2M, dtype=dt, device=device)
         g = Rg @ g_diag @ Rg.T
 
@@ -161,7 +161,7 @@ def endorfrq_perturb(
             D_mat = sys.D[:3, :].to(dt)
         else:
             D_diag = torch.diag(sys.D[0, :].to(dt))
-            R_D2M = erot(sys.DFrame[0, :].tolist()).T
+            R_D2M = erot(sys.DFrame[0, :]).T
             RD = torch.as_tensor(R_D2M, dtype=dt, device=device)
             D_mat = RD @ D_diag @ RD.T
         # Traceless (Iwasaki requirement)
@@ -222,7 +222,7 @@ def endorfrq_perturb(
             A_mat = sys.A[3 * iNuc : 3 * iNuc + 3, :].to(dt)
         else:
             A_diag = torch.diag(sys.A[iNuc, :].to(dt))
-            R_A2M = erot(sys.AFrame[iNuc, :].tolist()).T
+            R_A2M = erot(sys.AFrame[iNuc, :]).T
             RA = torch.as_tensor(R_A2M, dtype=dt, device=device)
             A_mat = RA @ A_diag @ RA.T
 
@@ -238,7 +238,7 @@ def endorfrq_perturb(
             else:
                 Q_diag = torch.diag(sys.Q[iNuc, :].to(dt))
                 if hasattr(sys, 'QFrame') and sys.QFrame is not None:
-                    R_Q2M = erot(sys.QFrame[iNuc, :].tolist()).T
+                    R_Q2M = erot(sys.QFrame[iNuc, :]).T
                     RQ = torch.as_tensor(R_Q2M, dtype=dt, device=device)
                     Q_mat = RQ @ Q_diag @ RQ.T
                 else:
