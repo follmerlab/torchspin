@@ -26,6 +26,26 @@ def _astrain_active(sys: SpinSystem) -> bool:
             and bool(torch.any(torch.as_tensor(sys.AStrain).detach() != 0)))
 
 
+def _check_multi_electron_strain(sys: SpinSystem, freq_sweep: bool = False) -> None:
+    """Raise for strains that are defined for one electron spin only (B89).
+
+    EasySpin errors for AStrain with more than one electron spin in both
+    sweeps (``resfields.m`` 89-92, ``resfreqs_matrix.m`` 102-106) and, in a
+    frequency sweep, also for gStrain (the field sweep has a per-electron
+    g strain model).  Before 0.9.31 torchspin silently dropped AStrain in a
+    multi-electron field sweep without gStrain and applied the first
+    electron's gStrain/AStrain in a frequency sweep.
+    """
+    if sys.nElectrons <= 1:
+        return
+    if _astrain_active(sys):
+        raise ValueError("AStrain is not supported in spin systems with more than one electron spin "
+                         f"(this system has {sys.nElectrons}), as in EasySpin.")
+    if freq_sweep and sys.gStrain is not None and bool(torch.any(torch.as_tensor(sys.gStrain).detach() != 0)):
+        raise ValueError("gStrain is not supported in frequency sweeps of spin systems with more than one "
+                         f"electron spin (this system has {sys.nElectrons}), as in EasySpin.")
+
+
 def astrain_level_mI(
     sys: SpinSystem,
     H0: torch.Tensor,
@@ -207,8 +227,8 @@ def compute_strain_widths_batch(
     Raises
     ------
     ValueError
-        AStrain without ``mI_levels``; AStrain with more than one electron and
-        gStrain (as EasySpin).
+        AStrain without ``mI_levels``; AStrain with more than one electron
+        (as EasySpin; before 0.9.31 it was dropped silently without gStrain, B89).
     """
     if not _has_any_strain(sys):
         return torch.zeros(pairs_flat.shape[0], dtype=torch.float64, device=H0.device) if pairs_flat is not None else [None] * len(pairs_list)
@@ -255,8 +275,7 @@ def compute_strain_widths_batch(
         [torch.zeros(3, 3, dtype=torch.float64, device=device)] * sys.nElectrons
     gStrainMatrix = gmats[0]
     multi_g = sys.gStrain is not None and sys.nElectrons > 1
-    if multi_g and sys.AStrain is not None and bool(torch.any(sys.AStrain != 0)):
-        raise ValueError("AStrain is not supported in spin systems with more than one electron spin.")
+    _check_multi_electron_strain(sys)   # AStrain with > 1 electron, with or without gStrain (B89)
 
     # lw2_g[m] = z_m^T * (G^2) * z_m   — vectorised over M (single-electron case)
     gStrainMatrix2 = gStrainMatrix ** 2                 # element-wise square
@@ -536,7 +555,14 @@ def compute_strain_widths_freq_batch(
         + |m(dHdAx)|² + |m(dHdAy)|² + |m(dHdAz)|²
         + (m(μzL)·B0·zLᵀ·G·zL)²,   G = diag(gStrain./g) in the molecular frame,
 
-    without the field conversion factor (no dBdE).  Returns a list of M
+    without the field conversion factor (no dBdE).  ``dHdA_k = AStrain_k
+    (R'S)_k (R'I)_k`` (first electron, first nucleus) with ``R = R_A2M`` from
+    ``AFrame``: the derivative of the transition frequency with respect to the
+    principal value A_k.  Since 0.9.31 AFrame is included and the width is
+    differentiable in AStrain and AFrame (B90); EasySpin rotates S and I with
+    transposed matrices here, which is not dnu/dA_k for a general tilt
+    (KNOWN_LIMITATIONS).  gStrain or AStrain with more than one electron spin
+    raises ``ValueError``, as in EasySpin (B89).  Returns a list of M
     tensors ``(nTrans_m,)`` in MHz (None where the orientation has no pairs).
 
     ``clusters`` (zero field, ``Options.ZeroField``): every diagonal element
@@ -546,6 +572,7 @@ def compute_strain_widths_freq_batch(
     """
     if not _has_any_strain(sys):
         return [None] * len(pairs_list)
+    _check_multi_electron_strain(sys, freq_sweep=True)   # B89
     device = H0.device
     M = phi_batch.shape[0]
     ph = phi_batch.to(device=device, dtype=torch.float64)
@@ -585,15 +612,31 @@ def compute_strain_widths_freq_batch(
     if sys.gStrain is not None and bool(torch.any(sys.gStrain != 0)):
         G = _gstrain_matrices(sys, 1e-3, device)[0]          # mwFreq=1e-3 GHz → factor 1 MHz
         zGz = ((zLab_M @ G) * zLab_M).sum(dim=1)              # (M,)
-    # A strain: separate x, y, z terms, first electron / first nucleus
+    # A strain: separate terms along the A principal axes, first electron /
+    # first nucleus.  dnu/dA_k = m((R'S)_k (R'I)_k) with R = R_A2M (AFrame, as
+    # in the field path): A-frame axis k in molecular coordinates is column k
+    # of R, for S and I alike.  Before 0.9.31 AFrame was ignored (molecular
+    # axes) and float(AStrain) cut the gradient (B90).  EasySpin
+    # resfreqs_matrix.m rotates S with R(k,c) but I with R(c,k), which is not
+    # dnu/dA_k for a general tilt; torchspin deliberately deviates.
     a_diags: list = []
-    if sys.AStrain is not None and sys.nNuclei > 0 and bool(torch.any(sys.AStrain != 0)):
+    if _astrain_active(sys):
         from torchspin.spinops import sop
         n_e = sys.nElectrons
-        for c in (1, 2, 3):
-            S_op = sop(sys.Spins, [[1, c]], device=device).to(torch.complex128)
-            I_op = sop(sys.Spins, [[n_e + 1, c]], device=device).to(torch.complex128)
-            a_diags.append(diag_in_eigbasis(float(sys.AStrain[c - 1]) * (I_op @ S_op)))
+        S_ops = [sop(sys.Spins, [[1, c]], device=device).to(torch.complex128) for c in (1, 2, 3)]
+        I_ops = [sop(sys.Spins, [[n_e + 1, c]], device=device).to(torch.complex128) for c in (1, 2, 3)]
+        AS = torch.as_tensor(sys.AStrain).to(device=device, dtype=torch.float64)
+        fr = sys.AFrame[0, :3] if sys.AFrame is not None else None
+        if fr is not None and (fr.requires_grad or bool(torch.any(fr != 0))):
+            R = erot(fr, device=device).T.to(device=device, dtype=torch.float64)   # R_A2M
+            Rc = R.to(torch.complex128)
+            for k in range(3):
+                S_k = Rc[0, k] * S_ops[0] + Rc[1, k] * S_ops[1] + Rc[2, k] * S_ops[2]
+                I_k = Rc[0, k] * I_ops[0] + Rc[1, k] * I_ops[1] + Rc[2, k] * I_ops[2]
+                a_diags.append(AS[k] * diag_in_eigbasis(I_k @ S_k))
+        else:
+            for k in range(3):
+                a_diags.append(AS[k] * diag_in_eigbasis(I_ops[k] @ S_ops[k]))
     d_diags: list = []
     if sys.DStrain is not None:
         for op_pair in _dstrain_operators(sys, device, torch.complex128):
@@ -614,5 +657,8 @@ def compute_strain_widths_freq_batch(
             lw2 += (ad[m, v_idx] - ad[m, u_idx]) ** 2
         if zGz is not None:
             lw2 += ((muzL_diag[m, v_idx] - muzL_diag[m, u_idx]) * float(B0) * zGz[m]) ** 2
-        results.append(torch.sqrt(torch.clamp(lw2, min=0.0)))
+        # sqrt with a finite gradient where a width is exactly zero (no NaN from 0 * inf)
+        pos = lw2.detach() > 0
+        results.append(torch.where(pos, torch.sqrt(torch.where(pos, lw2, torch.ones_like(lw2))),
+                                   torch.zeros_like(lw2)))
     return results
