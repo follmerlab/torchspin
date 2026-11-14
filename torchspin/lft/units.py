@@ -4,7 +4,7 @@ The public API of :mod:`torchspin.lft` follows torchspin: energies and couplings
 fields in mT, frequencies in GHz, angles in radians, molar susceptibility in m^3/mol (SI, as
 :func:`torchspin.curry` returns it).  Ligand-field energies are far easier to read in cm^-1,
 so every function that returns energies takes ``units=`` and every ligand-field plot defaults
-to cm^-1.  The conversions are plain Python floats derived from :mod:`torchspin.constants`,
+to cm^-1.  The conversions are plain Python floats derived from ``torchspin.constants``,
 so multiplying a tensor by one keeps the autograd graph (unlike the NumPy
 :func:`torchspin.unitconvert`).
 

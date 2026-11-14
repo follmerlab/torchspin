@@ -134,8 +134,9 @@ class DpnFitModel:
     nlam : int, default 1
         AOM: bonding parameters per ligand in X (1 to 3: sigma, pi-s (y),
         pi-c (x)).
-    angles : sequence of (theta, phi, psi), default []
-        AOM ligand directions, radians unless ``degrees``.
+    angles : sequence of sequence of float, default []
+        AOM ligand directions, one ``(theta, phi, psi)`` triple per ligand,
+        radians unless ``degrees``.
     isymm : sequence of int, default []
         1-based ligand equivalences: ligand j copies ligand ``isymm[j] - 1``
         scaled by ``blfact[j]``; ``isymm[j] = j + 1`` is independent.  With

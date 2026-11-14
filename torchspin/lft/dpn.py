@@ -556,7 +556,7 @@ def aom_isotropic(n, e_sigma, e_pi=0.0) -> torch.Tensor:
 
 
 def aom(ligands: Iterable[Ligand], device=None) -> torch.Tensor:
-    """p-shell AOM ligand field from :class:`torchspin.lft.Ligand` objects.
+    """p-shell AOM ligand field from :class:`torchspin.lft.ligand_field.Ligand` objects.
 
     Uses the ligands' angles (radians) and ``e_sigma``, ``e_pi_x``,
     ``e_pi_y``.

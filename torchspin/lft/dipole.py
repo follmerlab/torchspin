@@ -14,7 +14,7 @@ dipolar tensor ``tensor_cm3`` is ``<(3 u u^T - u^2)/u^5>`` in cm^-3; the reduced
 Angstrom.  g, alpha1^2 (metal-orbital population) and g_N are dimensionless.  The per-axis
 outputs are on dipole.f's axes, ordered (y, x, z) = Fortran (3, 2, 1), z along the metal-point
 vector; ``g`` is given in the same order.  Physical constants are CGS-Gaussian (as dipole.f),
-derived from :mod:`torchspin.constants` (:data:`TORCHSPIN_CONSTANTS`); pass ``constants=``
+derived from ``torchspin.constants`` (:data:`TORCHSPIN_CONSTANTS`); pass ``constants=``
 (any object with the fields of :class:`Constants`, e.g. telser-tools' ``CODATA2018``) to
 override.
 
@@ -134,7 +134,7 @@ class Constants(NamedTuple):
     ee_point_cm: float      # beta_e^2 / (h c), cm^-1 cm^3 (point-dipole e-e prefactor)
 
 
-#: From :mod:`torchspin.constants` (J/T -> erg/G is 1e3, J s -> erg s is 1e7, m -> cm is 1e2).
+#: From ``torchspin.constants`` (J/T -> erg/G is 1e3, J s -> erg s is 1e7, m -> cm is 1e2).
 TORCHSPIN_CONSTANTS = Constants(
     g_e=GFREE, beta_n=NMAGN * 1e3, beta_e=BMAGN * 1e3, h=PLANCK * 1e7, a0_cm=BOHRRAD * 1e2,
     mhz_to_cm=1e6 / CLIGHT, ee_point_cm=(BMAGN * 1e3) ** 2 / (PLANCK * 1e7 * CLIGHT))

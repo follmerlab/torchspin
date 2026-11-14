@@ -8,7 +8,7 @@ d^n configuration (Hellmann-Feynman), and powder averages as weighted sums over 
 DDN's finite-difference schemes (Hendrickson, McGarvey, ...) approximate the same quantity and
 are not ported.
 
-The thermal average uses :func:`torchspin.lft._linalg.thermal_average`, whose derivative
+The thermal average uses ``torchspin.lft._linalg.thermal_average``, whose derivative
 (Daleckii-Krein) is exact through the degeneracies M always has (Kramers pairs, cubic levels,
 field-induced crossings), so every ligand-field parameter can carry gradients.
 
@@ -74,7 +74,7 @@ class MagConstants(NamedTuple):
         return Constants(self.mu_b, self.g_e, self.k_b)
 
 
-#: From :mod:`torchspin.constants` (CODATA 2022 mu_B and mu_0).
+#: From ``torchspin.constants`` (CODATA 2022 mu_B and mu_0).
 MAG_CONSTANTS = MagConstants(mu_b=TORCHSPIN_CONSTANTS.mu_b, g_e=TORCHSPIN_CONSTANTS.g_e, k_b=TORCHSPIN_CONSTANTS.k_b,
                              N_A=AVOGADRO, mu_b_SI=BMAGN, mu0=MU0)
 

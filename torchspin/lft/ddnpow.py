@@ -48,7 +48,7 @@ of their zero-field cluster) are accurate eigenpairs; the other directions of Q 
 of higher states.  With a parameter on the graph (reverse or forward mode), the Ritz pairs are
 taken as values and their derivatives come from first-order perturbation theory, as zero-valued
 graph terms: energies by Hellmann-Feynman on the low Ritz vectors (level mean at degeneracies, as
-:func:`torchspin.lft._linalg.eigh_gauge`), eigenvectors from the couplings inside that cluster
+``torchspin.lft._linalg.eigh_gauge``), eigenvectors from the couplings inside that cluster
 plus the reduced-resolvent solve (P (H - lambda) P + W W^H)^-1 P dH v in its complement
 (P = 1 - W W^H, W the cluster), done only at the (orientation, field) points that enter the
 spectrum.  The derivative is exact up to the Ritz residual.  Before 0.9.30 the eigenvectors were

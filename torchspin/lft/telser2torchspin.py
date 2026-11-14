@@ -101,7 +101,7 @@ __all__ = ["TelserConversion", "MU_B_MHZ_PER_MT", "MU_N_MHZ_PER_MT", "abf_to_ste
 
 _F64 = torch.float64
 
-#: mu_B/h and mu_N/h in MHz per mT, from :mod:`torchspin.constants` (what torchspin's Hamiltonian uses).
+#: mu_B/h and mu_N/h in MHz per mT, from ``torchspin.constants`` (what torchspin's Hamiltonian uses).
 MU_B_MHZ_PER_MT = BMAGN / PLANCK * 1e-9
 MU_N_MHZ_PER_MT = NMAGN / PLANCK * 1e-9
 
@@ -375,7 +375,7 @@ def _cubic_third_order(s: float) -> list[torch.Tensor]:
 def _u_coefficients(s: float) -> tuple[tuple[tuple[float, ...], tuple[float, ...]], ...]:
     """For k = x, y, z: the ('132', '134') Ham rows whose linear-in-B part of torchspin's H is B_k C_k (MHz/mT).
 
-    Found by projection through :func:`torchspin.ham.ham` (the (H0, mu) path that ``levels``,
+    Found by projection through :func:`torchspin.ham` (the (H0, mu) path that ``levels``,
     ``resfields`` and ``pepper`` use), so the map follows whatever sign that path applies. Since torchspin
     0.6.7 that path and ``ham(sys, B0)`` agree (bug B11 in the gap analysis).
     """
@@ -460,7 +460,7 @@ def _w_coefficients(s: float) -> tuple[tuple[float, ...], tuple[float, ...], tup
     (B.S)^2 = B_k B_l (S_k S_l + S_l S_k)/2; the part B^2 X/3 (X = S(S+1), proportional to the identity) is
     not representable in ``Sys.Ham`` (a rank-lB field tensor needs l >= |lB - lS|) and shifts every level
     equally, so it is left out (see :func:`second_order_zeeman_ham`).  Found by projection through
-    :func:`torchspin.ham_ezho.field_nonlinear_zeeman_ops` (unit mu_B here; the caller scales).
+    ``torchspin.ham_ezho.field_nonlinear_zeeman_ops`` (unit mu_B here; the caller scales).
     """
     from torchspin.ham_ezho import field_nonlinear_zeeman_ops
 
@@ -1154,7 +1154,7 @@ def ddzhq2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool =
     TelserConversion
         ``sys``; ``exp``, an Experiment at the input's frequency (``Mode``
         from the H1 mode, ``Temperature`` if populations are on) for
-        :func:`torchspin.resfields`; ``extras['cycles']``, one dict per
+        ``torchspin.resfields``; ``extras['cycles']``, one dict per
         computed cycle in input order with ``field_mT``, ``theta``/``phi``
         (radians, field direction in the molecular frame), ``direction``
         (unit 3-vector), ``g_eff`` and ``zero_field``.  A g-value entry is

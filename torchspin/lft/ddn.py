@@ -19,7 +19,7 @@ is in mT.  The orbital reduction ``k`` is dimensionless.  Internally everything 
     >>> g = lft.ddn.g_tensor(9, zeta=830.0, V=lft.aom(lft.octahedron(6000.0, 1000.0)),
     ...                      k=(0.8, 0.8, 0.8), units='cm^-1')
 
-Degenerate levels are handled by :mod:`torchspin.lft._linalg`: the gradient of a degenerate
+Degenerate levels are handled by ``torchspin.lft._linalg``: the gradient of a degenerate
 eigenvalue is that of its level's mean, and the doublet g is differentiated through the
 projector onto the doublet, which is exact at the Kramers degeneracy.
 """
@@ -60,7 +60,7 @@ class Constants(NamedTuple):
     k_b: float
 
 
-#: Derived from :mod:`torchspin.constants`.
+#: Derived from ``torchspin.constants``.
 TORCHSPIN_CONSTANTS = Constants(mu_b=BMAGN * 1e-3 / (PLANCK * CLIGHT), g_e=GFREE, k_b=BOLTZMANN / (PLANCK * CLIGHT))
 
 

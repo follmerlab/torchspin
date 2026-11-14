@@ -39,7 +39,7 @@ special orientations, every level at B = 0) make the per-pair value basis depend
 ``level_probabilities`` sums ``abs(<a|O|b>)**2`` over a in level(i), b in level(j) (= tr(P_I O P_J O^+),
 gauge-invariant and differentiable everywhere off accidental crossings); it equals the
 per-pair value wherever both levels are non-degenerate.  Levels are decided on detached
-energies with :func:`torchspin.lft._linalg.degeneracy_mask`.
+energies with ``torchspin.lft._linalg.degeneracy_mask``.
 
 Not ported (DDN-reproduction conventions of telser-tools' ``Options``): EPRTRANS
 (spin-only, eigenvector-phase dependent probabilities, finding DDNLOOP-01), DDN's hole problem,

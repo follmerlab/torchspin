@@ -138,7 +138,7 @@ class SpinConstants(NamedTuple):
         return cls(float(c.mu_b_mhz) * 10.0, float(c.k_b_cm) * mhz_per_cm, mhz_per_cm)
 
 
-#: Derived from :mod:`torchspin.constants` (CODATA 2022 mu_B).
+#: Derived from ``torchspin.constants`` (CODATA 2022 mu_B).
 TORCHSPIN_CONSTANTS = SpinConstants(BMAGN / PLANCK * 1e-9, BOLTZMANN / PLANCK * 1e-6, _u.energy_factor("cm^-1", "MHz"))
 
 
@@ -152,8 +152,8 @@ class Strain(NamedTuple):
 
     Attributes
     ----------
-    weights : torch.Tensor, shape (n,)
-        One weight per basis state of the SpinSystem (``n = sys.nStates``,
+    weights : torch.Tensor, shape (nStates,)
+        One weight per basis state of the SpinSystem (``nStates = sys.nStates``,
         states ``|m_S1, m_S2, ..., m_I1, ...>`` with every m descending,
         torchspin's order), dimensionless.  Built by :func:`strain_weights`
         (DDPOWH) or :func:`torchspin.lft.ddpowj.strain_weights` (DDPOWJ).
@@ -604,10 +604,10 @@ def epr(sys: SpinSystem, fields, mw_freq, *, width, shape: str = "gaussian", der
     moment : {'electron', 'full'}, default 'electron'
         Transition operator: the electron Zeeman moment ``g.S`` only
         (Telser) or torchspin's full ``-dH/dB`` moment.
-    zeeman2 : array_like or torch.Tensor, shape (3, 3, n, n), optional
+    zeeman2 : array_like or torch.Tensor, shape (3, 3, nStates, nStates), optional
         Field-quadratic Zeeman operator in MHz/mT^2: ``H += B^2 n.Z2.n``
         (:func:`torchspin.lft.telser2torchspin.second_order_zeeman_operator`).
-    h0_extra : array_like or torch.Tensor, shape (n, n), optional
+    h0_extra : array_like or torch.Tensor, shape (nStates, nStates), optional
         Extra field-independent Hamiltonian in MHz (e.g.
         :func:`torchspin.lft.telser2torchspin.u_term_operator`).
     scale : float or torch.Tensor, default 1.0
