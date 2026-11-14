@@ -18,6 +18,7 @@ function or class, see the [API reference](api/index.rst).
 :hidden:
 
 pitfalls
+known_limitations
 lft
 lft_gap_analysis
 ```

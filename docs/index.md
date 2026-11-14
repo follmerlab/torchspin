@@ -78,6 +78,10 @@ compare against the stored references in `tests/data`; no MATLAB installation ne
 :hidden:
 :maxdepth: 2
 
+getting_started
+tutorials/index
 user_guide
 api/index
+changelog
+dev/index
 ```
