@@ -210,6 +210,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   spectrum (EasySpin's grid ignores the strain) that case is a strict xfail (cosine 0.997209);
   against a converged C1 [91 1] grid 1 - cos is 1.07e-7 (EasySpin 2.78e-3).
 
+## [0.9.23] — 2026-11-12
+
+### Fixed
+
+- **`resfreqs_perturb` and `endorfrq_perturb` raise a clear `ValueError` for a zero hyperfine
+  principal value at second order (B79).** The second-order hyperfine terms use inv(A); torchspin
+  caught the failing `torch.linalg.inv` with `except Exception` and used a zero matrix, so the
+  result was silently wrong. `endorfrq_perturb` (S = 1/2, g = [2 2.05 2.1], 1H A = [5 8 0] MHz,
+  340 mT) gave 15.59326 MHz for the first line; the A_z -> 0 limit is 15.59382 MHz. The message is
+  EasySpin's (resfreqs_perturb.m and resfields_perturb.m:120-127): "All hyperfine coupling
+  constants must be non-zero", with the nucleus named. A singular full A raises the same. EasySpin
+  endorfrq_perturb.m has no check and returns NaN; torchspin raises there too. First order needs
+  no inverse and still runs. Results with non-zero A are bit-identical. Same check as
+  `resfields_perturb` (B65). See KNOWN_LIMITATIONS.md. Tests in `test_perturb_zero_hyperfine.py`.
 ## [0.9.21] — 2026-11-12
 
 ### Fixed

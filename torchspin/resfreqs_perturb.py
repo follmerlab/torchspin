@@ -29,6 +29,27 @@ from torchspin.constants import PLANCK, BMAGN
 from torchspin.rotations import erot
 
 
+def _check_nonzero_hyperfine(sys: SpinSystem, iNuc: int, A_mat: torch.Tensor) -> None:
+    """Second-order terms need inv(A): raise as EasySpin for a zero principal value.
+
+    EasySpin resfreqs_perturb.m:120-127 raises 'All hyperfine coupling
+    constants must be non-zero.' for any zero entry of a diagonal ``Sys.A``.
+    torchspin substituted a zero matrix for inv(A) instead, so the second-order
+    result was silently wrong (B79).  A singular full ``Sys.A`` raises the same
+    error.  Only the second order uses the inverse; the first order still runs.
+    Same check as ``resfields_perturb`` (B65).
+    """
+    if sys.fullA:
+        singular = bool(torch.linalg.matrix_rank(A_mat.detach()) < 3)
+    else:
+        singular = bool((sys.A[iNuc, :].detach() == 0).any())
+    if singular:
+        raise ValueError(
+            f"resfreqs_perturb: All hyperfine coupling constants must be non-zero "
+            f"(nucleus {iNuc + 1}, {sys.Nucs[iNuc]}): second-order perturbation theory "
+            "needs inv(A). Use a small non-zero value, order=1, or matrix diagonalization.")
+
+
 def resfreqs_perturb(
     sys: SpinSystem,
     phi: float,
@@ -53,6 +74,8 @@ def resfreqs_perturb(
         Options (Threshold for intensity cutoff).  If None, uses defaults.
     order:
         Perturbation order: 1 or 2.  Default is 2 (second-order).
+        Second order needs inv(A): a zero hyperfine principal value (or a
+        singular full A) raises ``ValueError``.
 
     Returns
     -------
@@ -204,10 +227,8 @@ def resfreqs_perturb(
             k_list.append(k)
             nK_list.append(nK)
             if order >= 2:
-                try:
-                    invA_list.append(torch.linalg.inv(A_mat))
-                except Exception:
-                    invA_list.append(torch.zeros(3, 3, dtype=dt, device=device))
+                _check_nonzero_hyperfine(sys, iNuc, A_mat)
+                invA_list.append(torch.linalg.inv(A_mat))
                 trAA_list.append(float((A_mat.T @ A_mat).trace()))
                 detA_list.append(float(torch.linalg.det(A_mat)))
                 A_u_norm_sq_list.append(float((A_mat @ u).dot(A_mat @ u)))
