@@ -1,43 +1,65 @@
 """DSOXF: one free-ion term (2S+1)L of d^n or f^n in a crystal field, differentiable.
 
-    H = H_CF + s |lambda| L.S + rho SS + mu_B B . (s_L k L + g_e S)
+The Hamiltonian of Telser's DSOXF (via telser-tools), in its ``|m_L m_S>`` basis (``m_L``
+outer, both descending)::
 
-in DSOXF's |m_L m_S> basis (m_L outer, both descending; Telser's DSOXF via telser-tools), for
-the d and f shells, high and low spin (low-spin d4/d5 as the fictitious L~ = 1 term), Oh/Td,
-cubic/axial/rhombic and tetragonal/trigonal fields, with both ``conventions``
-(``'corrected'``, the default, or ``'dsoxf'`` = the compiled program; see
-:mod:`torchspin.lft._engines.dsoxf`).  SS = -[(L.S)^2 + L.S/2 - L(L+1)S(S+1)/3] is the
-Abragam-Bleaney spin-spin term (zero for S < 1).
+    H = H_CF + s abs(lambda) L.S + rho SS + mu_B B . (s_L k L + g_e S)
+
+for the d and f shells, high and low spin (low-spin d4/d5 as the fictitious L~ = 1 term), Oh/Td,
+cubic/axial/rhombic and tetragonal/trigonal fields, with both ``conventions`` (``'corrected'``,
+the default, or ``'dsoxf'`` = the compiled program).  ``SS = -[(L.S)^2 + L.S/2 -
+L(L+1)S(S+1)/3]`` is the Abragam-Bleaney spin-spin term (zero for S < 1).
 
 For a fixed configuration and discrete setting, H_CF is linear in the crystal-field parameters
-(``CF_PARAMETERS``: dq, ds, dt4 (= Delta4 = -Dt), v2, v4 for d; b4, b6, b20 ... b66 for f, as
-DSOXF reads them).  The matrices are probed once from the NumPy model
-(:class:`torchspin.lft._engines.dsoxf.DsoxfModel`) and checked for linearity, so the Stevens
-operators, DSOXF's scalings (B2X, B4X, F_kq), the symmetry selection and the whole sign table
-keep one definition.  ``lam`` is a magnitude: lambda_eff = s |lambda| with the sign s that the
-program chooses (d|lambda|/dlambda := +1 at 0).
+(``CF_PARAMETERS``: ``dq``, ``ds``, ``dt4`` (= Delta4 = -Dt), ``v2``, ``v4`` for d; ``b4``,
+``b6``, ``b20`` ... ``b66`` for f, as DSOXF reads them).  The matrices are probed once from the
+NumPy model (``torchspin.lft._engines.dsoxf.DsoxfModel``) and checked for linearity, so the
+Stevens operators, DSOXF's scalings (B2X, B4X, F_kq), the symmetry selection and the whole sign
+table keep one definition.  ``lam`` is a magnitude: ``lambda_eff = s abs(lambda)`` with the
+sign ``s`` that the program chooses (``d abs(lambda)/d lambda := +1`` at 0).
 
 Units
 -----
 Energy-valued inputs (``lam``, ``rho`` and every crystal-field parameter) and energy-valued
 outputs (H, energies, doublet energies) are in ``units`` (default ``'MHz'``; ``'cm^-1'``,
-``'GHz'``, ``'K'``, ``'eV'``).  The magnetic field is in mT, temperatures in K.  ``k``, g values
-and occupancies are dimensionless; transition moments |<i|mu.b1|j>|^2 are in mu_B^2.  Level
-tolerances (``tol``) are in cm^-1 whatever ``units`` is.  Internally everything is cm^-1.
+``'GHz'``, ``'K'``, ``'eV'``, ...; see :mod:`torchspin.lft.units`).  The magnetic field is in
+mT (DSOXF itself takes gauss), temperatures in K.  ``k``, g values and occupancies are
+dimensionless; transition moments ``abs(<i|mu.b1|j>)**2`` are in mu_B^2.  Level tolerances
+(``tol``) are in cm^-1 whatever ``units`` is.  Internally everything is cm^-1.
 
-    >>> from torchspin.lft import dsoxf
-    >>> s = dsoxf.DsoxfSystem("d", 9, symmetry="axial", units="cm^-1", lam=830.0, dq=1200.0, ds=2000.0)
-    >>> sol = s.solve(field=(0.0, 0.0, 300.0), ds=torch.tensor(2000.0, requires_grad=True))   # mT
-    >>> sol.energies, sol.spin_expectation(), sol.orbital_occupancies(), s.solve().kramers_g()
-
-Gauge: per-state quantities (<S>, occupancies, |<i|mu|j>|^2) depend on the arbitrary basis
+Gauge
+-----
+Per-state quantities (<S>, occupancies, ``abs(<i|mu|j>)**2``) depend on the arbitrary basis
 inside a degenerate level, exactly as in DSOXF, and have no derivative there; their sums over
-the level (``level_matrix(E) @ x``, :func:`level_sum`, ``Solution.level_transition_moments``)
+the level (``level_matrix(E) @ x``, :func:`level_sum`, :meth:`Solution.level_transition_moments`)
 are gauge-invariant and differentiable.  Kramers-doublet g tensors use the doublet projector.
 
-Not ported: DSOXF's legacy EPR probabilities ((sum_a |<i|S_a|j>|)^2, a sum of moduli that
-depends on eigenvector phases and is not smooth; telser-tools finding DSOXF-05), the listing
-and spin-magnitude cutoffs, the input-file reader and the printed report.
+Not ported: DSOXF's legacy EPR probabilities (``(sum_a abs(<i|S_a|j>))**2``, a sum of moduli
+that depends on eigenvector phases and is not smooth; telser-tools finding DSOXF-05), the
+listing and spin-magnitude cutoffs, the input-file reader and the printed report.
+
+Examples
+--------
+Cu(II), d9, tetragonally elongated (telser-tools' DSOXF quick start): the ground Kramers
+doublet has g_perp = 2.069 and g_par = 2.421.
+
+>>> import torch
+>>> from torchspin.lft import dsoxf
+>>> s = dsoxf.DsoxfSystem("d", 9, symmetry="axial", units="cm^-1", lam=830.0, dq=1200.0,
+...                       ds=2000.0, dt4=-500.0, k=(0.8, 0.8, 0.8))
+>>> sol = s.solve()
+>>> [round(e, 2) for e in sol.relative[::2].tolist()]
+[0.0, 10392.24, 12010.6, 15304.75, 16176.33]
+>>> [round(g, 4) for g in sol.kramers_g()[0].principal.tolist()]
+[2.0686, 2.0686, 2.4212]
+
+Derivatives flow from every continuous parameter, here Ds at a field of 300 mT along z:
+
+>>> ds = torch.tensor(2000.0, dtype=torch.float64, requires_grad=True)
+>>> sol = s.solve(field=(0.0, 0.0, 300.0), ds=ds)
+>>> (dE,) = torch.autograd.grad(sol.energies[2], ds)
+>>> sol.energies.shape, sol.spin_expectation().shape, sol.orbital_occupancies().shape
+(torch.Size([10]), torch.Size([10, 3]), torch.Size([10, 5]))
 """
 
 from __future__ import annotations
@@ -74,13 +96,36 @@ def _t(x, device=None) -> torch.Tensor:
 # ------------------------------------------------------------------------------ operators
 @dataclass(frozen=True, eq=False)
 class DsoxfOperators:
-    """Constants of one DSOXF configuration and discrete setting (unit-free; energies cm^-1).
+    """Constant operators of one DSOXF configuration and discrete setting (energies in cm^-1).
 
-    ``cf`` (18, n, n) float64 in ``CF_PARAMETERS`` order: H_CF = sum_p value_p cf[p];
-    ``LS``, ``SS`` (n, n) float64 (SS: the rho operator, zero for S < 1); ``Lv``, ``Sv`` (3, n, n)
-    complex128; ``so_sign`` = the s of lambda_eff = s |lambda|; ``zeeman_sign`` = s_L
-    (-1 for the corrected L~ = 1 terms); ``L``, ``S`` quantum numbers; ``nl``, ``ns`` the orbital
-    and spin dimensions; ``term`` e.g. ``'2D'``.
+    Built and cached by :func:`dsoxf_operators`; ``N = nl * ns`` is the size of the
+    ``|m_L m_S>`` basis.
+
+    Attributes
+    ----------
+    shell : str
+        ``'d'`` or ``'f'``.
+    code : int
+        DSOXF's configuration number (see :func:`dsoxf_operators`).
+    term : str
+        Free-ion term, e.g. ``'2D'``; ``'3P~'``/``'2P~'`` for the low-spin L~ = 1 terms.
+    L : int
+        Orbital quantum number of the term.
+    S : float
+        Spin quantum number of the term.
+    nl, ns : int
+        Orbital (2L+1) and spin (2S+1) dimensions.
+    cf : torch.Tensor, shape (18, N, N), float64
+        Crystal-field operators in ``CF_PARAMETERS`` order: ``H_CF = sum_p value_p cf[p]``
+        (parameters inactive in this setting have zero matrices).
+    LS, SS : torch.Tensor, shape (N, N), float64
+        L.S and the spin-spin (rho) operator (zero for S < 1).
+    Lv, Sv : torch.Tensor, shape (3, N, N), complex128
+        Orbital and spin angular-momentum vectors.
+    so_sign : float
+        The sign s of ``lambda_eff = s abs(lambda)``.
+    zeeman_sign : float
+        s_L, the sign of the orbital Zeeman term (-1 for the corrected L~ = 1 terms).
     """
 
     shell: str
@@ -100,10 +145,12 @@ class DsoxfOperators:
 
     @property
     def size(self) -> int:
+        """Basis size ``n = nl * ns``."""
         return self.nl * self.ns
 
     @property
     def device(self) -> torch.device:
+        """Device of the operator tensors."""
         return self.LS.device
 
 
@@ -135,12 +182,47 @@ def _operators(key: tuple, device: str) -> DsoxfOperators:
 def dsoxf_operators(shell: str = "d", code: int = 1, *, geometry: str = "Oh", symmetry: str = "cubic",
                     axis: str = "tetragonal", conventions: str = "corrected",
                     device: str | torch.device = "cpu") -> DsoxfOperators:
-    """Cached constants of one configuration and discrete setting.
+    """Cached constant operators of one DSOXF configuration and discrete setting.
 
-    ``shell`` 'd' or 'f'; ``code`` DSOXF's configuration number (d: 1 ... 9 high spin, -4 ... -7 low
-    spin; f: 1 ... 13); ``geometry`` 'Oh'/'Td'; ``symmetry`` 'cubic'/'axial'/'rhombic' and ``axis``
-    'tetragonal'/'trigonal' select which crystal-field parameters act, as DSOXF reads them;
-    ``conventions`` 'corrected' (default) or 'dsoxf'.
+    Parameters
+    ----------
+    shell : {'d', 'f'}, default 'd'
+        Electron shell.
+    code : int, default 1
+        DSOXF's configuration number.  d: 1 ... 9 (high spin, d^n), -4 ... -7 (low spin d4 ... d7;
+        -4 and -5 are the fictitious L~ = 1 terms); f: 1 ... 13.
+    geometry : {'Oh', 'Td'}, default 'Oh'
+        'Td' reverses the sign of every crystal-field parameter.
+    symmetry : {'cubic', 'axial', 'rhombic'}, default 'cubic'
+        Which crystal-field parameters act, as DSOXF reads them.  d shell: cubic ``dq``; axial
+        adds ``ds``, ``dt4``; rhombic adds ``v2``, ``v4``.  f shell: cubic ``b4``, ``b6``; axial
+        adds ``b20``, ``b40``, ``b60`` and ``b44``, ``b64`` (tetragonal) or ``b43``, ``b63``, ``b66``
+        (trigonal); rhombic adds ``b22``, ``b42``, ``b62``.  Inactive parameters are ignored.
+    axis : {'tetragonal', 'trigonal'}, default 'tetragonal'
+        Quantization axis: z along C4 or along C3.
+    conventions : {'corrected', 'dsoxf'}, default 'corrected'
+        'corrected' fixes the signs of the L~ = 1 spin-orbit and orbital-Zeeman terms, the F-term
+        rank-2 terms and low-spin d7 (telser-tools findings DSOXF-01 to -03); 'dsoxf' reproduces
+        the compiled program.
+    device : str or torch.device, default 'cpu'
+        Device of the operator tensors.
+
+    Returns
+    -------
+    DsoxfOperators
+        Cached per (setting, device); unit-free (cm^-1).
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``shell``/``code``, ``geometry``, ``symmetry``, ``axis`` or ``conventions``.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dsoxf
+    >>> ops = dsoxf.dsoxf_operators("d", 7, symmetry="axial")
+    >>> ops.term, ops.size, tuple(ops.cf.shape)
+    ('4F', 28, (18, 28, 28))
     """
     model = DsoxfModel(shell=shell, code=int(code), geometry=geometry, symmetry=symmetry, axis=axis,
                        conventions=conventions)
@@ -149,7 +231,22 @@ def dsoxf_operators(shell: str = "d", code: int = 1, *, geometry: str = "Oh", sy
 
 def zeeman_operators(ops: DsoxfOperators, k=(1.0, 1.0, 1.0),
                      constants: Constants = TORCHSPIN_CONSTANTS) -> torch.Tensor:
-    """(..., 3, n, n): mu_i / mu_B = s_L k_i L_i + g_e S_i (k dimensionless, (..., 3))."""
+    """Magnetic-moment operators ``mu / mu_B = s_L k_i L_i + g_e S_i``.
+
+    Parameters
+    ----------
+    ops : DsoxfOperators
+        Configuration operators.
+    k : array_like or torch.Tensor, shape (..., 3), default (1, 1, 1)
+        Orbital reduction factors (dimensionless) along x, y, z.
+    constants : torchspin.lft.ddn.Constants, optional
+        Physical constants (``g_e``); default :data:`torchspin.lft.ddn.TORCHSPIN_CONSTANTS`.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, N, N), complex128
+        The x, y, z components in units of mu_B.
+    """
     k = _t(k, ops.device) * ops.zeeman_sign
     return k[..., :, None, None].to(_C128) * ops.Lv + constants.g_e * ops.Sv
 
@@ -181,20 +278,67 @@ def _hamiltonian_cm(ops: DsoxfOperators, f: float, lam, rho, k, field, constants
 
 def hamiltonian(ops: DsoxfOperators, *, lam=0.0, rho=0.0, k=(1.0, 1.0, 1.0), field=None, units: str = "MHz",
                 constants: Constants = TORCHSPIN_CONSTANTS, **cf) -> torch.Tensor:
-    """Complex Hermitian H (..., n, n) in ``units``.
+    """DSOXF Hamiltonian as a complex Hermitian matrix.
 
-    ``lam`` (the magnitude |lambda|), ``rho`` and ``cf`` (any of ``CF_PARAMETERS``, default 0) in
-    ``units``; ``k`` (..., 3) dimensionless; ``field`` (..., 3) in mT.  Every value may be a tensor
-    with leading batch dimensions and gradients.
+    Parameters
+    ----------
+    ops : DsoxfOperators
+        Configuration operators (:func:`dsoxf_operators`).
+    lam : float or torch.Tensor, default 0.0
+        Magnitude ``abs(lambda)`` of the spin-orbit constant, in ``units``; the sign is chosen by
+        the configuration (``ops.so_sign``).
+    rho : float or torch.Tensor, default 0.0
+        Spin-spin parameter in ``units`` (acts only for S >= 1).
+    k : array_like or torch.Tensor, shape (..., 3), default (1, 1, 1)
+        Orbital reduction factors (Zeeman term only).
+    field : array_like or torch.Tensor, shape (..., 3), optional
+        Magnetic field vector in mT; ``None`` (default) = zero field.
+    units : str, default 'MHz'
+        Energy unit of the energy inputs and of the result.
+    constants : torchspin.lft.ddn.Constants, optional
+        Physical constants, default :data:`torchspin.lft.ddn.TORCHSPIN_CONSTANTS`.
+    **cf : float or torch.Tensor
+        Crystal-field parameters, any of ``CF_PARAMETERS`` (default 0), in ``units``; which act
+        depends on the setting (:func:`dsoxf_operators`).
+
+    Every value may be a tensor with leading batch dimensions and gradients.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., N, N), complex128
+        H in ``units``.
+
+    Raises
+    ------
+    TypeError
+        For a keyword that is not one of ``CF_PARAMETERS``.
+    ValueError
+        For an unknown ``units``.
     """
     f = _u.energy_factor(units, "cm^-1")
     return _hamiltonian_cm(ops, f, lam, rho, k, field, constants, cf) / f
 
 
 def levels(ops: DsoxfOperators, *, relative: bool = False, units: str = "MHz", **kw) -> torch.Tensor:
-    """Ascending energies (..., n) in ``units``; ``relative=True`` puts the ground state at 0.
+    """Eigenvalues of the DSOXF Hamiltonian.
 
-    Keywords as :func:`hamiltonian`.  A degenerate eigenvalue gets its level's mean derivative.
+    Parameters
+    ----------
+    ops : DsoxfOperators
+        Configuration operators.
+    relative : bool, default False
+        Subtract the lowest eigenvalue (ground state at 0).
+    units : str, default 'MHz'
+        Energy unit of the inputs and of the result.
+    **kw
+        ``lam``, ``rho``, ``k``, ``field`` (mT), ``constants`` and crystal-field parameters, as
+        :func:`hamiltonian`.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., N), float64
+        Ascending energies in ``units``.  A degenerate eigenvalue gets its level's mean
+        derivative.
     """
     E = eigvalsh_gauge(hamiltonian(ops, units=units, **kw))
     return E - E[..., :1] if relative else E
@@ -207,21 +351,59 @@ def _expect(V: torch.Tensor, op: torch.Tensor) -> torch.Tensor:
 
 
 def spin_expectation(V: torch.Tensor, ops: DsoxfOperators) -> torch.Tensor:
-    """(..., n, 3): <S_x>, <S_y>, <S_z> of every eigenvector (columns of V)."""
+    """Spin expectation values of eigenvectors.
+
+    Parameters
+    ----------
+    V : torch.Tensor, shape (..., N, N)
+        Eigenvectors as columns, in the ``|m_L m_S>`` basis.
+    ops : DsoxfOperators
+        Configuration operators.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., N, 3)
+        ``<S_x>, <S_y>, <S_z>`` of every eigenvector (gauge dependent inside degenerate levels).
+    """
     return _expect(V, ops.Sv)
 
 
 def ml_occupancies(V: torch.Tensor, ops: DsoxfOperators) -> torch.Tensor:
-    """(..., n, 2L+1): sum over m_S of |c(m_L, m_S)|^2, m_L = L ... -L."""
+    """Weights of the ``m_L`` components of eigenvectors.
+
+    Parameters
+    ----------
+    V : torch.Tensor, shape (..., N, N)
+        Eigenvectors as columns.
+    ops : DsoxfOperators
+        Configuration operators.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., N, 2L+1)
+        ``sum over m_S of abs(c(m_L, m_S))**2``, columns ``m_L = L ... -L``.
+    """
     p = (V.conj() * V).real
     return p.reshape(*p.shape[:-2], ops.nl, ops.ns, p.shape[-1]).sum(-2).transpose(-2, -1)
 
 
 def orbital_occupancies(V: torch.Tensor, ops: DsoxfOperators, kind: str = "real") -> torch.Tensor:
-    """(..., n, 2L+1) real-orbital weights; each row sums to 1.
+    """Weights of the real orbitals in eigenvectors; each row sums to 1.
 
-    L = 2: columns ``D_ORBITALS`` (``kind`` ignored).  L = 3: ``kind`` 'general'
-    (``F_GENERAL_ORBITALS``) or 'cubic' (``F_CUBIC_ORBITALS``).
+    Parameters
+    ----------
+    V : torch.Tensor, shape (..., N, N)
+        Eigenvectors as columns.
+    ops : DsoxfOperators
+        Configuration operators.
+    kind : {'real', 'general', 'cubic'}, default 'real'
+        L = 2: ignored, columns ``D_ORBITALS``.  L = 3: ``'general'`` (``F_GENERAL_ORBITALS``)
+        or ``'cubic'`` (``F_CUBIC_ORBITALS``).
+
+    Returns
+    -------
+    torch.Tensor, shape (..., N, 2L+1)
+        Real-orbital weights per eigenvector.
     """
     _, u = orbital_vectors(ops.L, kind)
     u = torch.as_tensor(u, dtype=_C128, device=V.device)
@@ -231,18 +413,46 @@ def orbital_occupancies(V: torch.Tensor, ops: DsoxfOperators, kind: str = "real"
 
 
 def transition_moments(V: torch.Tensor, mu: torch.Tensor, b1) -> torch.Tensor:
-    """(..., n, n) |<i|mu . b1|j>|^2 in mu_B^2, b1 (..., 3) the microwave-field direction."""
+    """Squared transition moments ``abs(<i|mu . b1|j>)**2``.
+
+    Parameters
+    ----------
+    V : torch.Tensor, shape (..., N, N)
+        Eigenvectors as columns.
+    mu : torch.Tensor, shape (..., 3, N, N)
+        Moment operators in mu_B (:func:`zeeman_operators`).
+    b1 : array_like or torch.Tensor, shape (..., 3)
+        Microwave-field direction (not normalized here).
+
+    Returns
+    -------
+    torch.Tensor, shape (..., N, N)
+        In mu_B^2 (gauge dependent inside degenerate levels; see :func:`level_matrix`).
+    """
     op = torch.einsum("...k,...kab->...ab", _t(b1, V.device).to(_C128), mu)
     m = V.conj().transpose(-2, -1) @ op @ V
     return (m.conj() * m).real
 
 
 def level_matrix(E: torch.Tensor, tol: float = LEVEL_TOL, units: str = "MHz") -> torch.Tensor:
-    """(..., n, n) float: 1 where states i, j are in the same level (chained |E_i+1 - E_i| <= tol).
+    """Indicator matrix of degenerate levels.
 
-    ``E`` ascending in ``units``; ``tol`` in cm^-1.  Decided on detached energies;
-    ``level_matrix(E) @ x`` sums a per-state quantity over each level (gauge-invariant), and
-    ``D @ M @ D`` sums a pair quantity over both levels.
+    Parameters
+    ----------
+    E : torch.Tensor, shape (..., N)
+        Ascending energies in ``units``.
+    tol : float, default ``LEVEL_TOL`` (1e-6)
+        Level tolerance in cm^-1: states are chained into one level while
+        ``abs(E[i+1] - E[i]) <= tol``.
+    units : str, default 'MHz'
+        Unit of ``E``.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., N, N)
+        1 where states i and j belong to the same level, else 0 (decided on detached energies).
+        ``level_matrix(E) @ x`` sums a per-state quantity over each level (gauge-invariant), and
+        ``D @ M @ D`` sums a pair quantity over both levels.
     """
     e = E.detach() * _u.energy_factor(units, "cm^-1")
     step = torch.cat([torch.zeros_like(e[..., :1], dtype=torch.long), (e[..., 1:] - e[..., :-1] > tol).long()], -1)
@@ -251,14 +461,42 @@ def level_matrix(E: torch.Tensor, tol: float = LEVEL_TOL, units: str = "MHz") ->
 
 
 def level_sum(E: torch.Tensor, x: torch.Tensor, tol: float = LEVEL_TOL, units: str = "MHz") -> torch.Tensor:
-    """Per-state x (..., n) or (..., n, m) summed over each state's degenerate level (same shape)."""
+    """Sum a per-state quantity over each state's degenerate level.
+
+    Parameters
+    ----------
+    E : torch.Tensor, shape (..., N)
+        Ascending energies in ``units``.
+    x : torch.Tensor, shape (..., N) or (..., N, m)
+        Per-state quantity.
+    tol : float, default ``LEVEL_TOL``
+        Level tolerance in cm^-1.
+    units : str, default 'MHz'
+        Unit of ``E``.
+
+    Returns
+    -------
+    torch.Tensor
+        Same shape as ``x``; entry i is the sum over the level containing state i.
+    """
     D = level_matrix(E, tol, units)
     return (D @ x.unsqueeze(-1)).squeeze(-1) if x.dim() == E.dim() else D @ x
 
 
 class DoubletG(NamedTuple):
-    """g of one doublet: ``energy`` (mean, in the solution's units), ``principal`` (ascending |g|),
-    ``ggT`` = g g^T, ``g`` = (g g^T)^(1/2) (symmetric, exact gradients at axial g)."""
+    """g tensor of one Kramers doublet.
+
+    Attributes
+    ----------
+    energy : torch.Tensor
+        Mean energy of the doublet, in the solution's units (0 if no energies were given).
+    principal : torch.Tensor, shape (..., 3)
+        Principal values ``abs(g)``, ascending.
+    ggT : torch.Tensor, shape (..., 3, 3)
+        ``g g^T`` (gauge-invariant).
+    g : torch.Tensor, shape (..., 3, 3)
+        ``(g g^T)^(1/2)``, symmetric, with exact gradients at axial g.
+    """
 
     energy: torch.Tensor
     principal: torch.Tensor
@@ -267,8 +505,26 @@ class DoubletG(NamedTuple):
 
 
 def doublet_g(V: torch.Tensor, mu: torch.Tensor, idx: Sequence[int], E: torch.Tensor | None = None) -> DoubletG:
-    """g of the doublet spanned by eigenvectors ``idx`` (columns of V):
-    (g g^T)_ij = 2 tr(P mu_i P mu_j), P the doublet projector (gauge-invariant).  Use at zero field."""
+    """g tensor of the doublet spanned by two eigenvectors.
+
+    ``(g g^T)_ij = 2 tr(P mu_i P mu_j)`` with ``P`` the doublet projector, so the result is
+    gauge-invariant.  Meaningful at zero field.
+
+    Parameters
+    ----------
+    V : torch.Tensor, shape (..., N, N)
+        Eigenvectors as columns.
+    mu : torch.Tensor, shape (..., 3, N, N)
+        Moment operators in mu_B.
+    idx : sequence of int
+        The two column indices of the doublet.
+    E : torch.Tensor, shape (..., N), optional
+        Energies, for the ``energy`` field.
+
+    Returns
+    -------
+    DoubletG
+    """
     Vd = V[..., :, list(idx)]
     P = Vd @ Vd.conj().transpose(-2, -1)
     pm = P.unsqueeze(-3) @ mu
@@ -281,10 +537,24 @@ def doublet_g(V: torch.Tensor, mu: torch.Tensor, idx: Sequence[int], E: torch.Te
 
 # ------------------------------------------------------------------------------ solution
 class Solution:
-    """Eigenstates of one DSOXF Hamiltonian (the torch counterpart of DSOXF's solution).
+    """Eigenstates of one DSOXF Hamiltonian (returned by :func:`solve` and :meth:`DsoxfSystem.solve`).
 
-    ``energies`` (n,) ascending in ``units``; ``vectors`` (n, n) eigenvector columns in the
-    |m_L m_S> basis; ``mu`` (3, n, n) the magnetic moment operator in mu_B; ``field`` in mT or None.
+    Attributes
+    ----------
+    ops : DsoxfOperators
+        Configuration operators.
+    energies : torch.Tensor, shape (N,)
+        Ascending eigenvalues in ``units``.
+    vectors : torch.Tensor, shape (N, N), complex128
+        Eigenvector columns in the ``|m_L m_S>`` basis.
+    mu : torch.Tensor, shape (3, N, N), complex128
+        Magnetic-moment operator in mu_B.
+    field : array_like or None
+        Field vector in mT, or None.
+    units : str
+        Energy unit of ``energies``.
+    constants : torchspin.lft.ddn.Constants
+        Physical constants used.
     """
 
     def __init__(self, ops: DsoxfOperators, field, energies: torch.Tensor, vectors: torch.Tensor, mu: torch.Tensor,
@@ -299,7 +569,18 @@ class Solution:
         return self.energies - self.energies[..., :1]
 
     def levels(self, tol: float = 1e-5) -> list[tuple[torch.Tensor, list[int]]]:
-        """[(energy, [state indices])], DSOXF's chained criterion (``tol`` in cm^-1) on detached energies."""
+        """Group states into degenerate levels.
+
+        Parameters
+        ----------
+        tol : float, default 1e-5
+            DSOXF's chained criterion in cm^-1, applied to detached energies.
+
+        Returns
+        -------
+        list of (torch.Tensor, list of int)
+            ``(energy of the first member, state indices)`` per level, ascending.
+        """
         e = self.energies.detach() * self._f
         out: list[tuple[torch.Tensor, list[int]]] = []
         for i in range(len(e)):
@@ -310,10 +591,11 @@ class Solution:
         return out
 
     def level_sum(self, x: torch.Tensor, tol: float = LEVEL_TOL) -> torch.Tensor:
+        """Per-state ``x`` summed over each degenerate level (:func:`level_sum`; ``tol`` in cm^-1)."""
         return level_sum(self.energies, x, tol, self.units)
 
     def spin_expectation(self) -> torch.Tensor:
-        """(n, 3) <S> per state."""
+        """``<S>`` per state, shape (N, 3)."""
         return spin_expectation(self.vectors, self.ops)
 
     def _unit_field(self) -> torch.Tensor:
@@ -324,25 +606,46 @@ class Solution:
         return f / torch.linalg.vector_norm(f)
 
     def spin_along_field(self) -> torch.Tensor:
-        """<S . h>, h the unit field vector (DSOXF's '<S para>'); z at zero field."""
+        """``<S . h>`` per state, ``h`` the unit field vector (DSOXF's "<S para>"); ``h = z`` at zero field."""
         return self.spin_expectation() @ self._unit_field()
 
     def ml_occupancies(self) -> torch.Tensor:
+        """``m_L`` weights per state, shape (N, 2L+1) (:func:`ml_occupancies`)."""
         return ml_occupancies(self.vectors, self.ops)
 
     def orbital_occupancies(self, kind: str = "real") -> torch.Tensor:
+        """Real-orbital weights per state, shape (N, 2L+1) (:func:`orbital_occupancies`)."""
         return orbital_occupancies(self.vectors, self.ops, kind)
 
     def g_tensor(self, states: Sequence[int] = (0, 1)) -> DoubletG:
-        """g of the doublet spanned by ``states`` (use at zero field)."""
+        """g of the doublet spanned by ``states`` (default the lowest two); use at zero field.  Returns :class:`DoubletG`."""
         return doublet_g(self.vectors, self.mu, states, self.energies)
 
     def kramers_g(self, tol: float = LEVEL_TOL) -> list[DoubletG]:
-        """g of every doubly degenerate level (zero field); ``tol`` in cm^-1."""
+        """g of every doubly degenerate level (zero field).
+
+        Parameters
+        ----------
+        tol : float, default ``LEVEL_TOL``
+            Level tolerance in cm^-1.
+
+        Returns
+        -------
+        list of DoubletG
+            One entry per two-fold level, ascending in energy.
+        """
         return [self.g_tensor(idx) for _, idx in self.levels(tol) if len(idx) == 2]
 
     def field_g(self, i: int, j: int) -> torch.Tensor:
-        """DSOXF's g(obs) = (E_j - E_i) / (mu_B |B|)."""
+        """DSOXF's g(obs) of the pair of states ``i``, ``j``.
+
+        ``g(obs) = (E_j - E_i) / (mu_B abs(B))`` with the energies in cm^-1 and ``mu_B`` in cm^-1/mT.
+
+        Raises
+        ------
+        ValueError
+            If the solution has no field or a zero field.
+        """
         f = self.field
         if f is None or not torch.any(_t(f) != 0):
             raise ValueError("field_g needs a nonzero field")
@@ -350,34 +653,92 @@ class Solution:
         return dE / (self.constants.mu_b * torch.linalg.vector_norm(_t(f, self.ops.device)))
 
     def populations(self, temperature) -> torch.Tensor:
-        """exp(-(E_i - E_0) / k_B T), temperature in K (DSOXF's 'relative population', not normalized)."""
+        """Boltzmann factors ``exp(-(E_i - E_0) / k_B T)`` per state.
+
+        ``temperature`` in K (float or tensor).  DSOXF's "relative population": not normalized.
+        """
         return torch.exp(-self.relative * self._f / (self.constants.k_b * _t(temperature, self.ops.device)))
 
     def transition_moments(self, b1=None) -> torch.Tensor:
-        """(n, n) |<i|mu . b1|j>|^2 in mu_B^2; ``b1`` defaults to the static-field direction (parallel mode)."""
+        """Squared transition moments ``abs(<i|mu . b1|j>)**2`` in mu_B^2, shape (N, N).
+
+        ``b1`` is the microwave-field direction; default the static-field direction (parallel mode;
+        z at zero field).
+        """
         return transition_moments(self.vectors, self.mu, self._unit_field() if b1 is None else b1)
 
     def level_transition_moments(self, b1=None, tol: float = LEVEL_TOL) -> torch.Tensor:
-        """|<I|mu . b1|J>|^2 summed over the members of both levels (gauge-invariant); ``tol`` in cm^-1."""
+        """Transition moments summed over the members of both levels (gauge-invariant).
+
+        ``abs(<I|mu . b1|J>)**2`` in mu_B^2, shape (N, N); ``b1`` as :meth:`transition_moments`,
+        ``tol`` in cm^-1.
+        """
         D = level_matrix(self.energies, tol, self.units)
         return D @ self.transition_moments(b1) @ D
 
 
 def solve(ops: DsoxfOperators, *, field=None, k=(1.0, 1.0, 1.0), units: str = "MHz",
           constants: Constants = TORCHSPIN_CONSTANTS, **kw) -> Solution:
-    """Diagonalize H (keywords as :func:`hamiltonian`); eigenvalues/vectors with degenerate-safe derivatives."""
+    """Diagonalize the DSOXF Hamiltonian.
+
+    Parameters
+    ----------
+    ops : DsoxfOperators
+        Configuration operators.
+    field : array_like or torch.Tensor, shape (3,), optional
+        Field vector in mT.
+    k : array_like, shape (3,), default (1, 1, 1)
+        Orbital reduction factors.
+    units : str, default 'MHz'
+        Energy unit of the inputs and of the solution.
+    constants : torchspin.lft.ddn.Constants, optional
+        Physical constants.
+    **kw
+        ``lam``, ``rho`` and crystal-field parameters, as :func:`hamiltonian`.
+
+    Returns
+    -------
+    Solution
+        Eigenvalues and eigenvectors with degenerate-safe derivatives.
+    """
     E, V = eigh_gauge(hamiltonian(ops, field=field, k=k, units=units, constants=constants, **kw))
     return Solution(ops, field, E, V, zeeman_operators(ops, k, constants), units, constants)
 
 
 class DsoxfSystem:
-    """One DSOXF configuration with stored parameter values (all in ``units``) and cached operators.
+    """One DSOXF configuration with stored parameter values and cached operators.
 
-    >>> s = DsoxfSystem("f", 1, symmetry="axial", axis="trigonal", units="cm^-1", lam=600.0, b4=2000.0, b6=800.0)
-    >>> s.levels(b20=torch.tensor(300.0, requires_grad=True))      # keyword overrides per call
+    Parameters
+    ----------
+    shell, code, geometry, symmetry, axis, conventions
+        The configuration and discrete setting, as :func:`dsoxf_operators`.
+    units : str, default 'MHz'
+        Energy unit of the stored parameters, of per-call overrides and of every returned energy;
+        fixed for the system.
+    constants : torchspin.lft.ddn.Constants, optional
+        Physical constants, default :data:`torchspin.lft.ddn.TORCHSPIN_CONSTANTS`.
+    device : str or torch.device, default 'cpu'
+        Device of the operators.
+    **params
+        Stored defaults: ``lam`` (``abs(lambda)``, default 0), ``rho`` (default 0), ``k``
+        (default ``(1, 1, 1)``) and any of ``CF_PARAMETERS`` (default 0), energies in ``units``.
 
-    Parameters: ``lam``, ``rho``, ``k`` and any of ``CF_PARAMETERS``.  ``units`` is fixed for the
-    system: stored values, overrides and returned energies are all in it.  Field in mT.
+    Raises
+    ------
+    TypeError
+        For an unknown parameter name (also for per-call overrides).
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torchspin.lft import dsoxf
+    >>> s = dsoxf.DsoxfSystem("f", 1, symmetry="axial", axis="trigonal", units="cm^-1",
+    ...                       lam=600.0, b4=2000.0, b6=800.0)
+    >>> s.ops.term, s.size
+    ('2F', 14)
+    >>> E = s.levels(b20=torch.tensor(300.0), relative=True)   # keyword overrides per call
+    >>> E.shape
+    torch.Size([14])
     """
 
     def __init__(self, shell: str = "d", code: int = 1, *, geometry: str = "Oh", symmetry: str = "cubic",
@@ -399,8 +760,11 @@ class DsoxfSystem:
     @classmethod
     def from_model(cls, model, *, units: str = "MHz", constants: Constants = TORCHSPIN_CONSTANTS,
                    device: str | torch.device = "cpu") -> "DsoxfSystem":
-        """From a DSOXF model object with Telser's cm^-1 values (``torchspin.lft._engines.dsoxf.DsoxfModel``
-        or telser-tools' ``DsoxfModel``); the energies are converted to ``units``."""
+        """Build from a DSOXF model object holding Telser's cm^-1 values.
+
+        ``model`` is ``torchspin.lft._engines.dsoxf.DsoxfModel`` or telser-tools' ``DsoxfModel``;
+        its energies are converted from cm^-1 to ``units``.
+        """
         f = _u.energy_factor("cm^-1", units)
         p = {a: float(getattr(model, a)) * f for a in ("lam", "rho", *CF_PARAMETERS)}
         return cls(model.shell, model.code, geometry=model.geometry, symmetry=model.symmetry, axis=model.axis,
@@ -409,22 +773,28 @@ class DsoxfSystem:
 
     @property
     def size(self) -> int:
+        """Basis size ``(2L+1)(2S+1)``."""
         return self.ops.size
 
     def parameters(self, **kw) -> dict:
+        """Stored parameters updated with the keyword overrides ``kw`` (raises ``TypeError`` for unknown names)."""
         return self.defaults | self._check(kw)
 
     def _kw(self, kw: dict) -> dict:
         return dict(units=self.units, constants=self.constants, **self.parameters(**kw))
 
     def hamiltonian(self, field=None, **kw) -> torch.Tensor:
+        """Hamiltonian (n, n) in ``self.units``; ``field`` in mT, keywords override the stored parameters (:func:`hamiltonian`)."""
         return hamiltonian(self.ops, field=field, **self._kw(kw))
 
     def levels(self, field=None, relative: bool = False, **kw) -> torch.Tensor:
+        """Ascending energies (n,) in ``self.units``; ``field`` in mT, keywords override the stored parameters (:func:`levels`)."""
         return levels(self.ops, field=field, relative=relative, **self._kw(kw))
 
     def solve(self, field=None, **kw) -> Solution:
+        """Diagonalize at ``field`` (mT) with keyword overrides; returns a :class:`Solution` (:func:`solve`)."""
         return solve(self.ops, field=field, **self._kw(kw))
 
     def zeeman_operators(self, k=None) -> torch.Tensor:
+        """Moment operators (3, n, n) in mu_B for ``k`` (default: the stored ``k``)."""
         return zeeman_operators(self.ops, self.defaults["k"] if k is None else k, self.constants)
