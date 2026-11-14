@@ -227,9 +227,10 @@ example collection in `examples/{solidstate,liquids,slowmotion,endor,fitting,mag
 ## Accuracy and performance
 
 Every simulator with an EasySpin counterpart is checked against stored MATLAB
-reference output on each commit. Agreement is cosine ≥ 0.999 (most
-0.9999–1.0000) for `pepper`, `garlic`, `salt` and `curry`, with absolute
-intensities matched where EasySpin defines them. The pulse-EPR routes
+reference output on every push and pull request to main (the full-suite CI job).
+`pepper` and `garlic` agree at cosine ≥ 0.999 (most 0.9999–1.0000); `salt` at
+≥ 0.999, or > 0.99 with orientation selection; `curry` within 0.5–1 % of the
+maximum; absolute intensities are matched where EasySpin defines them. The pulse-EPR routes
 (`saffron`, `saffron_thyme`, `spidyan`) are held to a stricter metric — the
 relative L2 error on the raw *and* the mean-centered signal, 1e-16..1e-7 —
 because a cosine is scale-invariant and dominated by a pulse-EPR trace's DC
@@ -238,7 +239,7 @@ offset.
 simulator, with the evidence: [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
 
 On speed, torchspin is competitive rather than uniformly faster. On an audited
-nine-workload comparison it beat EasySpin on six — most strongly on
+nine-workload comparison (measured on v0.2.2) it beat EasySpin on six — most strongly on
 slow-motion `chili` (7.3×) and trajectory `cardamom` (2.0×) — and was slower on
 three, including matrix-method Cu(II) powders (0.34×). The GPU path pays off
 for batched and gradient-based work, not for single simulations. Numbers,

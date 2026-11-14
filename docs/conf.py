@@ -71,6 +71,9 @@ language = "en"
 root_doc = "index"
 templates_path = ["_templates"]
 exclude_patterns = [
+    # developer-facing (coverage gaps, manuscript-era claims): in the repo, not on the site
+    "physics/coverage_gaps.md",
+    "physics/manuscript_claims.md",
     "_build",
     "_ext",
     "_templates",
@@ -87,7 +90,9 @@ exclude_patterns = [
 ]
 # Pages that other branches add.  Their toctree entries are already in place
 # and are dropped by _ext/torchspin_docs.py until the page exists.
-torchspin_optional_docs = ["installation", "physics_validation", "chili_empirical_rules"]
+torchspin_optional_docs = ["installation", "physics_validation", "chili_empirical_rules"] + [
+    f"physics/{n}" for n in ("pepper", "garlic", "chili", "salt", "pulse", "cardamom",
+                             "curry_blochsteady", "esfit", "ligand_field")]
 
 # -- MyST (Markdown) and notebooks -------------------------------------------
 

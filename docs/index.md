@@ -65,7 +65,7 @@ B, spc = pepper(cu, Experiment(mwFreq=9.5, Range=[260, 360]))   # field in mT, d
   workloads, before and after the 2026-09 optimizations.  The
   [verified matched-host campaign](https://github.com/follmerlab/torchspin/blob/main/benchmarks/results/workstation_20260904_verified/BENCHMARK_VERIFICATION.md)
   (five replicates per point, with a per-workload device audit) supersedes it wherever the two disagree.
-- `python -m pytest` runs the test suite (about 2800 tests, including comparisons against stored
+- `python -m pytest` runs the test suite (about 5800 tests, including comparisons against stored
   EasySpin/MATLAB references in `tests/data`; no MATLAB installation needed).
 
 ```{toctree}
