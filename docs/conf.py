@@ -74,10 +74,20 @@ exclude_patterns = [
     "_build",
     "_ext",
     "_templates",
+    "scripts",
     "Thumbs.db",
     ".DS_Store",
     "**.ipynb_checkpoints",
+    # Internal notes kept in the repository but not published: planning
+    # documents and the docstring inventory (docs/scripts/api_inventory.py).
+    "differentiable_roadmap.md",
+    "real_pulse_plan.md",
+    "v1_acceleration",
+    "api_inventory.md",
 ]
+# Pages that other branches add.  Their toctree entries are already in place
+# and are dropped by _ext/torchspin_docs.py until the page exists.
+torchspin_optional_docs = ["installation", "physics_validation", "chili_empirical_rules"]
 
 # -- MyST (Markdown) and notebooks -------------------------------------------
 

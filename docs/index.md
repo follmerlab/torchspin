@@ -83,5 +83,4 @@ tutorials/index
 user_guide
 api/index
 changelog
-dev/index
 ```

@@ -12,6 +12,9 @@ What it does:
 * **Tutorial notebooks.**  ``examples/notebooks/*.ipynb`` (committed,
   already executed) are copied into ``docs/tutorials/`` at build time
   (git-ignored) so myst-nb can render them without executing anything.
+* **Optional pages.**  Toctree entries for pages listed in
+  ``torchspin_optional_docs`` (pages that other branches add) are dropped
+  while the page does not exist, so the build stays warning-free.
 * **Constants.**  ``.. torchspin-constants::`` documents the physical
   constants of ``torchspin.constants`` at their public path
   (``torchspin.BMAGN``), with values and units read from the module source.
@@ -64,13 +67,18 @@ _LINK = re.compile(r"(\]\()(?!https?:|mailto:|#|/)([^)\s#]+)(#[^)\s]*)?\)")
 # ---------------------------------------------------------------------------
 
 
-def rewrite_links(text: str, base: str, repo: Path) -> str:
+def rewrite_links(text: str, base: str, repo: Path, in_site=None) -> str:
     """Rewrite relative Markdown links in *text*.
 
     *base* is the directory, relative to the repository root and in POSIX
     form, of the file the text comes from (``""`` for the root, ``"docs"``
-    for ``docs/index.md``).
+    for ``docs/index.md``).  *in_site(docname)* says whether a page under
+    docs/ is part of the build (default: the file exists); pages that are
+    not, such as the excluded planning notes, are linked on GitHub.
     """
+    if in_site is None:
+        def in_site(docname: str) -> bool:
+            return any((repo / "docs" / (docname + ext)).is_file() for ext in (".md", ".ipynb", ".rst"))
 
     def fix(m: re.Match) -> str:
         opener, target, anchor = m.group(1), m.group(2), m.group(3) or ""
@@ -84,7 +92,7 @@ def rewrite_links(text: str, base: str, repo: Path) -> str:
             name = posixpath.basename(path)
             return f"{opener}/{NOTEBOOK_DST}/{name}{anchor})"
         if path.startswith("docs/") and path.endswith((".md", ".ipynb", ".rst")):
-            if (repo / path).is_file():
+            if in_site(posixpath.splitext(path[len("docs/"):])[0]):
                 return f"{opener}/{path[len('docs/'):]}{anchor})"
         if is_image:
             return f"{opener}{RAW}{path})"
@@ -111,12 +119,44 @@ def _preceded_by_image(m: re.Match) -> bool:
     return False
 
 
+def _in_site(app: Sphinx):
+    return lambda docname: docname in app.env.found_docs
+
+
+def _drop_missing_optional_entries(app: Sphinx, docname: str, text: str) -> str:
+    """Remove toctree entries for optional pages that are not in this build.
+
+    ``torchspin_optional_docs`` lists pages that other branches add
+    (``installation``, ``physics_validation``, ...).  Their toctree entries
+    are written in the Markdown already; until the page exists the entry is
+    dropped instead of producing a "nonexisting document" warning.
+    """
+    optional = set(app.config.torchspin_optional_docs)
+    if not optional or "{toctree}" not in text:
+        return text
+    here = posixpath.dirname(docname)
+    out, in_toc = [], False
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("```{toctree}"):
+            in_toc = True
+        elif in_toc and stripped.startswith("```"):
+            in_toc = False
+        elif in_toc and stripped and not stripped.startswith(":"):
+            target = posixpath.normpath(posixpath.join(here, stripped))
+            if target in optional and target not in app.env.found_docs:
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def _on_source_read(app: Sphinx, docname: str, source: list[str]) -> None:
     path = Path(app.env.doc2path(docname))
     if path.suffix != ".md":
         return
     rel = path.resolve().relative_to(_repo(app))
-    source[0] = rewrite_links(source[0], posixpath.dirname(rel.as_posix()), _repo(app))
+    text = _drop_missing_optional_entries(app, docname, source[0])
+    source[0] = rewrite_links(text, posixpath.dirname(rel.as_posix()), _repo(app), _in_site(app))
 
 
 def _on_include_read(app: Sphinx, relative_path, parent_docname, content: list[str]) -> None:
@@ -124,7 +164,7 @@ def _on_include_read(app: Sphinx, relative_path, parent_docname, content: list[s
     if path.suffix != ".md":
         return
     rel = path.relative_to(_repo(app))
-    content[0] = rewrite_links(content[0], posixpath.dirname(rel.as_posix()), _repo(app))
+    content[0] = rewrite_links(content[0], posixpath.dirname(rel.as_posix()), _repo(app), _in_site(app))
 
 
 def _repo(app: Sphinx) -> Path:
@@ -305,4 +345,5 @@ def setup(app: Sphinx):
     app.connect("include-read", _on_include_read)
     app.connect("env-check-consistency", _check_public_api)
     app.add_directive("torchspin-constants", ConstantsDirective)
+    app.add_config_value("torchspin_optional_docs", [], "env")
     return {"version": "1", "parallel_read_safe": True, "parallel_write_safe": True}
