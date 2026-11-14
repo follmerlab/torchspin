@@ -14,6 +14,62 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.33] — 2026-11-14
+
+### Fixed
+
+- **Field-sweep gStrain/AStrain widths are rotation covariant (B84).** The g-strain model is a
+  distribution of the principal g values in the g frame, width² = Σ_i (R z)_i² (gStrain_i/g_i ·
+  mwFreq)² = z' G G z with G = R' diag(gStrain/g · mwFreq) R. `compute_strain_widths_batch`
+  used the element-wise square z' (G∘G) z (one electron, each electron of a multi-electron
+  system, and |(G + c·mI·A) z|² with AStrain), which equals the model only for a diagonal G.
+  It now uses the matrix square G @ G (and SM @ SM). `hamsymm`'s strain-symmetry tensors (B82)
+  follow: G·G, A·A and G·A + A·G instead of G∘G, A∘A and G∘A, so strain collinear with a tilted
+  g frame now has the symmetry of g in that frame (Dinfh/D2h) instead of Ci. Numbers (S = 1/2,
+  9.5 GHz, gFrame = [0.4 0.9 -0.3] against the untilted system at the rotated field direction):
+  per-orientation widths for g = [2.0 2.0 2.2] / [2.0 2.1 2.3] with gStrain = [0.01 0.01 0.05] /
+  [0.01 0.03 0.06] differed by up to 104 % / 108 % and now agree to 1e-15; two electrons with
+  the same tilt 82 % -> 7e-15; g+A strain and AStrain alone (isotropic g and A, AFrame tilted
+  with g) 92 % -> 2e-15; pepper powder spectra ([19 4] grid) 27 % / 9.2 % of the peak -> 2.5e-14 / 8.3e-15 (same grid now).
+  Gradients: `pepper_autograd` at user orientations gives the same d/dgStrain for the tilted
+  and the untilted description (before: 1.26 relative apart); gStrain and gFrame gradients on
+  a fixed Ci grid match converged central differences (1.2e-8 and 1.2e-6 relative at h = 1e-6).
+  Untilted frames (diagonal G) give bit-identical widths and spectra. Frequency sweeps (linear
+  z' G z) were already covariant and are unchanged; the perturbation-theory paths compute no
+  strain widths.
+- **Deliberate deviation from EasySpin.** EasySpin has the same element-wise square
+  (resfields.m 787/792/1309, resfields_perturb.m 523/532, resfreqs_perturb.m 504), so its
+  widths with a tilted g or A frame and g/A strain depend on the frame description. Four
+  EasySpin comparisons are now strict xfails, each with an objective replacement test:
+  `test_strain_validation.py` tilted_frame (RMS 0.0874 -> 0.0996, peak ratio 0.944 -> 1.252;
+  replacement: the tilted system equals the untilted one to 1e-10 and passes against EasySpin's
+  untilted reference), `test_strain_widths_matlab_validation.py` two_spinhalf_gstrain_both
+  (max relative width deviation 3.4e-4 -> 0.17; replacement: a global rotation of the
+  two-electron system leaves every width unchanged, 0.54 -> 2.3e-15) and the two Cu63_AFrame
+  width tests in `test_astrain_mi_model.py` (9.2e-6 -> 0.45; replacement: both width functions
+  equal the explicitly written model with the matrix square to 4e-16, and the same model with
+  EasySpin's element-wise square reproduces EasySpin's widths). See KNOWN_LIMITATIONS.md.
+- Not covered: the AStrain mI labels (EasySpin's model, taken along the molecular z axis) are
+  not rotation covariant with anisotropic A or with anisotropic g in a tilted frame (B96, open).
+
+### Tests
+
+- New `torchspin/tests/test_gstrain_covariance.py` (13 tests; 12 fail before this change):
+  per-orientation widths of tilted vs untilted systems (axial, rhombic, two electrons, g+A
+  strain and AStrain with isotropic g and A) at 1e-12; pepper powder spectra at 1e-10;
+  `hamsymm` Dinfh/D2h for tilted collinear strain; `pepper_autograd` spectrum and d/dgStrain
+  covariance at user orientations; gStrain/gFrame gradients against converged central
+  differences on a fixed Ci grid (step-size table in the test; passes before the fix too).
+- New objective tests in `test_strain_validation.py`, `test_strain_widths_matlab_validation.py`
+  and `test_astrain_mi_model.py` (see above).
+- `test_ham_handling.py::test_pepper_gstrain_ham_gframe_converged_reference` (Ham110/Ham112 +
+  gStrain with a gFrame): the default grid is now D2h [19 4] in the g frame instead of Ci, and
+  its 1 - cos against the C1 [91 1] reference is 9.5e-7 (as for the untilted system) instead
+  of 1.07e-7. The bound 1.2e-7 is kept on a D2h [31 4] grid (8.8e-8); the default spectrum is
+  now checked against the untilted system (1e-13) and EasySpin's untilted spectrum (cosine
+  0.9999999966, max deviation 9.2e-5, the 'diag' case tolerances). Before the fix the tilted
+  default differed from the untilted one by 0.25 of the maximum.
+
 ## [0.9.31] — 2026-11-14
 
 ### Fixed
