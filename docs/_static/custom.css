@@ -1,6 +1,109 @@
-/* torchspin docs: small adjustments to pydata-sphinx-theme. */
+/* torchspin docs: adjustments to pydata-sphinx-theme. */
 
-/* Long dataclass signatures (SpinSystem, Options) wrap one parameter per line;
+/* ---------------------------------------------------------------------------
+   Color scheme: the lab's blue ramp as the main color, pydata's magenta kept
+   only as an accent (link hover, the underline of the current navbar item,
+   anchor-target highlight).
+
+   Ramp, lightest to darkest: #DCE5F3  #9DB3D9  #5577B8  #1F4E9E  #14336B
+
+   WCAG contrast of text colors (body background; >= 4.5 required):
+     light  links #1F4E9E on #ffffff 7.95, on surface #f3f4f5 7.22
+            current nav #14336B on header #DCE5F3 9.64; muted nav #48566b 5.87
+            link hover #a8259a on #ffffff 6.18, on header #DCE5F3 4.87
+            inline code #14336B on #f3f4f5 11.12
+     dark   links #9DB3D9 on #14181e 8.38, on surface #29313d 6.17
+            current nav #DCE5F3 on header #14336B 9.64; muted nav #9ca4af 4.86
+            link hover #e47fd7 on #14181e 7.05, on header #14336B 4.85
+            inline code #DCE5F3 on #29313d 10.33
+   #5577B8 (light) is used for bars and borders only, not for text (4.45).
+   --------------------------------------------------------------------------- */
+
+html[data-theme="light"] {
+  --ts-header-bg: #DCE5F3;
+  --ts-nav-current: #14336B;
+  --pst-color-primary: #5577B8;
+  --pst-color-primary-highlight: #1F4E9E;
+  --pst-color-primary-bg: #DCE5F3;
+  --pst-color-secondary: #1F4E9E;
+  --pst-color-secondary-highlight: #14336B;
+  --pst-color-secondary-bg: #DCE5F3;
+  --pst-color-accent: #c132af;
+  --pst-color-link: #1F4E9E;
+  --pst-color-link-hover: #a8259a;
+  --pst-color-link-higher-contrast: #14336B;
+  --pst-color-inline-code: #14336B;
+  --pst-color-inline-code-links: #1F4E9E;
+  --pst-color-table-row-hover-bg: #DCE5F3;
+  --pst-color-target: #f8dff5;
+  --sd-color-primary: #1F4E9E;
+  --sd-color-primary-highlight: #14336B;
+  --sd-color-primary-bg: #DCE5F3;
+  --sd-color-secondary: #5577B8;
+  --sd-color-secondary-bg: #DCE5F3;
+}
+
+html[data-theme="dark"] {
+  --ts-header-bg: #14336B;
+  --ts-nav-current: #DCE5F3;
+  --pst-color-primary: #9DB3D9;
+  --pst-color-primary-text: #14181e;
+  --pst-color-primary-highlight: #DCE5F3;
+  --pst-color-primary-bg: #14336B;
+  --pst-color-secondary: #9DB3D9;
+  --pst-color-secondary-highlight: #DCE5F3;
+  --pst-color-secondary-bg: #14336B;
+  --pst-color-accent: #e47fd7;
+  --pst-color-link: #9DB3D9;
+  --pst-color-link-hover: #e47fd7;
+  --pst-color-link-higher-contrast: #DCE5F3;
+  --pst-color-inline-code: #DCE5F3;
+  --pst-color-inline-code-links: #9DB3D9;
+  --pst-color-table-row-hover-bg: #14336B;
+  --pst-color-target: #46123f;
+  --sd-color-primary: #9DB3D9;
+  --sd-color-primary-text: #14181e;
+  --sd-color-primary-highlight: #DCE5F3;
+  --sd-color-primary-bg: #14336B;
+  --sd-color-secondary: #5577B8;
+  --sd-color-secondary-bg: #14336B;
+}
+
+/* Header band in the lightest (light mode) or darkest (dark mode) blue. */
+.bd-header {
+  background-color: var(--ts-header-bg) !important;
+}
+.bd-header .navbar-brand,
+.bd-header .navbar-brand .title {
+  color: var(--ts-nav-current);
+}
+/* Current navbar item: blue text, magenta underline (the accent). */
+.bd-header ul.navbar-nav > li.nav-item.current > .nav-link {
+  color: var(--ts-nav-current);
+  font-weight: 600;
+}
+.bd-header ul.navbar-nav > li.nav-item.current > .nav-link:before {
+  border-bottom-color: var(--pst-color-accent);
+}
+.bd-header ul.navbar-nav > li.nav-item > .nav-link:hover {
+  color: var(--pst-color-link-hover);
+}
+.bd-header ul.navbar-nav > li.nav-item > .nav-link:hover:before {
+  border-bottom-color: var(--pst-color-link-hover);
+}
+
+/* Current page in the sidebars: blue bar, readable blue text. */
+nav.bd-links .current > a,
+.toc-entry a.nav-link.active,
+.toc-entry a.nav-link[aria-current="true"] {
+  color: var(--pst-color-link);
+}
+
+/* ---------------------------------------------------------------------------
+   API pages
+   --------------------------------------------------------------------------- */
+
+/* Long dataclass signatures (SpinSystem, Options) flow as a paragraph;
    keep them compact. */
 dl.py.class > dt.sig,
 dl.py.function > dt.sig {
