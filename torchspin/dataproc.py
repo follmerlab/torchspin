@@ -247,32 +247,82 @@ def _bessel_j01(x):
     return _J01.apply(x)
 
 
+_BESSELJ_MAX_ORDER = 30
+
+
+def _besselj_series_terms(n: int) -> int:
+    """Number of terms m = 0..M-1 of the J_n power series used on |x| < n: the
+    first omitted term, bounded at x = n by (n/2)^(2M+n) / (M! (M+n)!), is
+    below 1e-18 (absolute; |J_n| <= 1)."""
+    m = 0
+    log_t = n * math.log(n / 2.0) - math.lgamma(n + 1)       # term m = 0 at x = n
+    while log_t > math.log(1e-18):
+        m += 1
+        log_t += 2.0 * math.log(n / 2.0) - math.log(m) - math.log(m + n)
+    return m + 1
+
+
 def _besselj_t(n: int, x):
-    """Bessel function J_n(x) of integer order in torch (orders 0-2 in closed form,
-    higher orders by upward recurrence with a small-argument series);
-    differentiable in ``x`` on every torch version (:func:`_bessel_j01`)."""
+    """Bessel function J_n(x) of integer order in torch; differentiable in ``x``
+    on every torch version (:func:`_bessel_j01`).
+
+    Orders 0 and 1 are torch's ``bessel_j0``/``bessel_j1``; order 2 is the
+    upward recurrence J_2 = 2/x J_1 - J_0 (with (x/2)^2/2 for |x| < 1e-3).
+    For n >= 3 the upward recurrence J_{k+1} = 2k/x J_k - J_{k-1} is unstable
+    where |x| < n (it amplifies the error of J_0/J_1 by up to ~ (2k/x)^n;
+    before 0.9.37, J_4(1e-3) was 7.9e-9 instead of 2.6e-15, B93), so the power
+    series sum_m (-1)^m (x/2)^(2m+n) / (m! (m+n)!) is used there instead
+    (alternating, all terms summed to 1e-18; exact parity for x < 0) and the
+    recurrence only for |x| >= n.  Both branches are accurate to the floor set
+    by torch's own J_0/J_1 (about 4e-7 absolute for x in 5-10), so the switch
+    at |x| = n is continuous to that level.
+
+    Orders above :data:`_BESSELJ_MAX_ORDER` (30) raise ``ValueError``: the
+    series cancels near |x| = n (absolute error 1.3e-11 at n = 30, 9.6e-10 at
+    n = 40, 2e4 at n = 100), and no harmonic that high is meaningful for field
+    modulation.
+    """
     import torch
+    if n < 0 or n != int(n):
+        raise ValueError(f"Bessel order must be a non-negative integer, got {n!r}")
+    if n > _BESSELJ_MAX_ORDER:
+        raise ValueError(
+            f"Bessel order {n} > {_BESSELJ_MAX_ORDER} is not supported in torch "
+            "(the power series loses accuracy to cancellation); use dataproc.fieldmod")
+    n = int(n)
     x = torch.as_tensor(x)
-    j0, j1 = _bessel_j01(x)
+    if n <= 2:
+        j0, j1 = _bessel_j01(x)
     if n == 0:
         return j0
     if n == 1:
         return j1
-    small = x.abs() < 1e-3
-    xs = torch.where(small, torch.ones_like(x), x)
-    jm, jc = j0, j1
+    if n == 2:
+        small = x.abs() < 1e-3
+        xs = torch.where(small, torch.ones_like(x), x)
+        series = (x / 2.0) ** 2 / 2.0               # J_2(x) ~ (x/2)^2 / 2!
+        return torch.where(small, series, 2.0 / xs * j1 - j0)
+    small = x.abs() < n
+    # each branch sees a harmless argument where the other is selected, so
+    # neither branch's gradient is inf/nan under torch.where
+    xs = torch.where(small, torch.full_like(x, float(n)), x)
+    xh = torch.where(small, x, torch.zeros_like(x)) / 2.0
+    jm, jc = _bessel_j01(xs)
     for k in range(1, n):
-        jn = 2.0 * k / xs * jc - jm           # J_{k+1} = (2k/x) J_k - J_{k-1}
-        jm, jc = jc, jn
-    # series for |x| -> 0: J_n(x) ≈ (x/2)^n / n!
-    series = (x / 2.0) ** n / math.factorial(n)
+        jm, jc = jc, 2.0 * k / xs * jc - jm     # J_{k+1} = (2k/x) J_k - J_{k-1}
+    h = xh * xh
+    term = xh ** n / float(math.factorial(n))  # (x/2)^n / n!
+    series = term
+    for m in range(1, _besselj_series_terms(n)):
+        term = -term * h / (m * (m + n))
+        series = series + term
     return torch.where(small, series, jc)
 
 
 def fieldmod_t(B, spc, mod_amp, harmonic: int = 1):
     """:func:`fieldmod` in torch (differentiable in ``spc`` and ``mod_amp`` on
     every torch version): the same Jacobi–Anger Bessel kernel applied by FFT on
-    the 2N+1 grid."""
+    the 2N+1 grid.  ``harmonic`` <= 30 (:func:`_besselj_t`)."""
     import torch
     B = torch.as_tensor(B, dtype=torch.float64)
     spc = torch.as_tensor(spc)

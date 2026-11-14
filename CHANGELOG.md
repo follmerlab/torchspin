@@ -14,6 +14,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.37] — 2026-11-14
+
+### Fixed
+
+- **`dataproc.fieldmod_t`: wrong Bessel kernel for `harmonic` >= 3 at small arguments (B93).**
+  `_besselj_t` computed J_n for n >= 2 by the upward recurrence J_{k+1} = 2k/x J_k - J_{k-1}
+  from torch's J_0/J_1 for every |x| >= 1e-3, with (x/2)^n/n! below. The recurrence is
+  unstable for |x| < n: J_3 jumped 6.4 % at the 1e-3 switch (2.2157e-11 vs 2.0833e-11),
+  J_4(1e-3) was 7.94e-9 (true 2.60e-15), J_6 was off by up to 0.22 absolute, and Harmonic >= 3
+  central differences of `fieldmod_t` with respect to ModAmp did not converge (H = 6 autograd
+  vs CD off by 99 %). n >= 3 now uses the power series (summed until the first omitted term
+  is below 1e-18 at |x| = n: 14 terms at n = 3, 41 at n = 30) for |x| < n, exact parity for
+  x < 0, and the recurrence only for |x| >= n. n = 3-6 match `scipy.special.jv`/`jvp` to
+  3.6e-7/2.4e-7 absolute (the torch J_0/J_1 floor, recurrence branch) and to 1.8e-14 relative
+  on the series branch; the jump at |x| = n is <= 2.7e-7. Harmonic 3 CD now converge (h =
+  1e-3 to 1e-4 agree to 1e-10 relative) and match autograd to 4.2e-8. Orders above 30 raise
+  `ValueError` (series cancellation: 1.3e-11 absolute at n = 30, 9.6e-10 at n = 40; before,
+  n >= 21 raised `OverflowError`). Only direct `fieldmod_t(..., harmonic >= 3)` calls were
+  affected: `pepper`, `pepper_autograd` and `garlic` cap Harmonic at 2. Orders 0-2 are
+  unchanged (bit-identical `fieldmod_t` values and gradients for Harmonic 0-2).
+
+### Documentation
+
+- KNOWN_LIMITATIONS: the ModAmp kernel is bounded by torch's `bessel_j0`/`bessel_j1` accuracy
+  (about 4e-7 absolute for x in 5-10 on torch 2.10 and 2.15).
+
 ## [0.9.30] — 2026-11-14
 
 ### Fixed
