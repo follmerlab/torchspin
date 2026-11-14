@@ -1,0 +1,112 @@
+name: install docs
+
+# Checks the installation routes in docs/installation.md against a wheel built
+# from this commit, in clean environments on Linux, Windows and macOS. It does
+# not run the test suite (python-tests.yml does) and cannot exercise CUDA (no
+# GPU runners); it checks which PyTorch build each route resolves.
+
+on:
+  pull_request:
+    paths:
+      - pyproject.toml
+      - docs/installation.md
+      - .github/workflows/install-docs.yml
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"   # weekly: PyTorch and uv releases change the answers
+
+jobs:
+  routes:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade pip build uv
+          python -m build --wheel --outdir dist/
+          echo "WHEEL=$(ls dist/torchspin-*.whl)" >> "$GITHUB_ENV"
+          pip --version; uv --version
+
+      - name: Smoke-test script
+        run: |
+          cat > "$RUNNER_TEMP/smoke.py" <<'EOF'
+          import torch, torchspin
+          from torchspin import SpinSystem, Experiment, Options, pepper
+          s = SpinSystem(S=[0.5], g=[[2.0, 2.1, 2.2]], lw=[1.0, 0.0])
+          e = Experiment(mwFreq=9.5, Range=[300.0, 350.0], nPoints=256, Harmonic=1)
+          B, spc = pepper(s, e, Options(GridSize=19, Verbosity=0))
+          assert spc.shape[-1] == 256
+          print("SMOKE OK", torchspin.__version__, torch.__version__, "cuda build:", torch.version.cuda)
+          EOF
+
+      - name: "Route: pip, CPU PyTorch first, then torchspin (torch is kept)"
+        run: |
+          python -m venv "$RUNNER_TEMP/v1"
+          PY="$RUNNER_TEMP/v1/bin/python"; [ -f "$RUNNER_TEMP/v1/Scripts/python.exe" ] && PY="$RUNNER_TEMP/v1/Scripts/python.exe"
+          "$PY" -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          before=$("$PY" -W ignore -c "import torch; print(torch.__version__)")
+          "$PY" -m pip install -q "$WHEEL"
+          "$PY" -m pip install -q --upgrade "$WHEEL"
+          after=$("$PY" -W ignore -c "import torch; print(torch.__version__)")
+          echo "torch before: $before  after: $after"
+          [ "$before" = "$after" ] || { echo "::error::pip replaced the preinstalled PyTorch"; exit 1; }
+          "$PY" -c "import torch, sys; sys.exit(torch.version.cuda is not None)"
+          "$PY" "$RUNNER_TEMP/smoke.py"
+
+      - name: "Route: uv pip --torch-backend=cpu"
+        run: |
+          uv venv -q --python "$(python -c 'import sys; print(sys.executable)')" "$RUNNER_TEMP/v2"
+          PY="$RUNNER_TEMP/v2/bin/python"; [ -f "$RUNNER_TEMP/v2/Scripts/python.exe" ] && PY="$RUNNER_TEMP/v2/Scripts/python.exe"
+          uv pip install -q --python "$PY" "$WHEEL" --torch-backend=cpu
+          "$PY" -c "import torch, sys; sys.exit(torch.version.cuda is not None)"
+          "$PY" "$RUNNER_TEMP/smoke.py"
+
+      - name: "Route: plain pip install (what PyPI's PyTorch resolves to, without downloading it)"
+        run: |
+          python -m venv "$RUNNER_TEMP/v3"
+          PY="$RUNNER_TEMP/v3/bin/python"; [ -f "$RUNNER_TEMP/v3/Scripts/python.exe" ] && PY="$RUNNER_TEMP/v3/Scripts/python.exe"
+          "$PY" -m pip install -q --upgrade pip
+          "$PY" -m pip install -q --dry-run --ignore-installed --report "$RUNNER_TEMP/report.json" "$WHEEL"
+          "$PY" - "$RUNNER_TEMP/report.json" "${{ runner.os }}" <<'EOF'
+          import json, sys
+          names = [i["metadata"]["name"].lower() for i in json.load(open(sys.argv[1]))["install"]]
+          gpu = sorted(n for n in names if n.startswith(("nvidia-", "cuda-")))
+          print("torch" in names, "CUDA packages:", gpu)
+          # docs/installation.md: PyPI's Linux wheel is a CUDA build; Windows and macOS are not
+          assert "torch" in names
+          assert bool(gpu) == (sys.argv[2] == "Linux"), "docs/installation.md platform table is out of date"
+          EOF
+
+  notebooks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the notebooks extra from a built wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist/
+          python -m venv "$RUNNER_TEMP/nb"
+          "$RUNNER_TEMP/nb/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+          "$RUNNER_TEMP/nb/bin/pip" install -q "torchspin[notebooks] @ file://$(ls $PWD/dist/torchspin-*.whl)"
+      - name: Execute the quickstart notebook
+        working-directory: examples/notebooks
+        run: |
+          "$RUNNER_TEMP/nb/bin/jupyter" nbconvert --to notebook --execute \
+            --ExecutePreprocessor.timeout=600 --output-dir "$RUNNER_TEMP/out" \
+            01_torchspin_quickstart.ipynb
