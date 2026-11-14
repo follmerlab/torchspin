@@ -9,7 +9,7 @@ quantities are returned as tensors (data for Zeeman and angle diagrams; plots ar
 * level energies;
 * Boltzmann factors exp(-(E_i - E_0)/kT), normalized (default) or as DDNLOOP prints them;
 * for the requested pairs (i, j): transition energies E_j - E_i, probabilities (the
-  B1-averaged full magnetic dipole |<i|B1 . (k L + g_e S)|j>|^2, in mu_B^2), the same summed
+  B1-averaged full magnetic dipole ``abs(<i|B1.(k L + g_e S)|j>)**2``, in mu_B^2), the same summed
   over the degenerate members of each level, population factors p_i - p_j, DDNLOOP's microwave
   weights and g_obs = (E_j - E_i)/(mu_B B).
 
@@ -29,13 +29,14 @@ populations are dimensionless.
     >>> V = lft.crystal_field(Dq=1500.0, Ds=300.0, Dt=50.0)
     >>> res = lft.ddnloop.field_scan(1, torch.linspace(0, 1000, 101), theta=0.3, V=V, zeta=154.0,
     ...                              units='cm^-1', pairs=[(0, 1)], temperature=4.2, mw_freq=9.5)
-    >>> res.energies.shape, res.g_obs.shape                 # (101, 10), (101, 1)
+    >>> res.energies.shape, res.g_obs.shape
+    (torch.Size([101, 10]), torch.Size([101, 1]))
 
-Gauge.  The per-pair probability |<i|O|j>|^2 (what DDNLOOP prints) depends on the arbitrary
+Gauge.  The per-pair probability ``abs(<i|O|j>)**2`` (what DDNLOOP prints) depends on the arbitrary
 basis inside a degenerate level and has no derivative there: at B > 0 the Zeeman term lifts
 the Kramers degeneracies, but levels the field leaves degenerate (S = 0 orbital multiplets at
 special orientations, every level at B = 0) make the per-pair value basis dependent.
-``level_probabilities`` sums |<a|O|b>|^2 over a in level(i), b in level(j) (= tr(P_I O P_J O^+),
+``level_probabilities`` sums ``abs(<a|O|b>)**2`` over a in level(i), b in level(j) (= tr(P_I O P_J O^+),
 gauge-invariant and differentiable everywhere off accidental crossings); it equals the
 per-pair value wherever both levels are non-degenerate.  Levels are decided on detached
 energies with :func:`torchspin.lft._linalg.degeneracy_mask`.
@@ -84,7 +85,27 @@ def _ops(n, device) -> DnOperators:
 
 # ------------------------------------------------------------------------------ functional core
 def directions(theta, phi, *, degrees: bool = False) -> torch.Tensor:
-    """Unit vectors (sin t cos p, sin t sin p, cos t), shape broadcast(theta, phi) + (3,)."""
+    """Unit field directions ``(sin t cos p, sin t sin p, cos t)``.
+
+    Parameters
+    ----------
+    theta, phi : float or array_like or torch.Tensor
+        Polar and azimuthal angles, broadcast together; radians unless
+        ``degrees``.
+    degrees : bool, default False
+        Angles are in degrees.
+
+    Returns
+    -------
+    torch.Tensor, shape broadcast(theta, phi) + (3,), float64
+        Unit vectors in the molecular frame.
+
+    Examples
+    --------
+    >>> from torchspin import lft
+    >>> lft.ddnloop.directions(90.0, 0.0, degrees=True).round(decimals=6).tolist()
+    [1.0, 0.0, 0.0]
+    """
     t, p = torch.broadcast_tensors(_t(theta), _t(phi))
     if degrees:
         t, p = torch.deg2rad(t), torch.deg2rad(p)
@@ -98,15 +119,45 @@ def _mirror_matrix() -> torch.Tensor:
 
 
 def mirror_image(V) -> torch.Tensor:
-    """DDN's internal real-orbital field (DDNLOOP-02): the complex conjugate of V in |m>, i.e. the
-    image of the ligand set under y -> -y (xy and yz change sign).  Linear, so gradients pass."""
+    """DDN's internal real-orbital field (DDNLOOP-02), the mirror image y -> -y of ``V``.
+
+    DDN works with the complex conjugate of V in the ``|m>`` basis, which is the
+    field of the ligand set reflected through the xz plane (the xy and yz rows
+    and columns change sign).  Apply it to ``V`` by hand to reproduce DDN's
+    numbers for a general field direction.  Linear, so gradients pass.
+
+    Parameters
+    ----------
+    V : array_like or torch.Tensor, shape (..., 5, 5)
+        Real-orbital ligand field (x2-y2, xy, xz, yz, z2), any energy unit.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 5, 5), float64
+        The mirrored field, same unit.
+    """
     V = _t(V)
     M = _mirror_matrix().to(V.device)
     return M @ V @ M.T
 
 
 def pair_elements(vectors: torch.Tensor, mu: torch.Tensor, pi: Sequence[int], pj: Sequence[int]) -> torch.Tensor:
-    """<i|mu_k|j> for eigenvector columns (..., N, N) and operators (3, N, N): shape (..., 3, P)."""
+    """Matrix elements ``<i|mu_k|j>`` for selected state pairs.
+
+    Parameters
+    ----------
+    vectors : torch.Tensor, shape (..., N, N)
+        Eigenvectors as columns.
+    mu : torch.Tensor, shape (3, N, N)
+        Operators (e.g. :func:`torchspin.lft.ddn.zeeman_operators`).
+    pi, pj : sequence of int
+        0-based state indices of the pairs (same length P).
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, P), complex
+        The matrix elements, in the unit of ``mu`` (mu_B for the moment).
+    """
     vi = vectors[..., :, list(pi)]
     vj = vectors[..., :, list(pj)]
     return torch.einsum("...ap,kab,...bp->...kp", vi.conj(), mu, vj)
@@ -121,10 +172,23 @@ def _mode(perp, par, h1mode: float):
 
 
 def exact_probabilities(elements: torch.Tensor, dirs: torch.Tensor, h1mode: float = 0.0) -> torch.Tensor:
-    """B1-averaged |<i|B1 . mu|j>|^2 for elements (..., 3, P) at unit field directions (..., 3).
+    """B1-averaged transition probabilities from matrix elements.
 
-    ``h1mode = 0``: perpendicular, (|M|^2 - |n.M|^2)/2 (the mean over B1 normal to B0);
-    ``h1mode < 0``: parallel |n.M|^2; ``h1mode > 0``: perpendicular + h1mode * parallel.
+    Parameters
+    ----------
+    elements : torch.Tensor, shape (..., 3, P)
+        ``<i|mu_k|j>`` (:func:`pair_elements`), in mu_B.
+    dirs : array_like or torch.Tensor, shape (..., 3)
+        Unit directions n of the static field.
+    h1mode : float, default 0.0
+        Excitation mode: ``0`` perpendicular, ``(abs(M)**2 - abs(n.M)**2)/2``
+        (the mean over B1 normal to B0); ``< 0`` parallel ``abs(n.M)**2``;
+        ``> 0`` perpendicular + ``h1mode`` times parallel.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., P), float64
+        Probabilities in mu_B^2.
     """
     n = _t(dirs).to(elements.dtype)
     nm = torch.einsum("...k,...kp->...p", n, elements)
@@ -135,7 +199,24 @@ def exact_probabilities(elements: torch.Tensor, dirs: torch.Tensor, h1mode: floa
 
 def pair_probability_matrix(vectors: torch.Tensor, mu: torch.Tensor, dirs: torch.Tensor,
                             h1mode: float = 0.0) -> torch.Tensor:
-    """(..., N, N) probability of every state pair (i, j) (the per-pair DDNLOOP quantity)."""
+    """Transition probability of every state pair (the per-pair DDNLOOP quantity).
+
+    Parameters
+    ----------
+    vectors : torch.Tensor, shape (..., N, N)
+        Eigenvectors as columns.
+    mu : torch.Tensor, shape (3, N, N)
+        Moment operators in mu_B.
+    dirs : array_like or torch.Tensor, shape (..., 3)
+        Unit directions of the static field.
+    h1mode : float, default 0.0
+        Excitation mode, as :func:`exact_probabilities`.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., N, N), float64
+        Probabilities in mu_B^2 (basis dependent inside degenerate levels).
+    """
     m = vectors.conj().transpose(-2, -1).unsqueeze(-3) @ mu @ vectors.unsqueeze(-3)       # (..., 3, N, N)
     n = _t(dirs).to(m.dtype)
     nm = torch.einsum("...k,...kij->...ij", n, m)
@@ -146,8 +227,26 @@ def pair_probability_matrix(vectors: torch.Tensor, mu: torch.Tensor, dirs: torch
 
 def level_probabilities(energies: torch.Tensor, pmat: torch.Tensor, pi: Sequence[int],
                         pj: Sequence[int]) -> torch.Tensor:
-    """sum over a in level(i), b in level(j) of pmat[a, b] for the pairs (gauge-invariant; levels
-    decided on detached energies)."""
+    """Transition probabilities summed over the degenerate members of each level.
+
+    ``sum_{a in level(i), b in level(j)} pmat[a, b]``: gauge invariant and
+    differentiable off accidental crossings; equal to ``pmat[i, j]`` where both
+    levels are nondegenerate.  Levels are decided on detached energies.
+
+    Parameters
+    ----------
+    energies : torch.Tensor, shape (..., N)
+        Ascending energies (any unit).
+    pmat : torch.Tensor, shape (..., N, N)
+        Per-pair probabilities (:func:`pair_probability_matrix`).
+    pi, pj : sequence of int
+        0-based state indices of the pairs.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., P), float64
+        Summed probabilities in the unit of ``pmat``.
+    """
     D = degeneracy_mask(energies.detach()).to(pmat.dtype)
     S = D @ pmat @ D
     return S[..., list(pi), list(pj)]
@@ -155,12 +254,48 @@ def level_probabilities(energies: torch.Tensor, pmat: torch.Tensor, pi: Sequence
 
 # ------------------------------------------------------------------------------ scans
 class LoopResult(NamedTuple):
-    """DDNLOOP's quantities over a scan of shape ``S`` (see :func:`scan`).
+    """DDNLOOP's quantities over a scan of shape ``S`` (returned by :func:`scan`).
 
-    Energies in the ``units`` of the call; ``pairs`` are 0-based (i, j), i < j, and the pair
-    quantities have shape S + (P,).  Entries are ``None`` when not requested (no ``temperature``:
-    populations and population factors; no ``mw_freq``: microwave weights; no ``pairs``: every
-    pair quantity).  DDNLOOP lists g_obs only with a microwave frequency; it is always returned here.
+    Entries are ``None`` when not requested: without ``temperature`` the
+    populations and population factors, without ``mw_freq`` the microwave
+    weights, without ``pairs`` every pair quantity.  DDNLOOP lists g_obs only
+    with a microwave frequency; here it is always returned with ``pairs``.
+
+    Attributes
+    ----------
+    theta, phi : torch.Tensor, shape S
+        Field direction angles in radians.
+    fields : torch.Tensor, shape S
+        Field magnitudes in mT.
+    directions : torch.Tensor, shape S + (3,)
+        Unit field directions.
+    energies : torch.Tensor, shape S + (N,)
+        Ascending energies in ``units``.
+    vectors : torch.Tensor, shape S + (N, N)
+        Eigenvectors as columns.
+    populations : torch.Tensor or None, shape S + (N,)
+        Boltzmann factors (normalized to sum 1, or DDNLOOP's
+        ``exp(-(E_i - E_0)/kT)``).
+    pairs : tuple of (int, int)
+        0-based pairs (i, j), i < j; P = ``len(pairs)``.
+    transition_energies : torch.Tensor or None, shape S + (P,)
+        ``E_j - E_i`` in ``units``.
+    probabilities : torch.Tensor or None, shape S + (P,)
+        Per-pair probabilities in mu_B^2 (basis dependent inside degenerate
+        levels).
+    level_probabilities : torch.Tensor or None, shape S + (P,)
+        Probabilities summed over degenerate members (gauge invariant).
+    population_factors : torch.Tensor or None, shape S + (P,)
+        ``p_i - p_j``.
+    mw_weights : torch.Tensor or None, shape S + (P,)
+        DDNLOOP's microwave weights ``P W^2 / (W^2 + (nu - nu_mw)^2)`` with
+        ``W = MW_WIDTH_FRACTION * nu_mw`` (2 %), from the per-pair probability.
+    g_obs : torch.Tensor or None, shape S + (P,)
+        ``(E_j - E_i) / (mu_B B)``, dimensionless; NaN at B = 0.
+    units : str
+        Canonical energy unit of ``energies`` and ``transition_energies``.
+    relative : torch.Tensor, shape S + (N,)
+        Property: energies with the ground state of every scan point at 0.
     """
 
     theta: torch.Tensor                 # S, radians
@@ -204,18 +339,68 @@ def scan(n, *, fields, theta=0.0, phi=0.0, mesh: bool = False, degrees: bool = F
          units: str = "MHz", constants: Constants = TORCHSPIN_CONSTANTS, device="cpu", **params) -> LoopResult:
     """Levels and transitions of d^n over a scan of field magnitude and direction.
 
-    ``fields`` (mT), ``theta``, ``phi`` (radians, or degrees with ``degrees=True``).  With
-    ``mesh=False`` they are broadcast together to the scan shape S; with ``mesh=True`` they must
-    be 1-D (or scalars) and are meshed as DDNLOOP loops them, S = (n_theta, n_phi, n_field)
-    (theta outermost, field innermost; ``reshape(-1)`` gives DDNLOOP's listing order).
+    For every scan point the full d^n Hamiltonian with the field
+    ``fields * (sin t cos p, sin t sin p, cos t)`` is diagonalized (batched).
 
-    ``params``: Hamiltonian keywords of :func:`torchspin.lft.ddn.hamiltonian` (``B``, ``C``, ``A``,
-    ``zeta``, ``V``, ``k``, ``alpha``, ``slater``), energies in ``units``.
+    Parameters
+    ----------
+    n : int or DnOperators
+        Number of d electrons (0 to 10) or cached operators.
+    fields : float or array_like or torch.Tensor
+        Field magnitudes in mT.
+    theta, phi : float or array_like or torch.Tensor, default 0.0
+        Field direction, radians (degrees with ``degrees=True``).
+    mesh : bool, default False
+        False: ``fields``, ``theta`` and ``phi`` are broadcast together to the
+        scan shape S.  True: they must be 1-D (or scalars) and are meshed as
+        DDNLOOP loops them, S = (n_theta, n_phi, n_field) (theta outermost;
+        ``reshape(-1)`` gives DDNLOOP's listing order).
+    degrees : bool, default False
+        Angles are in degrees.
+    pairs : sequence of (int, int) or 'all', optional
+        0-based state pairs (i, j), i < j, for the transition quantities.
+        Default ``None``: none.
+    temperature : float or torch.Tensor, optional
+        Temperature in K for Boltzmann populations.  Default ``None``: none.
+    normalized_populations : bool, default True
+        Normalize the Boltzmann factors to sum 1; False gives DDNLOOP's printed
+        ``exp(-(E_i - E_0)/kT)``.
+    h1mode : float, default 0.0
+        Excitation mode: 0 perpendicular, < 0 parallel, > 0 perpendicular +
+        ``h1mode`` times parallel.
+    mw_freq : float or torch.Tensor, optional
+        Microwave frequency in GHz for DDNLOOP's microwave weights.
+    units : str, default 'MHz'
+        Energy unit of the Hamiltonian keywords and of the returned energies.
+    constants : torchspin.lft.ddn.Constants, default TORCHSPIN_CONSTANTS
+        mu_B, g_e, k_B.
+    device : str or torch.device, default 'cpu'
+        Device.
+    **params
+        Hamiltonian keywords of :func:`torchspin.lft.ddn.hamiltonian`: ``B``,
+        ``C``, ``A``, ``zeta``, ``V``, ``k``, ``alpha``, ``slater``.
 
-    ``pairs``: 0-based (i, j) with i < j, or ``'all'``.  ``temperature`` (K): Boltzmann factors
-    (normalized to sum 1 unless ``normalized_populations=False``, which gives DDNLOOP's printed
-    exp(-(E_i - E_0)/kT)).  ``h1mode``: 0 perpendicular, < 0 parallel, > 0 perpendicular + h1mode
-    parallel.  ``mw_freq`` (GHz): DDNLOOP's microwave weights.
+    Returns
+    -------
+    LoopResult
+
+    Raises
+    ------
+    TypeError
+        For a keyword that is not a Hamiltonian parameter.
+    ValueError
+        If ``mesh=True`` with multi-dimensional inputs, or for invalid
+        ``pairs`` (not ``'all'``, or not ``0 <= i < j < N``).
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torchspin import lft
+    >>> res = lft.ddnloop.scan(1, fields=torch.linspace(0, 500, 6), theta=torch.tensor([0.0, 1.0]),
+    ...                        mesh=True, V=lft.crystal_field(Dq=1500.0, Ds=300.0), zeta=154.0,
+    ...                        units='cm^-1', pairs='all')
+    >>> res.energies.shape, res.probabilities.shape
+    (torch.Size([2, 1, 6, 10]), torch.Size([2, 1, 6, 45]))
     """
     unknown = set(params) - set(_PARAMS)
     if unknown:
@@ -269,15 +454,66 @@ def scan(n, *, fields, theta=0.0, phi=0.0, mesh: bool = False, degrees: bool = F
 
 
 def field_scan(n, fields, theta=0.0, phi=0.0, **kw) -> LoopResult:
-    """Zeeman diagram data: :func:`scan` over field magnitudes (mT) at a fixed direction."""
+    """Zeeman-diagram data: :func:`scan` over field magnitudes at a fixed direction.
+
+    Parameters
+    ----------
+    n : int or DnOperators
+        Number of d electrons or cached operators.
+    fields : array_like or torch.Tensor
+        Field magnitudes in mT.
+    theta, phi : float or torch.Tensor, default 0.0
+        Field direction (radians unless ``degrees=True``).
+    **kw
+        Further keywords of :func:`scan`.
+
+    Returns
+    -------
+    LoopResult
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torchspin import lft
+    >>> res = lft.ddnloop.field_scan(1, torch.linspace(0, 1000, 11), theta=0.3,
+    ...                              V=lft.crystal_field(Dq=1500.0, Ds=300.0, Dt=50.0),
+    ...                              zeta=154.0, units='cm^-1', pairs=[(0, 1)])
+    >>> res.transition_energies.shape, bool(res.g_obs[0, 0].isnan())
+    (torch.Size([11, 1]), True)
+    """
     return scan(n, fields=fields, theta=theta, phi=phi, **kw)
 
 
 def angle_scan(n, field, theta, phi=0.0, *, mesh: bool = True, **kw) -> LoopResult:
-    """Angle diagram data: :func:`scan` at a fixed field magnitude (mT) over directions.
+    """Angle-diagram data: :func:`scan` at a fixed field magnitude over directions.
 
-    With ``mesh=True`` (default) the scan shape is (n_theta, n_phi); with ``mesh=False`` theta
-    and phi are broadcast (e.g. a path through orientation space).
+    Parameters
+    ----------
+    n : int or DnOperators
+        Number of d electrons or cached operators.
+    field : float or torch.Tensor
+        Field magnitude in mT.
+    theta, phi : array_like or torch.Tensor
+        Directions (radians unless ``degrees=True``); ``phi`` defaults to 0.
+    mesh : bool, default True
+        True: scan shape (n_theta, n_phi) from 1-D ``theta`` and ``phi``.
+        False: theta and phi are broadcast (e.g. a path through orientation
+        space).
+    **kw
+        Further keywords of :func:`scan`.
+
+    Returns
+    -------
+    LoopResult
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torchspin import lft
+    >>> res = lft.ddnloop.angle_scan(1, 350.0, torch.linspace(0, 90, 7), [0.0, 45.0], degrees=True,
+    ...                              V=lft.crystal_field(Dq=1500.0, Ds=300.0), zeta=154.0, units='cm^-1')
+    >>> res.energies.shape
+    torch.Size([7, 2, 10])
     """
     th, ph = _t(theta), _t(phi)
     if mesh:
@@ -287,12 +523,47 @@ def angle_scan(n, field, theta, phi=0.0, *, mesh: bool = True, **kw) -> LoopResu
 
 def parameter_scan(n, name: str, values, *, field=None, relative: bool = False, units: str = "MHz",
                    **params) -> torch.Tensor:
-    """Levels (m, N) for m values of one Hamiltonian parameter (a correlation diagram).
+    """Energy levels for a series of values of one Hamiltonian parameter (correlation diagram).
 
-    ``name`` is a keyword of :func:`torchspin.lft.ddn.hamiltonian` (``'B'``, ``'C'``, ``'A'``,
-    ``'zeta'``, ``'alpha'``: values (m,); ``'k'``: (m, 3); ``'V'``: (m, 5, 5)); energies in
-    ``units``.  ``field`` (3,) in mT (optional, the same for every value).  The other parameters
-    are fixed keywords.  ``relative=True`` puts each ground state at 0.
+    Parameters
+    ----------
+    n : int or DnOperators
+        Number of d electrons or cached operators.
+    name : str
+        Parameter to scan: ``'B'``, ``'C'``, ``'A'``, ``'zeta'`` or
+        ``'alpha'`` (values shape (m,)), ``'k'`` ((m, 3)) or ``'V'``
+        ((m, 5, 5)).
+    values : array_like or torch.Tensor
+        The m values, in ``units`` for energies.
+    field : array_like or torch.Tensor, shape (3,), optional
+        Field vector in mT, the same for every value.  Default ``None``.
+    relative : bool, default False
+        Put each ground state at 0.
+    units : str, default 'MHz'
+        Energy unit of the inputs and the result.
+    **params
+        The other (fixed) Hamiltonian keywords of
+        :func:`torchspin.lft.ddn.hamiltonian`.
+
+    Returns
+    -------
+    torch.Tensor, shape (m, N), float64
+        Ascending levels in ``units`` for each value.
+
+    Raises
+    ------
+    ValueError
+        If ``name`` cannot be scanned or ``values`` has the wrong number of
+        dimensions.
+    TypeError
+        If ``name`` is also passed as a keyword.
+
+    Examples
+    --------
+    >>> from torchspin import lft
+    >>> E = lft.ddnloop.parameter_scan(2, 'B', [600.0, 800.0, 1000.0], C=3200.0, units='cm^-1')
+    >>> E.shape
+    torch.Size([3, 45])
     """
     if name not in ("B", "C", "A", "zeta", "alpha", "k", "V"):
         raise ValueError(f"cannot scan {name!r}; use one of B, C, A, zeta, alpha, k, V")
