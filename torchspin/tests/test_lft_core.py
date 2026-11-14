@@ -1,6 +1,7 @@
 """torchspin.lft milestone M1: unit factors, degenerate-safe linear algebra, d^n operator engine.
 
-Parity with telser-tools (the source of the port) runs only when telser-tools is installed;
+Parity with telser-tools (the source of the port) runs against live telser-tools when it is
+importable and against its frozen outputs (data/telser/refs, see ``_telser_refs``) otherwise;
 everything else is self-contained.
 """
 
@@ -16,6 +17,7 @@ from torchspin.lft import _linalg as tl
 from torchspin.lft import units
 from torchspin.lft._engines import dn
 from torchspin.lft._operators import dn_operators
+from torchspin.tests import _telser_refs as R
 
 F64, C128 = torch.float64, torch.complex128
 
@@ -189,14 +191,47 @@ def test_torch_operators_match_numpy():
     assert dn_operators(5) is t                     # cached
 
 
+# ------------------------------------------------------------------------------ parity with telser-tools
+# L2 = Re(sum_i L_i @ L_i) has irrational entries, so its last bit depends on the BLAS summation order
+# (thread count, platform); S2 and pair are sums of dyadic rationals, exact in any order.  L2 is not
+# stored: telser-tools' L2 must equal that expression bit for bit, and the test evaluates it on the
+# stored L in its own process, as both packages do.
+_DN_FIELDS = ("coulomb", "excitation", "so", "L", "S", "S2", "pair")
+_RECON_ERR = 1e-13
+
+
+@R.oracle("core", cases=range(11))
+def _telser_dn_engine(n):
+    """telser-tools' d^n operators (sparse, exact) and term projectors stored as P[t] = T_t T_t^H, with
+    T_t the columns of term t in telser-tools' (sparse) term basis, |T_t T_t^H - P[t]| <= RECON_ERR."""
+    from telser_tools.ddn import engine, terms
+    b = engine.operators(n)
+    tb, pb = terms.term_projectors(n)
+    _, T, labels = terms.term_basis(n)
+    # telser-tools phases each term by its largest coefficient, a tie that round-off may break either way;
+    # make the first coefficient above 1e-8 of each column real positive instead (T_t T_t^H is unchanged)
+    first = np.argmax(np.abs(T) > 1e-8, axis=0)
+    ph = T[first, np.arange(T.shape[1])]
+    T = T * (np.abs(ph) / ph)
+    term = np.array([lab[0] for lab in labels])
+    recon = np.stack([T[:, term == it] @ T[:, term == it].conj().T for it in range(len(tb))])
+    assert np.abs(recon - pb).max() <= _RECON_ERR                   # measured <= 1.8e-14
+    return dict(ops={f: R.sparse(getattr(b, f)) for f in _DN_FIELDS}, labels=[x.label for x in tb],
+                L2_is_sum_LL=bool(np.array_equal(b.L2, np.real(sum(x @ x for x in b.L)))),
+                T=R.sparse(T), term=term)
+
+
 @pytest.mark.parametrize("n", range(11))
 def test_dn_engine_parity_with_telser_tools(n):
-    engine = pytest.importorskip("telser_tools.ddn.engine")
-    terms = pytest.importorskip("telser_tools.ddn.terms")
-    a, b = dn.operators(n), engine.operators(n)
-    for f in ("coulomb", "excitation", "so", "L", "S", "L2", "S2", "pair"):
-        np.testing.assert_array_equal(getattr(a, f), getattr(b, f))
+    ref = R.ref(_telser_dn_engine, n)
+    a = dn.operators(n)
+    for f in _DN_FIELDS:
+        np.testing.assert_array_equal(getattr(a, f), R.dense(ref["ops"][f]))
+    assert ref["L2_is_sum_LL"]
+    np.testing.assert_array_equal(a.L2, np.real(sum(x @ x for x in R.dense(ref["ops"]["L"]))))
     ta, pa = dn.term_projectors(n)
-    tb, pb = terms.term_projectors(n)
-    assert [x.label for x in ta] == [x.label for x in tb]
-    np.testing.assert_allclose(pa, pb, atol=1e-12)
+    assert [x.label for x in ta] == ref["labels"]
+    # T_t T_t^H is within _RECON_ERR of telser-tools' P[t]: subtracting it keeps |pa - P| <= 1e-12
+    T, term = R.dense(ref["T"]), ref["term"]
+    pb = np.stack([T[:, term == it] @ T[:, term == it].conj().T for it in range(len(ta))])
+    np.testing.assert_allclose(pa, pb, atol=1e-12 - _RECON_ERR)
