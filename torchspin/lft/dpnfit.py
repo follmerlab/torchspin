@@ -7,9 +7,9 @@ compared with D(IE) - D(1).  The residuals are differentiable in X, the Jacobian
 (forward-mode AD, ``torch.func.jacfwd``), and :meth:`DpnFit.fit` runs
 ``scipy.optimize.least_squares`` (trust-region reflective, with bounds) on it.
 
-X vector (NX = 1 for p^1/p^5, 3 otherwise; missing trailing slots read as 0, as in SCALC):
+X vector (NX = 1 for p^1/p^5, 3 otherwise; missing trailing slots read as 0, as in SCALC)::
 
-    X[0]             zeta (|zeta| is used; d|zeta|/dzeta = +1 at 0)
+    X[0]             zeta (abs(zeta) is used; d abs(zeta)/d zeta = +1 at 0)
     X[1], X[2]       F2 (Slater F^2, as in DPN), Trees alpha             (not for p^1, p^5)
     lf_type 'X'      Ds, Dr                                              (crystal field)
     lf_type 'A'      nlam values per ligand: sigma, pi-s (y), pi-c (x)   (AOM)
@@ -63,6 +63,8 @@ level-crossing tracker of the NumPy program.
     >>> prob = dpnfit.DpnFit(m, states=[6, 11], energies=[10000.0, 25000.0], x0=[500.0, 40000.0, 0.0, 0.0, 0.0],
     ...                      free=[True, True, False, False, False])
     >>> res = prob.fit()
+    >>> res.success, [round(float(v), 1) for v in res.x[:2]]
+    (True, [6493.4, 62946.6])
 """
 
 from __future__ import annotations
@@ -93,7 +95,20 @@ LOWSPN_PENALTY_CM = 1.0e5
 
 
 def spin_clamp(np_: int, s: float) -> float:
-    """DPNFIT.F ll. 217-226: the ground-state spin as the program stores it (NP = n or 6 - n)."""
+    """The ground-state spin as DPNFIT stores it (DPNFIT.F ll. 217-226).
+
+    Parameters
+    ----------
+    np_ : int
+        DPNFIT's NP (n for n <= 3, else 6 - n).
+    s : float
+        Requested ground-state spin.
+
+    Returns
+    -------
+    float
+        0.5 for NP = 1; 0 or 1 for NP = 2; 0.5 or 1.5 for NP = 3.
+    """
     if np_ == 1:
         return 0.5
     if np_ == 2:
@@ -104,14 +119,65 @@ def spin_clamp(np_: int, s: float) -> float:
 # ------------------------------------------------------------------------------ model
 @dataclass
 class DpnFitModel:
-    """Fixed (non-fitted) input of DPNFIT: configuration, ligand-field model, field, units.
+    """Fixed (non-fitted) input of DPNFIT: configuration, ligand-field model, field and units.
 
-    ``angles``: per AOM ligand (theta, phi, psi); ``isymm``: 1-based ligand equivalence
-    (ligand j copies ligand isymm[j] - 1 scaled by ``blfact[j]``; isymm[j] = j + 1 is
-    independent); ``pi_factors``: per ligand (f_ss, f_cs, f_sc), see the module docstring;
-    ``orbital_isymm``: option P equivalences (E(p_j) = E(p_i) if equal, i < j).
-    ``B0`` field magnitude in mT along (``theta``, ``phi``); ``k`` the orbital reduction.
-    ``constants`` default to torchspin's (``'exact'``) or DPN's (``'dpn'``).
+    The fitted vector X is described in the module docstring; its names are
+    :meth:`parameter_names`.
+
+    Parameters
+    ----------
+    n : int
+        Number of p electrons, 1 to 5.
+    lf_type : {'X', 'A', 'P'}, default 'X'
+        Ligand-field model: ``'X'`` crystal field (Ds, Dr), ``'A'`` AOM,
+        ``'P'`` orbital energies.
+    nlam : int, default 1
+        AOM: bonding parameters per ligand in X (1 to 3: sigma, pi-s (y),
+        pi-c (x)).
+    angles : sequence of (theta, phi, psi), default []
+        AOM ligand directions, radians unless ``degrees``.
+    isymm : sequence of int, default []
+        1-based ligand equivalences: ligand j copies ligand ``isymm[j] - 1``
+        scaled by ``blfact[j]``; ``isymm[j] = j + 1`` is independent.  With
+        ``isymm`` empty no equivalences apply and no ligand counts as
+        independent, so ``pi_factors`` are not applied either.
+    blfact : sequence of float, default []
+        Scale factors of the equivalent ligands (default 1).
+    pi_factors : sequence of (f_ss, f_cs, f_sc), default []
+        Per independent ligand: ``e_pi_s = f_ss e_sigma``,
+        ``e_pi_c = f_cs e_sigma``, then ``e_pi_c = f_sc e_pi_s``, each only if
+        nonzero (needs ``nlam >= 3``).
+    orbital_isymm : sequence of int, default (1, 2, 3)
+        Option P equivalences: ``E(p_j) = E(p_i)`` where the entries are equal.
+    B0 : float, default 0.0
+        Field magnitude in mT (0: no field).
+    theta, phi : float, default 0.0
+        Field direction, radians unless ``degrees``.
+    k : sequence of float, default (1.0, 1.0, 1.0)
+        Orbital reduction factors (fixed; enter only with a field).
+    mode : {'exact', 'dpn'}, default 'exact'
+        ``'exact'``: the direct p^n calculation; ``'dpn'``: the compiled
+        program's matrix (module docstring).
+    degrees : bool, default False
+        ``angles``, ``theta`` and ``phi`` are in degrees.
+    units : str, default 'MHz'
+        Energy unit of X and of the energies.
+    constants : torchspin.lft.ddn.Constants, optional
+        Default: ``TORCHSPIN_CONSTANTS`` (``'exact'``) or ``DPN_CONSTANTS``
+        (``'dpn'``).
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``mode``, ``lf_type`` or ``units``, or ``n`` outside
+        1..5.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dpnfit
+    >>> m = dpnfit.DpnFitModel(2, lf_type='X', units='cm^-1')
+    >>> m.parameter_names(), m.n_states
+    (['zeta', 'F2', 'alpha', 'Ds', 'Dr'], 15)
     """
 
     n: int
@@ -151,6 +217,7 @@ class DpnFitModel:
 
     @property
     def nlig(self) -> int:
+        """Number of AOM ligands (rows of ``angles``)."""
         return len(self._angles)
 
     @property
@@ -160,9 +227,11 @@ class DpnFitModel:
 
     @property
     def n_states(self) -> int:
+        """Number of states, ``C(6, n)``."""
         return pn_operators(self.n).size
 
     def parameter_names(self) -> list[str]:
+        """Names of the X slots, in order (``'zeta'``, ``'F2'``, ``'alpha'``, then the ligand-field slots)."""
         names = ["zeta"] + ([] if self.np_ == 1 else ["F2", "alpha"])
         t = self.lf_type.upper()
         if t == "A":
@@ -175,6 +244,7 @@ class DpnFitModel:
 
     @property
     def n_parameters(self) -> int:
+        """Number of X slots."""
         return len(self.parameter_names())
 
     def _x(self, x) -> torch.Tensor:
@@ -265,7 +335,27 @@ class DpnFitModel:
 
 # ------------------------------------------------------------------------------ results
 class Evaluation(NamedTuple):
-    """SCALC at one X: every energy relative to the lowest (``units``), per-observation values."""
+    """DPNFIT's SCALC at one X (returned by :meth:`DpnFit.evaluate`); NumPy arrays.
+
+    Attributes
+    ----------
+    x : numpy.ndarray
+        The X vector.
+    energies : numpy.ndarray, shape (N,)
+        All N energies relative to the lowest, ascending, in ``units``.
+    calc : numpy.ndarray, shape (n_obs,)
+        Calculated energies of the observed states.
+    residuals : numpy.ndarray, shape (n_obs,)
+        ``sqrt(w) (calc - obs)`` (with the LOWSPN penalty if active).
+    objective : float
+        ``sum w (calc - obs)^2`` (DPNFIT's FOBJ, before any LOWSPN penalty).
+    spins : numpy.ndarray or None, shape (N,)
+        S of the dominant free-ion term of each state (None for p^1, p^5).
+    dominant : list of str
+        Label of the dominant term of each state.
+    ground_spin_ok : bool
+        Whether the LOWSPN condition holds (True without LOWSPN).
+    """
 
     x: np.ndarray
     energies: np.ndarray
@@ -279,7 +369,27 @@ class Evaluation(NamedTuple):
 
 @dataclass
 class MeasurementStats:
-    """Uncertainties with repeated components of one band counted once (see the module docstring)."""
+    """Uncertainties with the repeated components of one band counted once.
+
+    Attributes
+    ----------
+    groups : list of list of int
+        Row indices grouped into measurements.
+    informative : list of bool
+        Whether each group carries information.
+    n_measurements : int
+        Number of informative measurements.
+    objective : float
+        Sum of squared residuals over the representative rows.
+    cov_unscaled : numpy.ndarray, shape (n_free, n_free)
+        ``(J^T J)^-1`` over the representative rows (NaN if undetermined).
+    stderr : numpy.ndarray, shape (n_parameters,)
+        Residual-scaled standard errors (NaN for fixed or undetermined).
+    stderr_unscaled : numpy.ndarray, shape (n_parameters,)
+        ``sqrt(diag((J^T J)^-1))``: right for weights ``1/sigma^2``.
+    dof : int
+        Property: measurements minus determined parameters.
+    """
 
     groups: list[list[int]]
     informative: list[bool]
@@ -296,7 +406,49 @@ class MeasurementStats:
 
 @dataclass
 class FitResult:
-    """Result of :meth:`DpnFit.fit`; arrays over all parameters (fixed included) unless noted."""
+    """Result of :meth:`DpnFit.fit`; arrays over all parameters (fixed included) unless noted.
+
+    Attributes
+    ----------
+    names : list of str
+        Parameter names.
+    x : numpy.ndarray
+        Best-fit X (fixed entries unchanged).
+    free : numpy.ndarray of bool
+        Fitted entries.
+    objective, initial_objective : float
+        Sum of squared residuals at the solution and at the start.
+    residuals : numpy.ndarray, shape (n_obs,)
+        ``sqrt(w) (calc - obs)`` at the solution.
+    n_data : int
+        Informative rows (w > 0, state != 1).
+    jac : numpy.ndarray, shape (n_obs, n_free)
+        Exact Jacobian at the solution.
+    cov_unscaled : numpy.ndarray, shape (n_free, n_free)
+        ``(J^T J)^-1`` (NaN when a direction is undetermined).
+    nfev, njev : int
+        Function and Jacobian evaluations.
+    success : bool
+        SciPy's success flag.
+    message : str
+        SciPy's message.
+    at_bound : numpy.ndarray of bool, shape (n_free,)
+        Free parameters at a bound.
+    null : list of dict
+        Undetermined parameter combinations (:func:`null_directions`).
+    measurements : MeasurementStats or None
+        Statistics with each band counted once.
+    final : Evaluation or None
+        :meth:`DpnFit.evaluate` at the solution.
+    n_free, dof : int
+        Properties: number of free parameters, ``n_data - n_free``.
+    cov : numpy.ndarray
+        Property: ``s^2 (J^T J)^-1`` with ``s^2 = objective / dof``.
+    stderr, stderr_unscaled : numpy.ndarray
+        Properties: standard errors over all parameters (NaN for fixed).
+    correlation : numpy.ndarray
+        Property: correlation matrix of the free parameters.
+    """
 
     names: list[str]
     x: np.ndarray
@@ -351,10 +503,34 @@ class FitResult:
 
 
 def null_directions(jac: np.ndarray, names: Sequence[str], rtol: float = 1e-7) -> list[dict[str, float]]:
-    """Combinations of the Jacobian's columns that the data do not determine.
+    """Combinations of parameters that the data do not determine.
 
-    Columns are normalized first; a right singular vector with singular value below ``rtol``
-    times the largest is returned as {name: coefficient} (unit length, parameter units).
+    Columns of ``jac`` are normalized first; each right singular vector with a
+    singular value below ``rtol`` times the largest (and each all-zero column)
+    is returned.
+
+    Parameters
+    ----------
+    jac : array_like, shape (n_rows, n_params)
+        Jacobian.
+    names : sequence of str
+        Column names.
+    rtol : float, default 1e-7
+        Relative singular-value threshold.
+
+    Returns
+    -------
+    list of dict
+        ``{name: coefficient}`` per undetermined direction (unit length, in
+        parameter units).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from torchspin.lft import dpnfit
+    >>> (d,) = dpnfit.null_directions(np.array([[1.0, 1.0], [2.0, 2.0]]), ['a', 'b'])
+    >>> {k: round(v, 4) for k, v in d.items()}
+    {'a': 0.7071, 'b': -0.7071}
     """
     jac = np.asarray(jac, float)
     if jac.size == 0:
@@ -393,12 +569,53 @@ def _jacfwd_columns(fn: Callable[[torch.Tensor], torch.Tensor], x: np.ndarray, c
 class DpnFit:
     """A DPNFIT problem: model, observations, start vector and fit configuration.
 
-    ``states`` 1-based state numbers (DPNFIT's IE: all states in ascending energy, state 1 the
-    ground state); ``energies`` observed D(IE) - D(1) in ``model.units``; ``weights`` (default
-    1).  Negative energies and weights are set to 0, as DPNFIT does.  ``x0`` the start vector
-    (``model.parameter_names()`` order; extra entries are carried along unused); ``free``
-    (default all) marks the fitted entries; ``lower``/``upper`` bounds (default unbounded);
-    ``step`` typical changes (scipy ``x_scale``; default max(|x0|, 1)).
+    Parameters
+    ----------
+    model : DpnFitModel
+        The fixed input.
+    states : sequence of int
+        1-based state numbers (DPNFIT's IE: all states in ascending energy,
+        state 1 the ground state).
+    energies : sequence of float
+        Observed ``D(IE) - D(1)`` in ``model.units``; negative values are set
+        to 0, as DPNFIT does.
+    weights : sequence of float, optional
+        Weights w multiplying the squared residuals (negative set to 0);
+        default 1.  With ``w = 1/sigma^2`` the residuals are dimensionless.
+    x0 : sequence of float
+        Start vector in :meth:`DpnFitModel.parameter_names` order (extra
+        entries are carried along unused).
+    free : sequence of bool, optional
+        Fitted entries; default all.
+    lower, upper : sequence of float, optional
+        Bounds; default unbounded.
+    step : sequence of float, optional
+        Typical parameter changes (SciPy ``x_scale``); default
+        ``max(abs(x0), 1)``.
+    spngrnd : float, default 0.5
+        Required ground-state spin for LOWSPN (clamped by :func:`spin_clamp`).
+    lowspn : bool, default False
+        Enforce the ground-state spin (not for p^1/p^5).
+    lowspn_policy : {'penalty', 'ignore'}, default 'penalty'
+        Where the ground spin is wrong: replace every weighted residual by
+        ``sqrt(w) * 1e5 cm^-1`` with zero derivative, or compute the residuals
+        anyway.
+
+    Raises
+    ------
+    ValueError
+        For state numbers outside ``1..C(6, n)`` (DPNFIT does not check,
+        finding DPNFIT-04), lengths of ``states``, ``energies`` and ``weights``
+        that differ, or an unknown ``lowspn_policy``.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dpnfit
+    >>> m = dpnfit.DpnFitModel(2, lf_type='X', units='cm^-1')
+    >>> prob = dpnfit.DpnFit(m, states=[6, 11], energies=[10000.0, 25000.0],
+    ...                      x0=[500.0, 40000.0, 0.0, 0.0, 0.0], free=[True, True, False, False, False])
+    >>> [round(float(v), 1) for v in prob.evaluate(prob.x0).calc]
+    [757.0, 10133.7]
     """
 
     def __init__(self, model: DpnFitModel, states: Sequence[int], energies: Sequence[float],
@@ -435,9 +652,11 @@ class DpnFit:
 
     @property
     def n_states(self) -> int:
+        """Number of states, ``C(6, n)``."""
         return self.model.n_states
 
     def parameter_names(self) -> list[str]:
+        """Names of the entries of ``x0`` (model names, then ``X<i>`` for extra entries)."""
         names = self.model.parameter_names()
         nv = len(self.x0)
         return (names + [f"X{i + 1}" for i in range(len(names), nv)])[:nv]
@@ -510,11 +729,26 @@ class DpnFit:
     # ------------------------------------------------------------------ fit
     def fit(self, *, ftol: float = 1e-12, xtol: float = 1e-12, gtol: float = 1e-12, max_nfev: int | None = None,
             verbose: int = 0) -> FitResult:
-        """Least-squares fit of the free entries of X (scipy ``least_squares``, 'trf', exact Jacobian).
+        """Least-squares fit of the free entries of X.
 
-        Starts from ``x0`` clamped strictly inside the bounds.  A trust-region iterate that
-        stops just inside a bound is moved onto it when that lowers the objective, and the
-        other parameters are then re-optimized with it held there.
+        SciPy ``least_squares`` (trust-region reflective, bounds) with the exact
+        forward-mode Jacobian, starting from ``x0`` clamped strictly inside the
+        bounds.  An iterate that stops just inside a bound is moved onto it when
+        that lowers the objective, and the other parameters are then re-optimized
+        with it held there.
+
+        Parameters
+        ----------
+        ftol, xtol, gtol : float, default 1e-12
+            SciPy tolerances.
+        max_nfev : int, optional
+            Maximum function evaluations (SciPy default if ``None``).
+        verbose : int, default 0
+            SciPy verbosity.
+
+        Returns
+        -------
+        FitResult
         """
         names = self.parameter_names()
         free = self.free.copy()
