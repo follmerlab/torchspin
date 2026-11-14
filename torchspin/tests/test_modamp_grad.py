@@ -41,16 +41,30 @@ def test_bessel_j01_is_on_the_graph():
 def test_besselj_derivative_identity(n):
     """d/dx J_n = (J_{n-1} - J_{n+1}) / 2 (J_{-1} = -J_1), evaluated with the same
     torch J_n: equal up to roundoff of the recurrence (measured <= 3e-14), away
-    from the small-argument series branch (|x| < 1e-3).  n = 3 mixes branches
-    since 0.9.37 (J_4 by its power series for |x| < 4, J_2 and J_3 by the
-    recurrence from torch's J_0/J_1), so there the identity holds only to
-    torch's J_0/J_1 accuracy: 1.6e-11 at x = 3.3."""
+    from the small-argument series branch (|x| < 1e-3).
+
+    Since 0.9.37 (B93) J_n for n >= 3 uses its power series for |x| < n and the
+    recurrence above, so J_2, J_3 and J_4 can come from different formulas
+    whose values differ by torch's J_0/J_1 accuracy (1.6e-11 at x = 3.3).  The
+    reference is therefore built with the formula J_n itself uses: for n = 3 on
+    the series branch (x < 3) J_2 and J_4 by the power series (in-test, exact
+    to roundoff); on the recurrence branch J_4 = 6/x J_3 - J_2 from the same
+    torch values.  The bound stays 1e-12 for every n."""
     x = torch.tensor([0.01, 0.2, 0.9, 1.7, 3.3, 5.0, 8.6, 13.0], dtype=F64, requires_grad=True)
     (g,) = torch.autograd.grad(_besselj_t(n, x).sum(), x)
     xd = x.detach()
     jm = -_besselj_t(1, xd) if n == 0 else _besselj_t(n - 1, xd)
-    ref = (jm - _besselj_t(n + 1, xd)) / 2
-    assert float((g - ref).abs().max()) < (1e-10 if n == 3 else 1e-12)
+    if n < 3:
+        ref = (jm - _besselj_t(n + 1, xd)) / 2
+    else:
+        def series(k):
+            return sum((-1) ** m * (xd / 2) ** (2 * m + k) / float(math.factorial(m) * math.factorial(m + k))
+                       for m in range(40))
+        on_series = xd.abs() < n
+        ref_series = (series(n - 1) - series(n + 1)) / 2
+        ref_rec = (jm - (2 * n / xd * _besselj_t(n, xd) - jm)) / 2
+        ref = torch.where(on_series, ref_series, ref_rec)
+    assert float((g - ref).abs().max()) < 1e-12
 
 
 @pytest.mark.parametrize('n', [0, 1, 2, 3])
