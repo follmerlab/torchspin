@@ -14,6 +14,67 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.32] — 2026-11-14
+
+### Fixed
+
+- **Errors that were swallowed silently now raise or warn (B80).** Results for valid inputs are
+  unchanged.
+  - `spidyan` / `saffron` (thyme): overlapping pulses raise `ValueError("Pulse overlap detected
+    between events [...]")`, as EasySpin s_reorder_events.m errors 'Pulse Overlap'. Before, the
+    `ValueError` of `_reorder_events` was caught and the unreordered sequence simulated, so
+    `[{tp 0.016, π/2}, -0.010, {tp 0.016, π}, 0.2]` returned a signal.
+  - `spidyan` / `saffron` (thyme): a non-finite Hamiltonian, relaxation superoperator (`Sys.T1`,
+    `Sys.T2`, e.g. a `T2` so small that 1/T2 overflows) or equilibrium state (`Sys.eqState`)
+    raises a `ValueError` that names the input. Before, the steady state was set to zero, so a
+    NaN in `Sys.eqState` gave a finite signal relaxing toward ρ = 0. The steady-state solve keeps
+    its pseudo-inverse fallback for a singular −L (e.g. T2 = ∞ with degenerate levels; the
+    right-hand side has no null-space component, so σ_ss = ρ_eq exactly), now only on
+    `LinAlgError`, and without the inner fallback to zero.
+  - `ham_ee(sys, eSpins)` and `ham_nn(sys, nSpins)`: out-of-range (including 0-based), duplicate
+    or non-integer spin indices raise `ValueError`, as in EasySpin ham_ee.m:52-60 and
+    ham_nn.m:57-63. Before, invalid pairs were skipped, returning a zero or partial Hamiltonian
+    (`ham_ee(sys, [1, 5])` was 0 for two electrons). `ham_nn` with fewer than 2 indices raises
+    too (it returned zeros). As in EasySpin, both still return zeros before checking the
+    indices when there is nothing to couple (one electron / fewer than 2 nuclei, or `ee` /
+    `nn` all zero).
+  - `esfit`: a model evaluation that raises `ValueError`, `RuntimeError` or `LinAlgError` is
+    still penalized with RMSD 1e10, but the first one in a fit issues a `RuntimeWarning` with the
+    error text, and the new `FitResult.n_failed_evals` counts them (also for evaluations in
+    worker threads or processes: the penalty value carries the error back to the parent). An
+    exception in `FitOptions.callback` or in a `FitOptions.progress` callable no longer
+    disappears: the fit continues and the first one per fit is reported with a
+    `RuntimeWarning`. An exception in `FitOptions.stop_when` now propagates out of `esfit`
+    (before, it was ignored and the fit ran to its normal end): a stop condition that cannot be
+    evaluated cannot be honored.
+  - `eprload`: a file whose header matches a JEOL process type but that the JEOL loader cannot
+    read raises `ValueError("JEOL file '...' (process type '...') could not be read: ...")`
+    chained to the loader error. Before, the error was discarded and the message was
+    "Unsupported file extension".
+  - `mdhmm`: a singular state covariance is still regularized with +1e-6·I, now with a
+    `RuntimeWarning`.
+  - `mdload` (DCD and TRR readers): when frame reading stops before the end of the file (a
+    truncated last frame, or bytes the reader cannot decode as a frame), a `RuntimeWarning`
+    gives the number of frames read and of bytes ignored. Before, the trailing bytes were
+    dropped silently. The warning fires for both bundled DCD files
+    (`tests/mdfiles/A10R1_polyAla.dcd`, `A10TOAC_polyAla.dcd`): `_read_dcd` takes the CHARMM
+    unit-cell flag from header word 80:84 (the CHARMM version, 24) instead of 44:48 (EasySpin
+    md_readdcd.m:107-110), so it does not skip the 56-byte unit-cell block of each frame and
+    the coordinates are shifted by 14 atoms. That reader bug is not fixed in this release.
+
+### Added
+
+- `FitResult.n_failed_evals` (int, default 0): objective evaluations at which the model raised
+  and was penalized with RMSD 1e10.
+
+### Tests
+
+- New `torchspin/tests/test_no_silent_fallbacks.py` (33 tests; 26 fail before this change): the
+  cases above, plus guards that pass before and after: the pseudo-inverse steady state for
+  T2 = ∞ with a degenerate Hamiltonian (solve raises `LinAlgError`, σ_ss = ρ_eq to 1e-14,
+  residual < 1e-14), the regular steady state bit-identical to `scipy.linalg.solve`, a
+  non-overlapping negative delay, valid `ham_ee`/`ham_nn` indices, the EasySpin zero returns of
+  `ham_nn`, and a non-JEOL unknown extension.
 ## [0.9.31] — 2026-11-14
 
 ### Fixed

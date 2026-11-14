@@ -84,8 +84,9 @@ class FitOptions:
         (swarm, genetic, montecarlo, global) with a dict payload
         ``{"method": str, "iter": int, "max_iter": int, "best_f": float,
         "best_x": np.ndarray}``. Use to drive live plots or progress
-        bars from the caller. Exceptions raised in the callback are
-        swallowed so they can never crash the fit. Default: None.
+        bars from the caller. Exceptions raised in the callback do not
+        stop the fit; the first one per fit is reported with a warning.
+        Default: None.
     compute_uncertainties : bool
         Whether to compute parameter uncertainties. Default: True
     trf_diff_step, trf_x_scale, trf_gradient_tol
@@ -202,6 +203,10 @@ class FitOptions:
     #   max_time: wall-clock budget in seconds; stop_when: predicate(info) -> True
     #   stops.  A stop (or a KeyboardInterrupt / kernel interrupt) returns the
     #   best-so-far FitResult with success=False and interrupted=True.
+    #   An exception raised by a progress callable does not stop the fit (the
+    #   first one per fit is reported with a warning); an exception raised by
+    #   stop_when propagates out of esfit, since a broken stop condition
+    #   cannot be honored.
     progress: Union[None, str, Callable] = None
     progress_every: Optional[int] = None
     progress_interval: float = 1.0
@@ -263,6 +268,15 @@ class FitResult:
         Reduced chi-square statistic
     noise_std : Optional[float]
         Estimated noise standard deviation
+    n_evaluations : Optional[int]
+        Objective evaluations (all methods, all phases)
+    n_failed_evals : int
+        Objective evaluations at which the model raised ``ValueError``,
+        ``RuntimeError`` or ``LinAlgError``. Each such evaluation is
+        penalized with RMSD = 1e10 so the optimizer moves away; the first
+        failure of a fit is reported with a warning. A nonzero count means
+        part of the parameter space could not be simulated (a bug in the
+        model or parameter ranges outside its domain).
     """
     pfit: np.ndarray
     pnames: list[str]
@@ -291,6 +305,7 @@ class FitResult:
     n_evaluations: Optional[int] = None      # objective evaluations (all methods, all phases)
     elapsed_s: Optional[float] = None        # optimizer wall time (excludes the initial RMSD evaluation)
     interrupted: bool = False                # True when stopped early (interrupt, max_time, stop_when, callback)
+    n_failed_evals: int = 0                  # model evaluations that raised and were penalized with rmsd 1e10
 
 
 class TorchSpinParameterHandler:
@@ -1064,6 +1079,26 @@ def compute_residuals(
     return residuals, rmsd, info
 
 
+class _FailedEval(float):
+    """The 1e10 penalty RMSD returned for a model evaluation that raised.
+
+    A float (optimizers use it like any objective value) that also carries the
+    error text, so the progress tracker in the calling process can count the
+    failure and warn, also when the evaluation ran in a worker process.
+    """
+
+    def __new__(cls, value: float, error: str = ''):
+        obj = super().__new__(cls, value)
+        obj.error = error
+        return obj
+
+    def __reduce__(self):
+        return (_FailedEval, (float(self), self.error))
+
+
+_FAILED_RMSD = 1e10
+
+
 def _objective_function(
     pvec_active: np.ndarray,
     data: np.ndarray,
@@ -1082,10 +1117,12 @@ def _objective_function(
         )
         return rmsd
     except (ValueError, RuntimeError, np.linalg.LinAlgError) as e:
-        # Recoverable errors (out-of-range parameters, convergence failures)
+        # Recoverable errors (out-of-range parameters, convergence failures):
+        # penalize so the optimizer moves away. The tracker counts the
+        # failure (FitResult.n_failed_evals) and warns once per fit (B80).
         if options.verbosity >= 1:
             print(f"Warning: simulation error at current parameters: {e}")
-        return 1e10
+        return _FailedEval(_FAILED_RMSD, f"{type(e).__name__}: {e}")
 
 
 def _optimize_simplex(
@@ -1235,6 +1272,7 @@ def _emit_progress(
     max_iter: int,
     best_f: float,
     best_x: np.ndarray,
+    tracker: Optional['_FitProgress'] = None,
 ) -> None:
     """Emit per-iteration progress when verbosity>=2 or a callback is set.
 
@@ -1254,9 +1292,16 @@ def _emit_progress(
                 "best_f": best_f,
                 "best_x": best_x.copy(),
             })
-        except Exception:
-            # Never let a user-supplied callback crash the fit
-            pass
+        except Exception as e:
+            # A user-supplied callback must not crash the fit, but its failure
+            # must not go unnoticed either (B80): warn once per fit.
+            msg = (f"esfit: options.callback raised {type(e).__name__}: {e}; "
+                   "the fit continues (further callback errors in this fit "
+                   "are not reported)")
+            if tracker is None:
+                warnings.warn(msg, RuntimeWarning, stacklevel=2)
+            else:
+                tracker.warn_once('callback', msg)
 
 
 class _StopFit(Exception):
@@ -1326,6 +1371,23 @@ class _FitProgress:
         self.interrupted = False
         self.rss0: Optional[float] = None
         self.elapsed_s: Optional[float] = None
+        self.n_failed_evals = 0
+        self._warned: set = set()
+
+    def warn_once(self, key: str, message: str) -> None:
+        """Issue ``message`` as a RuntimeWarning the first time ``key`` occurs in this fit."""
+        if key not in self._warned:
+            self._warned.add(key)
+            warnings.warn(message, RuntimeWarning, stacklevel=3)
+
+    def _count_failures(self, F) -> None:
+        for f in F:
+            if isinstance(f, _FailedEval):
+                self.n_failed_evals += 1
+                self.warn_once(
+                    'model', "esfit: the model raised at some parameter values "
+                    f"(first error: {f.error}); those evaluations are penalized "
+                    f"with rmsd {_FAILED_RMSD:g}. FitResult.n_failed_evals counts them.")
 
     # -- timing --------------------------------------------------------------
     def elapsed(self) -> float:
@@ -1374,6 +1436,7 @@ class _FitProgress:
     # -- recording -----------------------------------------------------------
     def record(self, x, f: float, emit: bool = True) -> None:
         self.n_evaluations += 1
+        self._count_failures((f,))
         f = float(f)
         self.last_f = f
         if f < self.best_f:
@@ -1384,6 +1447,8 @@ class _FitProgress:
             self.check()
 
     def record_batch(self, X, F) -> None:
+        if isinstance(F, (list, tuple)):
+            self._count_failures(F)
         F = np.asarray(F, dtype=float).ravel()
         if F.size == 0:
             return
@@ -1472,7 +1537,10 @@ class _FitProgress:
         elif self.mode == 'callable':
             try:
                 ret = o.progress(info)
-            except Exception:
+            except Exception as e:
+                # keep fitting, but do not hide the failure (B80)
+                self.warn_once('progress', f"esfit: options.progress raised {type(e).__name__}: {e}; "
+                               "the fit continues (further progress errors in this fit are not reported)")
                 ret = None
             if ret is False and self.stop_reason is None:
                 self.stop_reason = 'progress callback returned False'
@@ -1484,11 +1552,10 @@ class _FitProgress:
             if o.max_time is not None and self.t0 is not None and self.elapsed() >= float(o.max_time):
                 self.stop_reason = f'max_time {o.max_time} s reached'
             elif o.stop_when is not None:
-                try:
-                    if o.stop_when(self.info()):
-                        self.stop_reason = 'stop_when condition met'
-                except Exception:
-                    pass
+                # an exception in stop_when propagates (B80): a stop condition
+                # that cannot be evaluated must not be silently ignored
+                if o.stop_when(self.info()):
+                    self.stop_reason = 'stop_when condition met'
         if self.stop_reason is not None:
             self.interrupted = True
             raise _StopFit(self.stop_reason)
@@ -1804,6 +1871,8 @@ def _scipy_takes_workers(solver: str) -> bool:
 
 def _scalar(f) -> float:
     """A scalar objective value; SciPy's wrappers may hand back a 1-element array."""
+    if isinstance(f, _FailedEval):
+        return f        # keep the failure marker for the tracker
     return float(np.asarray(f, dtype=float).ravel()[0])
 
 
@@ -1943,7 +2012,7 @@ def _optimize_montecarlo(
         # Emit per-step progress (stride to keep output readable)
         stride = max(1, n_sa // 20)
         if step % stride == 0 or step == n_sa - 1:
-            _emit_progress(options, 'montecarlo', step, n_sa, best_f, best_x)
+            _emit_progress(options, 'montecarlo', step, n_sa, best_f, best_x, tracker)
         tracker.iteration(step, n_sa)
 
     return OptimizeResult(
@@ -2004,7 +2073,7 @@ def _optimize_genetic(
             best_x = pop[0].copy()
 
         _emit_progress(options, 'genetic', gen, options.max_iter,
-                       best_f, best_x)
+                       best_f, best_x, _tracker_of(objective_fn))
         _tracker_of(objective_fn).iteration(gen, options.max_iter)
 
         if best_f < options.tol_fun:
@@ -2125,7 +2194,7 @@ def _optimize_swarm(
             gbest_pos = pbest_pos[cur_best_idx].copy()
 
         _emit_progress(options, 'swarm', it, options.max_iter,
-                       gbest_fit, gbest_pos)
+                       gbest_fit, gbest_pos, _tracker_of(objective_fn))
         _tracker_of(objective_fn).iteration(it, options.max_iter)
 
         if gbest_fit < options.tol_fun:
@@ -2805,6 +2874,7 @@ def esfit(
             n_evaluations=tracker.n_evaluations,
             elapsed_s=tracker.elapsed_s,
             interrupted=tracker.interrupted,
+            n_failed_evals=tracker.n_failed_evals,
         )
     
         if options.verbosity > 0:
