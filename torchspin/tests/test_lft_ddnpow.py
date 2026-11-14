@@ -253,6 +253,80 @@ def test_ritz_subspace_graph_equals_full_basis():
     assert _scaled_error(ja, jb, x0) < 1e-5
 
 
+# ------------------------------------------------------------------------------ B94: d^7 Rayleigh-Ritz gradients
+# Co(II) (d^7, 120 states) in a flattened tetrahedron of four AOM ligands: the reported failing case
+# (YangHolonomy co_kramers_epr checkout survey).  Its ground-doublet transition moments respond to
+# the ligand field through spin-orbit admixture of excited quartets, i.e. through eigenvector
+# components OUTSIDE the Rayleigh-Ritz space.  0.9.29 differentiated the eigenvectors inside the
+# fixed (detached) space only.  Measured (torch 2.15, OMP 4), scaled Jacobian error Ritz vs full
+# basis: 0.9.29 1.6e-1 (absorption), 6.5e-2 (field derivative), 2.8e-2 (Lorentzian, 4 K); 0.9.30
+# 1.7e-9, 3.5e-9, 1.7e-9.  Central differences of this spectrum bottom out at ~1e-6 (levels at
+# ~1e4 cm^-1 vs 0.02 cm^-1 lines; d/d e_sigma, h = 35, 3.5, 0.35, 0.035: 8.0e-4, 8.1e-6, 3.1e-6,
+# 1.9e-5 on the Ritz path, 8.0e-4, 8.1e-6, 1.2e-6, 2.2e-5 on the full basis), so the full basis is
+# the sharp reference and central differences the independent one.
+_CO = dict(B=730.0, C=3285.0, zeta=430.0, k=np.array([0.9, 0.9, 0.9]))
+_CO_FIELDS = torch.linspace(20.0, 800.0, 157, dtype=F64)
+
+
+def _co_V(es, tilt_deg=5.0):
+    t = float(np.degrees(np.arccos(1.0 / np.sqrt(3.0)))) + tilt_deg
+    pos = [(t, 45.0), (t, 225.0), (180.0 - t, 135.0), (180.0 - t, 315.0)]
+    return lft.aom([lft.Ligand.isotropic(a, b, es, 900.0, degrees=True) for a, b in pos])
+
+
+def _co_run(**fixed):
+    def run(kw, **opt):
+        kw = dict(kw)
+        kw["V"] = _co_V(kw.pop("es"))
+        return ddnpow.simulate(7, _CO_FIELDS, 9.4, igloo=2, units="cm^-1", pairs=((0, 1),), width=(0.02,) * 3,
+                               **fixed, **kw, **opt).spectrum
+    return run
+
+
+_CO_CASES = {"absorption": {}, "field_derivative": dict(derivative=True),
+             "lorentzian_4K": dict(shape="lorentzian", temperature=4.0)}
+
+
+@pytest.mark.parametrize("case", list(_CO_CASES))
+def test_d7_ritz_gradients_match_full_basis(case):
+    """B94: Jacobian (e_sigma, zeta, Racah B, k) of the Ritz path vs the full basis, d^7."""
+    run = _co_run(**_CO_CASES[case])
+    x0, fun = _setup(dict(_CO, es=3500.0, V=None), ["es", "zeta", "B", "k"], run)
+    with torch.no_grad():
+        assert ddnpow.simulate(7, _CO_FIELDS, 9.4, igloo=2, units="cm^-1", pairs=((0, 1),), width=(0.02,) * 3,
+                               V=_co_V(3500.0), **_CO).subspace_used
+    ja = _jac_forward(fun, x0)
+    jb = _jac_forward(lambda x: fun(x, subspace=False), x0)
+    assert np.abs(jb).max() > 0
+    assert _scaled_error(ja, jb, x0) < 1e-7
+
+
+def test_d7_ritz_gradients_vs_central_differences():
+    """B94: the Ritz-path Jacobian against central differences (Richardson, steps 1e-3/1e-4 relative)."""
+    _check(dict(_CO, es=3500.0, V=None), ["es", "zeta", "k"], _co_run(), tol=1e-5, steps=(1e-3, 1e-4))
+
+
+def test_d7_ritz_values_identical_on_and_off_graph():
+    """B94: the graph path returns the no-graph spectrum bit for bit; reverse mode = forward mode."""
+    run = _co_run(derivative=True)
+    with torch.no_grad():
+        y0 = run(dict(_CO, es=torch.tensor(3500.0, dtype=F64)))
+    es = torch.tensor(3500.0, dtype=F64, requires_grad=True)
+    y = run(dict(_CO, es=es))
+    assert torch.equal(y.detach(), y0)
+    w = torch.linspace(-1.0, 1.0, len(y0), dtype=F64)
+    g_rev = torch.autograd.grad((w * y).sum(), es)[0]
+    with fwAD.dual_level():
+        yd = run(dict(_CO, es=fwAD.make_dual(torch.tensor(3500.0, dtype=F64), torch.tensor(1.0, dtype=F64))))
+        primal, tangent = fwAD.unpack_dual(yd)
+        assert torch.equal(primal, y0)
+        g_fwd = (w * tangent).sum()
+    # two summation orders of a roundoff-limited spectrum (defined to ~1e-9, see the module
+    # docstring): measured 2.5e-11 of sum |w| |dy| (torch 2.10/2.15, 1 and 8 threads); 0.9.29's
+    # reverse and forward modes differ by 5e-11 per point as well
+    assert abs(float(g_rev - g_fwd)) <= 1e-9 * float((w.abs() * tangent.abs()).sum())
+
+
 # ------------------------------------------------------------------------------ parity with telser-tools
 @lru_cache(maxsize=None)
 def _telser():
