@@ -2,7 +2,9 @@
 Least-squares fitting of EPR spectra.
 
 This module provides functionality for fitting experimental EPR data by
-optimizing simulation parameters to minimize residuals.
+optimizing simulation parameters to minimize residuals. The public entry
+point is :func:`esfit`, configured with :class:`FitOptions` and returning a
+:class:`FitResult`.
 """
 
 import dataclasses
@@ -21,103 +23,243 @@ __all__ = ['esfit', 'FitOptions', 'FitResult', 'TorchSpinParameterHandler']
 
 @dataclass
 class FitOptions:
-    """Options for esfit optimization.
-    
-    Attributes
+    """Options for :func:`esfit`: optimizer, scaling, baseline, target, budget.
+
+    All fields have defaults, so ``FitOptions()`` is a complete set of options.
+    The dataclass does not validate its fields; an invalid value raises (or is
+    ignored, see each entry) when :func:`esfit` uses it.
+
+    Parameters
     ----------
-    method : str
-        Optimization algorithm. Options:
-          'global'    — particle swarm (global) → simplex (local polish);
-                        recommended for derivative EPR with rugged loss
-          'simplex'   — Nelder-Mead (local; fast but easy to get trapped)
-          'lbfgsb'    — L-BFGS-B (local, gradient via finite diff)
-          'powell'    — Powell's method (local, derivative-free)
-          'grid'      — systematic grid search
-          'montecarlo'— random sampling + simulated annealing
-          'genetic'   — genetic algorithm
-          'swarm'     — particle swarm only (no polish)
-          'trf'       — bounded trust-region reflective least squares on the
-                        residual vector (SciPy least_squares; see trf_* below)
-          'levmar'    — Levenberg-Marquardt
-        Default: 'simplex'
-    autoscale : str
-        Scaling method for fit. Options: 'lsq' (least squares),
-        'maxabs' (maximum absolute value), 'none' (no scaling).
-        Default: 'lsq'. The 'lsq' scale is constrained to be non-negative,
-        as in EasySpin, so the model must carry the sign of the signal: fit
-        an inversion-recovery curve with ``-exp(-t/T)``, not ``exp(-t/T)``.
-    lsq_negative_scale : str
-        What 'lsq' autoscaling does when the unconstrained scale comes out
-        negative (model anti-correlated with the data). 'clip' (default)
-        returns the constrained least-squares optimum: scale 0 with the
-        baseline refitted alone. 'abs' reproduces EasySpin's
-        ``coeffs(1) = abs(coeffs(1))``, which mirrors the model but keeps the
-        baseline solved for the opposite sign, so the objective is not a
-        least-squares fit of anything. esfit warns if the final fit has a
-        negative unconstrained scale.
-    baseline : int
-        Baseline correction polynomial order. -1 for no baseline,
-        0 for constant, 1 for linear, 2 for quadratic, 3 for cubic.
-        Default: -1
-    target : str
-        Target transformation applied to residuals before computing RMSD.
-        Options:
-          'auto' — pick 'int' for derivative-like data (mean << std, e.g.
-                   field-modulated CW EPR with Harmonic=1), else 'fcn'.
-                   Matches MATLAB EasySpin's pepper/garlic auto-default.
-          'fcn'  — raw residuals (sim - data).
-          'int'  — cumulative-integral residuals (smooths derivative-EPR
-                   loss landscape and removes oscillating local minima).
-          'diff' — first-difference residuals.
-        Default: 'auto'
-    max_iter : int
-        Maximum number of iterations. Default: 2000
-    tol_fun : float
-        Function tolerance for convergence. Default: 1e-6
-    tol_x : float
-        Parameter tolerance for convergence. Default: 1e-6
-    verbosity : int
-        Verbosity level. 0=silent (default), 1=phase headers (swarm
-        start/end, polish start), 2=per-iteration RMSD printed to stdout.
-    callback : Optional[Callable]
-        If not None, called each iteration of population-based methods
-        (swarm, genetic, montecarlo, global) with a dict payload
-        ``{"method": str, "iter": int, "max_iter": int, "best_f": float,
-        "best_x": np.ndarray}``. Use to drive live plots or progress
-        bars from the caller. Exceptions raised in the callback are
-        swallowed so they can never crash the fit. Default: None.
-    compute_uncertainties : bool
-        Whether to compute parameter uncertainties. Default: True
-    trf_diff_step, trf_x_scale, trf_gradient_tol
-        Options for ``method='trf'`` (SciPy ``least_squares(method='trf')``,
-        bounded trust-region reflective least squares). The solver minimizes
-        the same target-transformed residual vector whose RMSD the other
-        methods minimize, so esfit's parameter mapping (dict/array ``p0``,
-        fixed parameters, ``lb``/``ub``/``vary``), amplitude and baseline
-        handling (``autoscale``/``baseline``), ``target``, progress reporting
-        and stopping (``max_time``, ``stop_when``, interrupt) apply unchanged.
-          trf_diff_step    — relative finite-difference step for the Jacobian
-                             (SciPy ``diff_step``; None = SciPy's default,
-                             about 1.5e-8). Relative to the physical parameter
-                             values, unlike ``lm_delta``.
-          trf_x_scale      — SciPy ``x_scale``: 'jac' (default; scale from the
-                             Jacobian columns), a float, or an array with one
-                             entry per *active* (non-fixed) parameter.
-          trf_gradient_tol — SciPy ``gtol`` (default 1e-7). ``tol_fun`` and
-                             ``tol_x`` are passed as ``ftol`` and ``xtol``.
-        Evaluation budget: for 'trf' ``max_iter`` is SciPy's ``max_nfev``, the
-        number of *step* residual evaluations. The evaluations SciPy spends on
-        the finite-difference Jacobian (about one per active parameter per
-        iteration) do not count against that budget, but they are counted in
-        ``FitResult.n_evaluations`` and drive the progress/stop checks. An
-        exhausted budget returns ``success=False`` (SciPy's message "The
-        maximum number of function evaluations is exceeded.") with
-        ``interrupted=False``; a stop or interrupt returns the best point so
-        far with ``interrupted=True``. ``FitResult.n_iterations`` is SciPy's
-        Jacobian-evaluation count (one per trust-region iteration).
-        TRF is a local optimization method: its iterations run one after
-        another, but with ``n_workers > 1`` the finite-difference probes of
-        each Jacobian are evaluated concurrently (SciPy >= 1.16).
+    method : str, default 'simplex'
+        Optimization algorithm. Any other value makes :func:`esfit` raise
+        ``ValueError``.
+
+        - ``'simplex'``: Nelder-Mead in parameters rescaled to [-1, 1] (local,
+          derivative-free; port of EasySpin's ``esfit_simplex``).
+        - ``'levmar'``: Levenberg-Marquardt on the residual vector (local;
+          forward-difference Jacobian with Broyden updates, port of EasySpin's
+          ``esfit_levmar``).
+        - ``'trf'``: bounded trust-region reflective least squares on the
+          residual vector (local; SciPy ``least_squares(method='trf')``, see
+          the ``trf_*`` fields).
+        - ``'lbfgsb'``: L-BFGS-B on the RMSD (local; finite-difference
+          gradient).
+        - ``'powell'``: Powell's method (local, derivative-free).
+        - ``'swarm'``: particle swarm only (global, no local polish).
+        - ``'global'``: particle swarm followed by a Nelder-Mead polish from
+          the swarm's best point; recommended for derivative CW EPR spectra,
+          whose loss has many narrow local minima.
+        - ``'genetic'``: genetic algorithm (global).
+        - ``'montecarlo'``: uniform random sampling followed by simulated
+          annealing around the best sample (global).
+        - ``'grid'``: systematic grid search between the bounds.
+
+    autoscale : {'lsq', 'maxabs', 'none'}, default 'lsq'
+        How the model output is scaled to the data before the residuals are
+        formed. ``'lsq'``: least-squares scale (constrained to be
+        non-negative, as in EasySpin), solved jointly with the baseline.
+        ``'maxabs'``: ``max|data| / max|model|``. ``'none'``: scale 1. Any
+        other value is treated as ``'none'``. With ``'lsq'`` the model must
+        carry the sign of the signal: fit an inversion-recovery curve with
+        ``-exp(-t/T)``, not ``exp(-t/T)``.
+    lsq_negative_scale : {'clip', 'abs'}, default 'clip'
+        What ``autoscale='lsq'`` does when the unconstrained scale comes out
+        negative (model anti-correlated with the data). ``'clip'`` returns the
+        constrained least-squares optimum: scale 0 with the baseline refitted
+        alone. ``'abs'`` reproduces EasySpin's ``coeffs(1) = abs(coeffs(1))``,
+        which mirrors the model but keeps the baseline solved for the opposite
+        sign, so the objective is not a least-squares fit of anything.
+        :func:`esfit` warns if the final fit has a negative unconstrained
+        scale.
+    baseline : int, default -1
+        Order of the polynomial baseline fitted together with the scale, on
+        the abscissa ``linspace(0, 1, n_data)``: ``-1`` no baseline, ``0``
+        constant, ``1`` linear, ``2`` quadratic, and so on.
+    target : {'auto', 'fcn', 'int', 'diff'}, default 'auto'
+        Transformation of the residual vector ``fit - data`` before the RMSD
+        is computed. ``'fcn'``: the residuals as they are. ``'int'``: their
+        cumulative sum (smooths the loss of derivative spectra and removes
+        oscillating local minima). ``'diff'``: their first difference
+        (``numpy.diff`` with a leading 0). ``'auto'``: ``'int'`` when the data
+        look like a derivative spectrum (``|mean(data)| < 0.1 * std(data)``),
+        else ``'fcn'``. The choice is made from the data alone, not from the
+        simulator's ``Harmonic``.
+    max_iter : int, default 2000
+        Iteration or evaluation budget. Its meaning depends on ``method``:
+        SciPy's ``maxiter`` for ``'simplex'``, ``'lbfgsb'`` and ``'powell'``;
+        LM iterations for ``'levmar'``; SciPy's ``max_nfev`` for ``'trf'``
+        (see Notes); iterations (``'swarm'``) or generations (``'genetic'``);
+        for ``'global'`` the swarm phase gets ``max(20, max_iter // 2)``
+        iterations and the simplex polish ``max(200, max_iter - evaluations
+        used by the swarm)``; for ``'montecarlo'`` the random samples are
+        capped at ``max_iter`` and the annealing runs ``max(1, max_iter -
+        samples)`` steps; for ``'grid'`` at most ``max_iter`` grid points are
+        evaluated.
+    tol_fun : float, default 1e-6
+        Function tolerance. SciPy's ``fatol`` (``'simplex'``) or ``ftol``
+        (``'lbfgsb'``, ``'powell'``, ``'trf'``). For ``'swarm'`` and
+        ``'genetic'`` the run stops once the best RMSD (in data units) falls
+        below ``tol_fun``.
+    tol_x : float, default 1e-6
+        Parameter-step tolerance: SciPy's ``xtol`` for ``'powell'`` and
+        ``'trf'``, and the relative step threshold of ``'levmar'`` (in the
+        [-1, 1]-rescaled parameters). ``'simplex'`` uses a fixed ``xatol`` of
+        1e-4 in rescaled parameters instead.
+    verbosity : int, default 0
+        ``0``: silent. ``1``: a summary of the setup, phase headers, the final
+        parameters and fit statistics, and SciPy's ``disp`` output. ``2``:
+        also one line per iteration (best RMSD) for ``'swarm'``,
+        ``'global'``, ``'genetic'`` and ``'montecarlo'``. Printed to stdout.
+    callback : callable or None, default None
+        Called once per iteration by ``'swarm'``, ``'global'`` (swarm phase),
+        ``'genetic'`` and ``'montecarlo'`` (annealing phase, about 20 times)
+        with a dict ``{'method': str, 'iter': int (1-based), 'max_iter': int,
+        'best_f': float, 'best_x': numpy.ndarray}``; ``best_x`` holds the
+        active parameters. Use it to drive live plots. Exceptions raised in
+        the callback are swallowed, so it cannot crash the fit. Use
+        ``progress`` for a callback that works with every method.
+    compute_uncertainties : bool, default True
+        Estimate ``pstd``, ``ci95``, ``cov`` and ``corr`` after a successful
+        fit (``2 * n_active`` extra model evaluations, see :func:`esfit`
+        Notes). ``False`` leaves those :class:`FitResult` fields ``None``.
+    grid_points : int, default 10
+        ``'grid'``: points per parameter axis (at least 2), from ``lb`` to
+        ``ub`` inclusive. The grid has ``grid_points ** n_active`` points;
+        only the first ``max_iter`` of them, in ``itertools.product`` order,
+        are evaluated.
+    mc_samples : int, default 1000
+        ``'montecarlo'``: number of uniform random samples between the bounds
+        (capped at ``max_iter``).
+    mc_temp_start, mc_temp_end : float, default 1.0 and 1e-4
+        ``'montecarlo'``: start and end temperature of the annealing phase,
+        decreased geometrically. The temperature sets both the acceptance
+        probability ``exp(-dRMSD / T)`` and the proposal width ``T * (ub -
+        lb)``.
+    ga_population : int, default 50
+        ``'genetic'``: population size (at least ``ga_elite + 2``).
+    ga_mutation : float, default 0.1
+        ``'genetic'``: per-parameter mutation probability; a mutation adds
+        Gaussian noise with standard deviation ``0.05 * (ub - lb)``.
+    ga_crossover : float, default 0.7
+        ``'genetic'``: probability of a uniform crossover between the two
+        tournament-selected parents.
+    ga_elite : int, default 5
+        ``'genetic'``: number of best individuals copied unchanged into the
+        next generation (at least 1).
+    swarm_size : int, default 30
+        ``'swarm'`` and ``'global'``: number of particles (at least 4).
+    swarm_inertia : float, default 0.7
+        Particle-swarm inertia weight.
+    swarm_cognitive : float, default 1.4
+        Particle-swarm attraction to each particle's own best position.
+    swarm_social : float, default 1.4
+        Particle-swarm attraction to the swarm's best position.
+    lm_lambda : float, default 1e-3
+        ``'levmar'``: initial damping, relative to the largest diagonal
+        element of ``J.T @ J``.
+    lm_delta : float, default 1e-3
+        ``'levmar'``: forward-difference step for the Jacobian, in the
+        parameters rescaled to [-1, 1] (EasySpin ``FitOpt.delta``).
+    lm_gradient_tol : float, default 1e-5
+        ``'levmar'``: stop when the infinity norm of the gradient ``J.T @ r``
+        falls below this value (EasySpin ``FitOpt.TolFun``).
+    lm_step_tol : float, default 1e-8
+        Not used. ``'levmar'`` takes its step tolerance from ``tol_x``.
+    trf_diff_step : float or None, default None
+        ``'trf'``: relative finite-difference step for the Jacobian (SciPy
+        ``diff_step``; ``None`` is SciPy's default, about 1.5e-8). Relative to
+        the physical parameter values, unlike ``lm_delta``.
+    trf_x_scale : {'jac'} or float or numpy.ndarray, default 'jac'
+        ``'trf'``: SciPy ``x_scale``. ``'jac'`` scales from the Jacobian
+        columns; an array needs one entry per active (non-fixed) parameter.
+    trf_gradient_tol : float, default 1e-7
+        ``'trf'``: SciPy ``gtol``. ``tol_fun`` and ``tol_x`` are passed as
+        ``ftol`` and ``xtol``.
+    n_workers : int or 'auto', default 1
+        Parallel model evaluations. ``1``: sequential. An int > 1: up to that
+        many workers. ``'auto'``: the cores this process may use (affinity
+        and SLURM aware), at most 32, and at most one worker per ~0.5 GB of
+        half the available memory. Population methods (``'swarm'``,
+        ``'global'``, ``'genetic'``, ``'montecarlo'``, ``'grid'``) evaluate
+        each population concurrently; ``'levmar'``, ``'trf'``, ``'lbfgsb'``
+        and the uncertainty estimate evaluate the finite-difference probes of
+        each Jacobian or gradient concurrently (``'trf'`` and ``'lbfgsb'``
+        need SciPy >= 1.16 and otherwise warn and run sequentially).
+        ``'simplex'`` and ``'powell'`` are always sequential.
+    workers : {'auto', 'processes', 'threads'}, default 'auto'
+        Backend for ``n_workers > 1``. ``'auto'`` and ``'processes'`` use a
+        spawned process pool with the cores split between the workers (each
+        worker is a separate Python process with its own torch); the model is
+        sent by value with ``cloudpickle`` (needed for models defined in a
+        notebook), and a model that cannot be sent falls back to a thread
+        pool. ``'threads'`` forces a thread pool, which gains little because
+        torchspin's forward models hold the GIL.
+    devices : list or None, default None
+        GPUs for process workers, e.g. ``['cuda:0', 'cuda:1']`` (CUDA device
+        strings, ints or ``torch.device``): each spawned worker is pinned to
+        one of them, round-robin, through ``CUDA_VISIBLE_DEVICES``, so a model
+        that uses ``device='cuda'`` runs on its own GPU. ``None`` leaves the
+        workers' GPU visibility unchanged. Ignored by the thread backend. A
+        non-CUDA entry raises ``ValueError`` when the pool is created.
+    seed : int or None, default None
+        Seed of the NumPy random generator of ``'montecarlo'``, ``'genetic'``,
+        ``'swarm'`` and ``'global'``. ``None``: a different realization on
+        every run. An int makes these fits reproducible (recommended for
+        tutorials, regression tests and published numbers).
+    progress : None, 'text', 'bar' or callable, default None
+        Real-time progress for every method. ``None``: silent. ``'text'``:
+        one flushed line per report (iteration, evaluations, current and best
+        RMSD, elapsed time, evaluations per second, ETA when the budget is
+        known), plus a resource summary at the start and a totals line at
+        the end. ``'bar'``: a ``tqdm`` bar (text if ``tqdm`` is missing).
+        A callable is called as ``progress(info)`` with a dict (keys
+        ``'method', 'phase', 'iter', 'iter_total', 'n_evaluations',
+        'eval_total', 'rmsd', 'best_f', 'best_x', 'elapsed_s',
+        'evals_per_s', 'eta_s'``); returning ``False`` stops the fit, and
+        exceptions it raises are swallowed. With ``n_workers > 1`` reports
+        arrive per evaluation chunk, not per evaluation.
+    progress_every : int or None, default None
+        Report at least every this many model evaluations.
+    progress_interval : float, default 1.0
+        Report at least every this many seconds (wall clock).
+    max_time : float or None, default None
+        Wall-clock budget in seconds; the fit stops once it is exceeded.
+    stop_when : callable or None, default None
+        ``stop_when(info) -> bool`` with the same ``info`` dict as
+        ``progress``, checked after every evaluation; ``True`` stops the fit.
+        Exceptions it raises are swallowed.
+
+    See Also
+    --------
+    esfit, FitResult
+
+    Notes
+    -----
+    A stop (``max_time``, ``stop_when``, a ``progress`` callable returning
+    ``False``) or a ``KeyboardInterrupt`` returns the best parameters found so
+    far, with ``FitResult.success=False`` and ``FitResult.interrupted=True``;
+    no uncertainties are computed for it.
+
+    ``method='trf'`` minimizes the same target-transformed residual vector
+    whose RMSD the other methods minimize, so the parameter mapping (array or
+    dict ``p0``, fixed parameters, bounds), ``autoscale``, ``baseline``,
+    ``target``, progress reporting and stopping apply unchanged. Its budget
+    ``max_iter`` is SciPy's ``max_nfev``, the number of step evaluations; the
+    finite-difference Jacobian probes (about one per active parameter per
+    iteration) do not count against it, but they are counted in
+    ``FitResult.n_evaluations`` and drive the progress and stop checks. An
+    exhausted budget returns ``success=False`` (SciPy's message "The maximum
+    number of function evaluations is exceeded.") with ``interrupted=False``.
+    ``FitResult.n_iterations`` is SciPy's Jacobian-evaluation count (one per
+    trust-region iteration).
+
+    Examples
+    --------
+    >>> from torchspin import FitOptions
+    >>> opt = FitOptions(method='levmar', baseline=0)
+    >>> opt.target, opt.max_iter
+    ('auto', 2000)
     """
     method: str = 'simplex'
     autoscale: str = 'lsq'
@@ -211,58 +353,111 @@ class FitOptions:
 
 @dataclass
 class FitResult:
-    """Results from esfit optimization.
-    
-    Attributes
+    """Result of :func:`esfit`.
+
+    "Active" parameters are those that were varied (``lb < ub``); parameters
+    fixed with ``vary = 0`` or ``lb == ub`` are not part of ``pfit``. All
+    arrays are NumPy arrays on the CPU, in data units unless stated otherwise.
+
+    Parameters
     ----------
-    pfit : np.ndarray
-        Fitted parameter values (active parameters only)
-    pnames : list[str]
-        Parameter names
-    p_start : np.ndarray
-        Starting parameter values
-    p_fixed : np.ndarray
-        Boolean mask indicating fixed parameters
-    fit : np.ndarray
-        Fitted spectrum (scaled + baseline corrected)
-    fit_raw : np.ndarray
-        Raw simulation output (before scaling)
-    residuals : np.ndarray
-        Residuals (fit - data, before the ``target`` transform)
+    pfit : numpy.ndarray, shape (n_active,)
+        Best-fit values of the active parameters, in the order of ``pnames``.
+    pnames : list of str, length n_active
+        Names of the active parameters: ``'p0'``, ``'p1'``, ... (index into
+        the full ``p0`` vector) for array-style fits, ``'Sys.lw[1]'``,
+        ``'Sys.g[0,2]'``, ``'Exp.mwFreq'``, ... for dict-style fits.
+    p_start : numpy.ndarray, shape (n_active,)
+        Start values of the active parameters.
+    p_fixed : numpy.ndarray of bool, shape (n_total,)
+        Fixed-parameter mask over all parameters, fixed ones included (array
+        style: the order of ``p0``; dict style: the order of the fields in
+        ``vary``/``lb``, arrays flattened in C order). Note that it is longer
+        than ``pfit`` when parameters are fixed.
+    fit : numpy.ndarray, shape (n_data,)
+        Fitted curve as compared with the data: ``scale * fit_raw +
+        baseline``.
+    fit_raw : numpy.ndarray, shape (n_data,)
+        Model output at ``pfit``, flattened, before scaling and baseline.
+    residuals : numpy.ndarray, shape (n_data,)
+        ``fit - data``, before the ``FitOptions.target`` transformation.
     scale : float
-        Scale factor applied to simulation
-    baseline : np.ndarray
-        Baseline vector
+        Scale factor applied to ``fit_raw`` (1.0 for ``autoscale='none'``).
+    baseline : numpy.ndarray, shape (n_data,)
+        Fitted polynomial baseline (zeros for ``FitOptions.baseline=-1``).
     rmsd : float
-        Root mean square deviation
+        Root-mean-square of the target-transformed residuals at ``pfit``: the
+        quantity the optimizer minimizes.
     ssr : float
-        Sum of squared residuals
+        Sum of squares of the target-transformed residuals
+        (``n_data * rmsd**2``).
     n_params : int
-        Number of fitted parameters
+        Number of active parameters (``n_active``).
     n_data : int
-        Number of data points
+        Number of data points.
     algorithm : str
-        Algorithm used
+        ``FitOptions.method`` used.
     n_iterations : int
-        Number of iterations
+        Iterations reported by the optimizer: SciPy's ``nit`` for
+        ``'simplex'``, ``'lbfgsb'`` and ``'powell'``; Jacobian evaluations for
+        ``'trf'``; LM iterations, swarm iterations or generations for
+        ``'levmar'``, ``'swarm'``, ``'genetic'``; the sum of both phases for
+        ``'global'``; model evaluations for ``'grid'`` and ``'montecarlo'``;
+        the tracker's iteration count for an interrupted fit.
     success : bool
-        Whether fit converged successfully
+        SciPy's convergence flag for ``'simplex'``, ``'lbfgsb'``,
+        ``'powell'`` and ``'trf'``; always ``True`` for the other methods
+        unless the fit was interrupted (then ``False``).
     message : str
-        Convergence message
-    pstd : Optional[np.ndarray]
-        Parameter standard deviations
-    ci95 : Optional[np.ndarray]
-        95% confidence intervals (n_params x 2)
-    cov : Optional[np.ndarray]
-        Covariance matrix
-    corr : Optional[np.ndarray]
-        Correlation matrix
-    r_squared : Optional[float]
-        Coefficient of determination (R²)
-    reduced_chi_square : Optional[float]
-        Reduced chi-square statistic
-    noise_std : Optional[float]
-        Estimated noise standard deviation
+        Optimizer termination message.
+    pstd : numpy.ndarray, shape (n_active,), or None
+        Standard deviations of the active parameters from the HC1 sandwich
+        covariance. ``nan`` for a parameter that has no effect on the
+        residuals at the finite-difference step (esfit warns). ``None`` when
+        ``FitOptions.compute_uncertainties`` is ``False``, the fit did not
+        succeed, or the covariance could not be computed.
+    ci95 : numpy.ndarray, shape (n_active, 2), or None
+        ``[pfit - 1.96 * pstd, pfit + 1.96 * pstd]`` per parameter (normal
+        approximation). ``None`` as for ``pstd``.
+    cov : numpy.ndarray, shape (n_active, n_active), or None
+        Parameter covariance matrix (``nan`` rows/columns for parameters
+        without effect). ``None`` as for ``pstd``.
+    corr : numpy.ndarray, shape (n_active, n_active), or None
+        Correlation matrix derived from ``cov``. ``None`` as for ``pstd``.
+    r_squared : float
+        Coefficient of determination, intended as ``1 - SS_res / SS_tot`` of
+        the untransformed residuals; see Notes.
+    reduced_chi_square : float
+        ``sum(residuals**2) / max(n_data - n_active, 1)`` of the
+        untransformed residuals: an estimate of the noise variance in data
+        units squared, not a chi-square normalized by a known noise level.
+    noise_std : float
+        ``sqrt(reduced_chi_square)``: estimated noise standard deviation in
+        data units.
+    n_evaluations : int or None
+        Model evaluations of the optimizer, all methods and phases (the
+        initial evaluation at ``p0`` included; the final evaluation and the
+        uncertainty estimate not).
+    elapsed_s : float or None
+        Optimizer wall time in seconds (excludes the initial evaluation at
+        ``p0`` and the uncertainty estimate).
+    interrupted : bool, default False
+        ``True`` when the fit was stopped early (``KeyboardInterrupt``,
+        ``FitOptions.max_time``, ``stop_when`` or a ``progress`` callable
+        returning ``False``); ``pfit`` is then the best point found so far.
+
+    See Also
+    --------
+    esfit, FitOptions
+
+    Notes
+    -----
+    ``r_squared`` reconstructs the data as ``fit + residuals`` although
+    ``residuals = fit - data``, so ``SS_tot`` is taken about ``2 * fit -
+    data`` instead of the data. For a close fit the difference is small; for
+    a poor fit the value can be far off (even hugely negative). Compute
+    ``1 - sum(res.residuals**2) / sum((data - data.mean())**2)`` yourself
+    when the exact value matters.
     """
     pfit: np.ndarray
     pnames: list[str]
@@ -2580,64 +2775,168 @@ def esfit(
     ub: Optional[Union[np.ndarray, dict]] = None,
     options: Optional[FitOptions] = None
 ) -> FitResult:
-    """
-    Fit experimental data using least-squares optimization.
-    
+    """Fit a model to data by least squares (port of EasySpin's ``esfit``).
+
+    The model output is scaled and given a polynomial baseline
+    (``FitOptions.autoscale``, ``FitOptions.baseline``), the residuals
+    ``fit - data`` are transformed (``FitOptions.target``), and their RMSD is
+    minimized over the varied parameters within their bounds.
+
     Parameters
     ----------
-    data : array_like
-        Experimental data vector (1D)
+    data : array_like or torch.Tensor
+        Experimental data. Flattened to 1-D, so any shape works as long as
+        the model returns the same number of values (``n_data``).
     model_fn : callable
-        Simulation function. For custom functions: ``datasim = model_fn(p)``
-        where ``p`` is a parameter vector. For torchspin simulators (pepper,
-        garlic, chili, etc.), use dict-style ``p0``/``vary`` to fit spin-system
-        and experiment parameters by name (see examples below).
+        The model. Its calling convention depends on ``p0``:
 
-        The local optimizers ('levmar', 'trf', 'lbfgsb') and the uncertainty
-        estimate use finite differences, so the model must be smooth in its
-        parameters. garlic's default ``Options.AccumMethod='binning'`` is not:
-        it puts each line in its nearest field bin, so the spectrum is
-        piecewise-constant in g and A. When esfit calls garlic itself
-        (dict style), it switches an unset AccumMethod to 'linear'. A custom
-        model that wraps garlic should pass ``Options(AccumMethod='linear')``
-        or ``'explicit'``. esfit warns when a parameter has no effect on the
-        residuals and reports its ``pstd`` as nan, not 0.
-    p0 : array or dict
-        Initial parameters. Array for custom model functions; dict-style
-        (mirroring ``SpinSystem``/``Experiment`` fields) for torchspin
-        simulators.
-    vary : array or dict, optional
-        Allowed variation (p0 ± vary). Mutually exclusive with lb/ub.
+        - Array ``p0``: ``model_fn(p)`` with ``p`` the full parameter vector,
+          a ``numpy.ndarray`` of shape ``(n_params,)`` (fixed entries
+          included).
+        - Dict ``p0`` and a torchspin simulator (``model_fn.__name__`` is
+          ``pepper``, ``garlic``, ``chili`` or ``salt``, or the function is
+          defined in a ``torchspin`` module): ``model_fn(p['Sys'],
+          p['Exp'])``, or ``model_fn(p['Sys'], p['Exp'], p['Opt'])`` when
+          ``p0`` has an ``'Opt'`` entry; the second return value (the
+          spectrum) is the model output. For :func:`~torchspin.garlic.garlic`
+          an unset ``Options.AccumMethod`` is switched to ``'linear'``
+          (except in the fast-motion regime or with ``Exp.mwPhase``), because
+          the default nearest-bin accumulation is piecewise constant in g
+          and A.
+        - Dict ``p0`` and any other callable: ``model_fn(p)`` with ``p`` a
+          deep copy of ``p0`` whose varied fields hold the trial values.
 
-        In the dict style the field names are known, so fields that cannot be
-        negative (``lw``, ``lwpp``, ``HStrain``, ``gStrain``, ``AStrain``,
-        ``DStrain``, ``weight``, ``tcorr``, ``T1``, ``T2``, ...) get their lower
-        bound clipped at zero when ``p0 - vary`` would go below it, as EasySpin's
-        ``esfit`` does.  A plain parameter vector carries no such information and
-        is used as given, so ``vary`` larger than ``p0`` there means a negative
-        lower bound; pass explicit ``lb``/``ub`` if that matters.
-    lb, ub : array or dict, optional
-        Lower/upper bounds, used exactly as given. Mutually exclusive with vary.
+        The output may be any array-like or tensor (detached and flattened);
+        it must have ``n_data`` elements.
+    p0 : array_like, shape (n_params,), or dict
+        Start values. Array style: one float per parameter. Dict style: a
+        mapping from names to objects, e.g. ``{'Sys': SpinSystem(...),
+        'Exp': Experiment(...), 'Opt': Options(...)}``; the fields named in
+        ``vary`` (or ``lb``/``ub``) are read from these objects and must be
+        scalars (int or float) or lists/arrays/tensors, which are varied
+        element-wise in the shape the field has on the object. For a
+        :class:`~torchspin.spinsystem.SpinSystem` that is the normalized
+        shape, e.g. ``g`` is ``(nElectrons, 3)``, ``A`` is ``(nNuclei,
+        3*nElectrons)`` and ``lw`` is ``[GaussianFWHM, LorentzianFWHM]``.
+    vary : array_like, shape (n_params,), or dict, optional
+        Allowed variation: the bounds are ``p0 - vary`` and ``p0 + vary``,
+        and ``vary = 0`` fixes a parameter. Dict style mirrors ``p0``, e.g.
+        ``{'Sys': {'lw': [0.0, 0.3]}}``, each value in the shape of its field.
+        In the dict style the lower bound of fields that cannot be negative
+        (``lw``, ``lwpp``, ``lwEndor``, ``HStrain``, ``HStrainL``,
+        ``gStrain``, ``AStrain``, ``DStrain``, ``weight``, ``initState``,
+        ``tcorr``, ``Diff``, ``T1``, ``T2``) is clipped at zero, as EasySpin's
+        ``esfit`` does. A plain vector carries no field names and is used as
+        given, so ``vary`` larger than ``p0`` there means a negative lower
+        bound. Give either ``vary`` or ``lb``/``ub``.
+    lb, ub : array_like, shape (n_params,), or dict, optional
+        Explicit lower and upper bounds, used exactly as given; ``lb == ub``
+        fixes a parameter. Dict style: both are required, with the same keys
+        and fields as each other, the layout of ``vary``, and ``p0`` within
+        them. Array style: a missing ``lb`` or ``ub`` is ``-inf`` or
+        ``+inf``, which only ``'lbfgsb'``, ``'powell'`` and ``'trf'`` handle;
+        the other methods need finite bounds (with an infinite bound they
+        return NaN parameters, raise, or, for ``'grid'``, return ``p0``).
     options : FitOptions, optional
-        Fitting options (algorithm, scaling, baseline, etc.)
-    
+        Algorithm, scaling, baseline, target, budget, parallelism and
+        progress. Default ``FitOptions()``.
+
     Returns
     -------
-    result : FitResult
-        Fit results with parameters, uncertainties, quality metrics
-    
+    FitResult
+        Best-fit active parameters (``pfit``, ``pnames``), the fitted curve
+        and residuals (each of shape ``(n_data,)``), ``scale``, ``baseline``,
+        ``rmsd``, uncertainties (``pstd``, ``ci95``, ``cov``, ``corr``) and
+        diagnostics. See :class:`FitResult`.
+
+    Raises
+    ------
+    ValueError
+        If both ``vary`` and ``lb``/``ub`` or neither are given; if an array
+        ``vary``, ``lb`` or ``ub`` does not have one entry per parameter; if
+        every parameter is fixed; in the dict style, if a key is not in
+        ``p0``, an object has no such field, a shape does not match the
+        field, only one of ``lb``/``ub`` is given, they name different keys
+        or fields, ``lb > ub``, or ``p0`` lies outside ``[lb, ub]``; if
+        ``FitOptions.method`` is unknown (checked after the initial model
+        evaluation). An unknown ``FitOptions.target`` or
+        ``lsq_negative_scale``, or a model output with the wrong number of
+        values, raises ``ValueError`` only at the final evaluation, after the
+        optimizer has run (see Notes).
+    TypeError
+        In the dict style, if a varied field is neither a number nor a
+        list/array/tensor.
+
+    Warns
+    -----
+    UserWarning
+        If ``autoscale='lsq'`` finds a negative scale at the fitted
+        parameters; if a parameter has no effect on the residuals at the
+        finite-difference step (its ``pstd`` is then ``nan``); if parallel
+        ``'trf'``/``'lbfgsb'`` probes are requested with SciPy < 1.16.
+
+    See Also
+    --------
+    FitOptions, FitResult
+    torchspin.pepper, torchspin.garlic : Typical models.
+
+    Notes
+    -----
+    Before each evaluation the parameters are clipped to their bounds. During
+    the optimization a model that raises ``ValueError``, ``RuntimeError`` or
+    ``numpy.linalg.LinAlgError`` scores an RMSD of 1e10 (printed with
+    ``verbosity >= 1``) instead of stopping the fit, so a configuration error
+    surfaces only when the final residuals are computed.
+
+    The local optimizers (``'levmar'``, ``'trf'``, ``'lbfgsb'``) and the
+    uncertainty estimate use finite differences, so the model must be smooth
+    in its parameters. A custom model that wraps garlic should pass
+    ``Options(AccumMethod='linear')`` or ``'explicit'``. See docs/pitfalls.md,
+    "garlic's ``AccumMethod='binning'`` in fits" and "Model sign with
+    ``autoscale='lsq'``".
+
+    Uncertainties: the Jacobian of the target-transformed residuals with
+    respect to the active parameters is taken by central differences (step
+    ``1e-7 * max(|p|, 1)``), the covariance is the HC1 sandwich estimator
+    ``(J'J)^-1 J' diag(r^2) J (J'J)^-1 * n_data / (n_data - n_active)``, and
+    ``ci95`` is ``pfit +/- 1.96 * pstd``.
+
     Examples
     --------
-    Fit a simple function:
-    
+    Fit the position and width of a Gaussian line; the amplitude is
+    absorbed by the least-squares scale:
+
+    >>> import numpy as np
+    >>> from torchspin import esfit, FitOptions
+    >>> x = np.linspace(-5, 5, 201)
     >>> def model(p):
-    ...     x = np.linspace(0, 10, 100)
-    ...     return p[0] * x + p[1]
-    >>> result = esfit(data, model, p0=[1.0, 0.0], vary=[2.0, 2.0])
-    
-    Fit with explicit bounds:
-    
-    >>> result = esfit(data, model, p0=[1.0, 0.0], lb=[0.0, -1.0], ub=[5.0, 1.0])
+    ...     return np.exp(-0.5 * ((x - p[0]) / p[1]) ** 2)
+    >>> data = 3.0 * model([0.5, 1.2])
+    >>> res = esfit(data, model, p0=[0.0, 1.0], vary=[2.0, 0.5],
+    ...             options=FitOptions(method='levmar'))
+    >>> np.round(res.pfit, 3).tolist(), round(res.scale, 3)
+    ([0.5, 1.2], 3.0)
+
+    Explicit bounds; ``lb == ub`` fixes the width, so only the position is
+    fitted:
+
+    >>> res = esfit(data, model, p0=[0.0, 1.2], lb=[-1.0, 1.2], ub=[1.0, 1.2],
+    ...             options=FitOptions(method='levmar'))
+    >>> res.pnames, res.p_fixed.tolist(), round(float(res.pfit[0]), 3)
+    (['p0'], [False, True], 0.5)
+
+    Dict style with a torchspin simulator: fit the Lorentzian line width of
+    a garlic spectrum (``lw = [GaussianFWHM, LorentzianFWHM]`` in mT; the
+    Gaussian width is fixed by ``vary = 0``):
+
+    >>> from torchspin import SpinSystem, Experiment, garlic
+    >>> exp = Experiment(mwFreq=9.5, Range=[335, 343], nPoints=256)
+    >>> _, data = garlic(SpinSystem(S=0.5, g=2.003, lw=[0.0, 0.5]), exp)
+    >>> p0 = {'Sys': SpinSystem(S=0.5, g=2.003, lw=[0.0, 0.4]), 'Exp': exp}
+    >>> res = esfit(data, garlic, p0, vary={'Sys': {'lw': [0.0, 0.3]}},
+    ...             options=FitOptions(method='levmar'))
+    >>> res.pnames, round(float(res.pfit[0]), 2)
+    (['Sys.lw[1]'], 0.5)
     """
     # 1. Validate inputs
     data = np.asarray(data).ravel()
