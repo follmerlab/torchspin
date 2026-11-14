@@ -186,7 +186,8 @@ not in torchspin's basis choice. Its cause is open; one candidate is the fast bu
 stop.
 
 **Exp. 8** (S = 1 and ¹⁴N + 2 ¹H at 100 ns, rhombic [10 5 2 4]). These systems are outside the rule,
-so the automatic result is plain Lanczos. See the note at the end of the Scope section.
+so the automatic result is plain Lanczos. S = 1: Lanczos vs direct cosine 1.000000, amplitude 1.0007.
+The three-nucleus direct solves were stopped unfinished (see the end of the Scope section).
 
 ## Scope
 
@@ -227,7 +228,7 @@ S = 1/2 with 0–2 nuclei. `highField` is false and no potential is present in a
 - **Two nuclei in MATLAB:** the code comment records fast against general + MpSymm with an amplitude
   ratio of 2.0024. That is 0.12 % beyond the identity, unexplained.
 
-Exp. 8: _results pending at the time of writing; see the commit that adds them._
+Exp. 8: for S = 1 (D = 100 MHz, E = 20 MHz, τc = 100 ns, LLMK [10 5 2 4]), the automatic plain Lanczos result equals the direct solve (cosine 1.000000, amplitude 1.0007). The three-nucleus cases (¹⁴N + 2 ¹H) at [10 5 2 4] and [6 0 2 2] did not finish their direct solves within about 30 minutes and were stopped. Out-of-scope convergence remains untested for more than two nuclei.
 
 ## Recommendation
 
