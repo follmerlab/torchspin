@@ -1,7 +1,8 @@
 """torchspin.lft milestone M2: DDN levels and g, ligand-field constructors, dn2sys -> pepper.
 
 Self-contained physics checks (closed forms), unit handling, gradients against finite
-differences, and parity with telser-tools (the source of the port) when it is installed.
+differences, and parity with telser-tools (the source of the port): live when it is importable,
+else its frozen outputs (data/telser/refs, see ``_telser_refs``).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import torch
 from torchspin import Experiment, Options, SpinSystem, lft
 from torchspin.lft import ddn
 from torchspin.lft.units import energy_factor
+from torchspin.tests import _telser_refs as R
 
 F64 = torch.float64
 CM_TO_MHZ = energy_factor("cm^-1", "MHz")
@@ -186,51 +188,83 @@ def test_ligand_field_gradient_flows_through_pepper():
 
 
 # ------------------------------------------------------------------------------ parity with telser-tools
-def _telser():
-    tt = pytest.importorskip("telser_tools.ddn")
-    from telser_tools.ddn import ligand_field as tlf
+def _C18():
     from telser_tools.ddn.hamiltonian import CODATA2018
-    return tt, tlf, CODATA2018
+    return dict(mu_b=CODATA2018.mu_b, g_e=CODATA2018.g_e, k_b=CODATA2018.k_b)
+
+
+def _consts(c):
+    return ddn.Constants(mu_b=c["mu_b"] * 10.0, g_e=c["g_e"], k_b=c["k_b"])    # cm^-1/G -> cm^-1/mT
+
+
+def _levels_inputs(n):
+    rng = np.random.default_rng(n)
+    v = rng.normal(size=(5, 5)) * 800.0
+    return v + v.T
+
+
+@R.oracle("ddn", cases=range(1, 10))
+def _telser_levels(n):
+    import telser_tools.ddn as tt
+    v = _levels_inputs(n)
+    p = tt.Parameters(B=820.0, C=3300.0, zeta=310.0, ligand_field=v, k=(0.9, 0.85, 0.8), alpha=60.0)
+    return dict(C18=_C18(), E0=tt.DnSystem(n).energies(p, None),
+                E1=tt.DnSystem(n).energies(p, np.array([1200.0, -500.0, 3000.0])))
 
 
 @pytest.mark.parametrize("n", range(1, 10))
 def test_levels_parity_with_telser_tools(n):
-    tt, tlf, C18 = _telser()
-    rng = np.random.default_rng(n)
-    v = rng.normal(size=(5, 5)) * 800.0
-    v = v + v.T
-    p = tt.Parameters(B=820.0, C=3300.0, zeta=310.0, ligand_field=v, k=(0.9, 0.85, 0.8), alpha=60.0)
-    consts = ddn.Constants(mu_b=C18.mu_b * 10.0, g_e=C18.g_e, k_b=C18.k_b)    # cm^-1/G -> cm^-1/mT
+    ref = R.ref(_telser_levels, n)
+    v = _levels_inputs(n)
     kw = dict(B=820.0, C=3300.0, zeta=310.0, V=torch.tensor(v), k=(0.9, 0.85, 0.8), alpha=60.0,
-              units="cm^-1", constants=consts)
-    for field_G in (None, np.array([1200.0, -500.0, 3000.0])):
-        ref = tt.DnSystem(n).energies(p, field_G)
+              units="cm^-1", constants=_consts(ref["C18"]))
+    for field_G, want in ((None, ref["E0"]), (np.array([1200.0, -500.0, 3000.0]), ref["E1"])):
         E = ddn.levels(n, field=None if field_G is None else torch.tensor(field_G / 10.0), **kw)
-        assert np.all(np.abs(E.numpy() - ref) <= np.maximum(1e-9, 1e-10 * np.abs(ref)))
+        assert np.all(np.abs(E.numpy() - want) <= np.maximum(1e-9, 1e-10 * np.abs(want)))
+
+
+_LIGS_DEG = [(90, 0, 10, 6000, 900, 700, 40, 30), (35, 120, 0, 5000, 800, 800, 0, 0), (150, 250, 70, 4000, 300, 500, 20, 10)]
+
+
+@R.oracle("ddn")
+def _telser_ligand_field():
+    from telser_tools.ddn import ligand_field as tlf
+    return dict(aom=tlf.aom([tlf.Ligand(*l) for l in _LIGS_DEG]),
+                cf={f"{geo}_{axis}": tlf.crystal_field(1200.0, 300.0, 80.0, 40.0, geometry=geo, axis=axis)
+                    for geo in ("Oh", "Td") for axis in ("tetragonal", "trigonal")})
 
 
 def test_ligand_field_parity_with_telser_tools():
-    _, tlf, _ = _telser()
-    ligs_deg = [(90, 0, 10, 6000, 900, 700, 40, 30), (35, 120, 0, 5000, 800, 800, 0, 0), (150, 250, 70, 4000, 300, 500, 20, 10)]
-    ref = tlf.aom([tlf.Ligand(*l) for l in ligs_deg])
+    ref = R.ref(_telser_ligand_field)
     ours = lft.aom([lft.Ligand.from_degrees(t, p, s, e_sigma=a, e_pi_x=b, e_pi_y=c, e_delta_x2y2=d, e_delta_xy=f)
-                    for t, p, s, a, b, c, d, f in ligs_deg])
-    np.testing.assert_allclose(ours.numpy(), ref, atol=1e-9)
+                    for t, p, s, a, b, c, d, f in _LIGS_DEG])
+    np.testing.assert_allclose(ours.numpy(), ref["aom"], atol=1e-9)
     for geo in ("Oh", "Td"):
         for axis in ("tetragonal", "trigonal"):
             np.testing.assert_allclose(lft.crystal_field(1200.0, 300.0, 80.0, 40.0, geometry=geo, axis=axis).numpy(),
-                                       tlf.crystal_field(1200.0, 300.0, 80.0, 40.0, geometry=geo, axis=axis), atol=1e-10)
+                                       ref["cf"][f"{geo}_{axis}"], atol=1e-10)
+
+
+@R.oracle("ddn", cases=[1, 3, 5, 7, 9])
+def _telser_kramers_g(n):
+    import telser_tools.ddn as tt
+    from telser_tools.ddn import ligand_field as tlf
+    out = []
+    for V in (tlf.crystal_field(1500.0), tlf.crystal_field(1500.0, 300.0, 50.0, 20.0)):
+        p = tt.Parameters(B=800, C=3200, zeta=300, ligand_field=V, k=(0.9, 0.85, 0.8))
+        sol = tt.DnSystem(n).solve(p)
+        isolated = bool(sol.energies[2] - sol.energies[1] >= 1.0)
+        out.append(dict(V=V, isolated=isolated, ggT=sol.g_tensor((0, 1))[1] if isolated else None))
+    return dict(C18=_C18(), cases=out)
 
 
 @pytest.mark.parametrize("n", [1, 3, 5, 7, 9])
 def test_kramers_g_parity_with_telser_tools(n):
-    tt, tlf, C18 = _telser()
-    consts = ddn.Constants(mu_b=C18.mu_b * 10.0, g_e=C18.g_e, k_b=C18.k_b)
-    for V in (tlf.crystal_field(1500.0), tlf.crystal_field(1500.0, 300.0, 50.0, 20.0)):
-        p = tt.Parameters(B=800, C=3200, zeta=300, ligand_field=V, k=(0.9, 0.85, 0.8))
-        sol = tt.DnSystem(n).solve(p)
-        if sol.energies[2] - sol.energies[1] < 1.0:
+    ref = R.ref(_telser_kramers_g, n)
+    consts = _consts(ref["C18"])
+    for c in ref["cases"]:
+        if not c["isolated"]:
             continue
-        g = ddn.g_tensor(n, B=800.0, C=3200.0, zeta=300.0, V=torch.tensor(V), k=(0.9, 0.85, 0.8),
+        g = ddn.g_tensor(n, B=800.0, C=3200.0, zeta=300.0, V=torch.tensor(c["V"]), k=(0.9, 0.85, 0.8),
                          units="cm^-1", constants=consts)
-        np.testing.assert_allclose(g.ggT.numpy(), sol.g_tensor((0, 1))[1], atol=1e-10)
+        np.testing.assert_allclose(g.ggT.numpy(), c["ggT"], atol=1e-10)
