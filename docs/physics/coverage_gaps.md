@@ -82,10 +82,9 @@ written.
     - `test_pepper_beta.py`: two conditional asserts that can pass vacuously.
     - Proposed: re-measure each case and tighten it to its measured value, or record the reason.
 13. **CI scope.**
-    - The full-suite job does not set `TORCHSPIN_STRICT_REFS`, although its comment says a missing
-      reference is a hard failure.
-    - CUDA tests and the two expensive cupc cases never run in CI.
-    - Proposed: set the variable in `python-tests.yml`, and run a periodic CUDA job.
+    - CUDA tests and the two expensive cupc cases never run in CI. (The full-suite job does set
+      `TORCHSPIN_STRICT_REFS`, so a missing reference file fails it.)
+    - Proposed: a periodic CUDA job.
 14. **After B85 (pending).**
     - About 168 EasySpin comparisons become strict xfails. That removes positive R evidence for the
       projection-based paths (pepper, salt).

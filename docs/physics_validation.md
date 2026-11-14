@@ -57,3 +57,17 @@ with central differences of that simulator.
   - [coverage gaps](physics/coverage_gaps.md): what the tests do not yet cover.
   - [manuscript claims](physics/manuscript_claims.md): results measured on the manuscript's release
     (v0.2.2) compared with the current code.
+
+```{toctree}
+:hidden:
+
+physics/pepper
+physics/garlic
+physics/chili
+physics/salt
+physics/pulse
+physics/cardamom
+physics/curry_blochsteady
+physics/esfit
+physics/ligand_field
+```
