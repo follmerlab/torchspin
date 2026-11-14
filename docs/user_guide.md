@@ -2,7 +2,7 @@
 
 Guides that go beyond a single function: what can go wrong, what is and is not
 ported, and the ligand-field tools.  For the parameters of a particular
-function or class, see the docstrings.
+function or class, see the [API reference](api/index.rst).
 
 - [Pitfalls](pitfalls.md): valid settings that quietly degrade a result, and
   how torchspin warns about them.

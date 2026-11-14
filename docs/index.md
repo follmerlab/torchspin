@@ -79,4 +79,5 @@ compare against the stored references in `tests/data`; no MATLAB installation ne
 :maxdepth: 2
 
 user_guide
+api/index
 ```
