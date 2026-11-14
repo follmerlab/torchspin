@@ -1533,17 +1533,46 @@ from earlier development snapshots should pass `seed=` explicitly.
   The labels also depend on `Exp.Range` through `centerB`. In the regime AStrain is meant
   for (one dominant hyperfine coupling, hyperfine levels ordered by mI) the order does not
   change and the model matches an explicit ensemble.
-- **Scope.** First nucleus only, one electron spin; the same mI for every orientation in
+- **Scope.** First nucleus only, one electron spin (more than one electron spin raises
+  `ValueError` in field and frequency sweeps since 0.9.31, as EasySpin; before, field sweeps
+  without gStrain dropped AStrain silently, B89); the same mI for every orientation in
   pepper, pepper_autograd, `Opt.Method='hybrid'` (core system) and `resfields`/
   `resfields_batch`. `compute_strain_widths_batch` requires `mI_levels` with AStrain;
   `compute_strain_widths` (single orientation) takes `Range` or `mI_levels`, and without
-  either labels the levels at its `B0`. Frequency sweeps follow EasySpin's
-  `resfreqs_matrix.m` instead, which does not use mI (operator derivatives
-  `AStrain_k I_k S_k` evaluated per orientation).
+  either labels the levels at its `B0`. Frequency sweeps do not use mI, like EasySpin's
+  `resfreqs_matrix.m`: they evaluate the operator derivatives dnu/dA_k per orientation,
+  along the `AFrame` axes (§ Frequency sweeps — AStrain along the AFrame axes).
 - Validated: per-orientation widths against EasySpin `resfields` to 1e-5 relative (incl.
   θ = 90° and a tilted AFrame) and pepper/pepper_autograd spectra to cosine ≥ 0.999996
   (`test_astrain_mi_model.py`). A 63Cu system with a tilted `AFrame` has a separate,
   strain-independent spectrum difference from EasySpin (strict xfail there).
+
+## Frequency sweeps — AStrain along the AFrame axes: deliberate deviation from EasySpin (0.9.31)
+
+In a frequency sweep the AStrain width of a transition (u, v) is
+`sqrt(Σ_k (AStrain_k · m((R'S)_k (R'I)_k))²)`, `m(op) = <v|op|v> − <u|op|u>`, R = R_A2M =
+erot(AFrame)' (first electron, first nucleus): AStrain_k times dnu/dA_k, the derivative of the
+transition frequency with respect to the hyperfine principal value A_k (Hellmann-Feynman). The
+term is differentiable in `AStrain` and `AFrame` (`compute_strain_widths_freq_batch`).
+
+- **EasySpin.** resfreqs_matrix.m (567-583) builds `I_k = Σ_c R(c,k) I_c` but
+  `S_k = Σ_c R(k,c) S_c` (the transpose). This is dnu/dA_k only when R is symmetric up to signs
+  (AFrame = 0, a swap of two axes); a cyclic axis permutation or a general tilt gives other
+  widths. EasySpin (GitHub main, MATLAB R2024b) for S = 1/2, g = 2, 63Cu A = [30 60 200] MHz,
+  AFrame = [0.4 0.9 -0.3], AStrain = [10 20 40] MHz, 340 mT, field along
+  [0.6816 0.5741 0.4536] (φ = 0.7, θ = 1.1; Exp.SampleFrame = [0 -1.1 -0.7]): 21.44, 21.86,
+  7.20 and 7.24 MHz for the two outermost and the two next allowed lines; eigenvalue
+  derivatives and torchspin: 56.85, 56.48, 18.92 and 18.87 MHz. With AFrame = [π/2 π/2 0]
+  (cyclic) EasySpin's formula is off by up to 7.3 MHz on the same system.
+- **History.** Before 0.9.31 torchspin used the molecular axes (`AStrain_c I_c S_c`), i.e.
+  ignored `AFrame` (19.0, 18.5, 6.5 and 6.0 MHz for the lines above), and `float(AStrain)` cut
+  the gradient (B90). `AFrame = 0` gives the same values as before.
+- **Validated** (`test_freq_astrain_frame.py`): widths of all transitions against eigenvalue
+  central differences to 8e-8 MHz at a generic tilt; a pepper frequency sweep with
+  AFrame = [0 π/2 0] against the untilted system with A and AStrain permuted to 1.4e-13
+  relative; `AStrain` and `AFrame` gradients against converged central differences.
+- gStrain or AStrain with more than one electron spin raises `ValueError`, as in EasySpin
+  (resfreqs_matrix.m 102-106; before 0.9.31 the first electron's strains were used, B89).
 
 ## Autograd — differentiable pepper
 

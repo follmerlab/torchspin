@@ -87,6 +87,10 @@ def resfields_batch(
         the previous sequential implementation.
     """
     M = phi_batch.shape[0]
+    if sys is not None:
+        # AStrain with > 1 electron raises also when no line is in range (B89)
+        from torchspin.strainwidth import _check_multi_electron_strain
+        _check_multi_electron_strain(sys)
     if M == 0:
         return ([], [], [], []) if return_pairs else ([], [], [])
 

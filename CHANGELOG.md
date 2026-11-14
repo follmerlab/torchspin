@@ -75,6 +75,89 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   residual < 1e-14), the regular steady state bit-identical to `scipy.linalg.solve`, a
   non-overlapping negative delay, valid `ham_ee`/`ham_nn` indices, the EasySpin zero returns of
   `ham_nn`, and a non-JEOL unknown extension.
+## [0.9.31] — 2026-11-14
+
+### Fixed
+
+- **Frequency-sweep AStrain widths follow `AFrame` and are differentiable in `AStrain` (B90).**
+  `compute_strain_widths_freq_batch` built the AStrain operators as `float(AStrain[c]) * I_c S_c`
+  along the molecular axes: `AFrame` was ignored, and `float()` cut the gradient with respect to
+  `AStrain` (an `AFrame` gradient came only through the eigenvectors). The term of principal
+  value k is now `AStrain_k * m((R'S)_k (R'I)_k)` with R = R_A2M = erot(AFrame)' (as in the
+  field sweep), i.e. AStrain_k times dnu/dA_k, the derivative of the transition frequency with
+  respect to the principal value, with `AStrain` and `AFrame` on the graph. Numbers (S = 1/2,
+  g = 2, 63Cu A = [30 60 200] MHz, AFrame = [0.4 0.9 -0.3], AStrain = [10 20 40] MHz, 340 mT,
+  φ = 0.7, θ = 1.1): the outermost allowed lines had 19.0 and 18.5 MHz instead of 56.9 and
+  56.5 MHz, the next allowed lines 6.5 and 6.0 instead of 18.9 MHz; now every transition equals
+  sqrt(Σ_k (AStrain_k dnu/dA_k)²) from eigenvalue central differences to 8e-8 MHz. A pepper
+  frequency sweep (A = [30 60 450], AStrain = [10 20 80] MHz) with AFrame = [0 π/2 0] equals the
+  untilted system with A and AStrain permuted to 1.4e-13 relative (before: 0.31); with
+  AFrame = [0.4 0.9 -0.3] the spectrum changes by 0.17 relative.
+  Gradients with respect to `AStrain` and `AFrame` match converged central differences to 3e-11
+  and 7e-10 relative. `AFrame = 0` is unchanged (the same operators; pepper spectra with
+  H/g/A strain identical to 3e-16). A width that is exactly zero now has a finite gradient
+  (sqrt guarded at 0) instead of NaN.
+- **Deliberate deviation from EasySpin.** EasySpin's resfreqs_matrix.m (567-583) rotates I with
+  R(c,k) but S with R(k,c), the transpose. That equals dnu/dA_k only when R is symmetric up to
+  signs (AFrame = 0, a swap of two axes such as [0 π/2 0]); a cyclic axis permutation
+  ([π/2 π/2 0]) is already off by 7.3 MHz on the system above, the tilt above by up to 35 MHz.
+  EasySpin (GitHub main, MATLAB
+  R2024b), `resfreqs_matrix` for the system above with Exp.SampleFrame = [0 -1.1 -0.7] (field
+  along [0.6816 0.5741 0.4536] in the molecular frame, as φ = 0.7, θ = 1.1), gives 21.44 and
+  21.86 MHz for the outermost allowed lines and 7.20 and 7.24 MHz for the next, against 56.85,
+  56.48, 18.92 and 18.87 MHz from eigenvalue derivatives; torchspin returns the latter. See
+  KNOWN_LIMITATIONS.md.
+- **`AStrain` (field and frequency sweeps) and `gStrain` (frequency sweeps) with more than one
+  electron spin raise `ValueError` (B89),** as EasySpin does (resfields.m 89-92,
+  resfreqs_matrix.m 102-106). Before, a field sweep raised only together with `gStrain` and
+  otherwise dropped `AStrain` silently (also `pepper_autograd`), and a frequency sweep applied the
+  first electron's `gStrain` and `AStrain`. The check is in `resfields_batch` (also when no line
+  is in range), `compute_strain_widths_batch` and `compute_strain_widths_freq_batch`.
+  Multi-electron `gStrain` in field sweeps (per-electron model) is unchanged.
+
+### Tests
+
+- New `torchspin/tests/test_freq_astrain_frame.py` (15 tests; 12 fail before this change):
+  widths of all transitions against eigenvalue central differences at a generic `AFrame`; a
+  pepper frequency sweep with an axis-swap `AFrame` against the permuted untilted system;
+  `AStrain` and `AFrame` gradients against converged central differences of an independent
+  Hellmann-Feynman implementation (step-size table in the test); `AFrame = 0` against the
+  molecular-axis formula; a finite gradient at zero width; the B89 `ValueError` in every path.
+## [0.9.30] — 2026-11-14
+
+### Fixed
+
+- **`lft.ddnpow.simulate`: wrong spectrum gradients on the default Rayleigh-Ritz path
+  (`subspace=True`) (B94).** The sweep is solved in a detached basis Q (low eigenvectors at three
+  fields and at zero field). The eigenvectors were differentiated inside the fixed Q only, so
+  their components outside Q were dropped, and the Ritz problem coupled the low states to the
+  SVD-mixture directions of Q (not eigenvectors) with spurious gaps. Transition energies were
+  right (Hellmann-Feynman on accurate Ritz vectors); transition probabilities were not, whenever
+  a parameter moves the low states' admixture of states outside Q. d^7 Co(II) (120 states, four
+  AOM ligands, X band, reported from the YangHolonomy co_kramers_epr survey): d/d e_sigma
+  +27.7 % and +9.9 % at 160 and 240 mT against the full basis (which agrees with central
+  differences); at one orientation dP/d e_sigma -2.18e-5 against -4.157e-4. The derivatives now
+  come from first-order perturbation theory around the detached Ritz pairs, as zero-valued graph
+  terms: energies by Hellmann-Feynman on the kk low Ritz vectors (level mean at degeneracies, as
+  `eigh_gauge`), eigenvectors from the couplings inside that cluster plus a reduced-resolvent
+  solve in its complement, at the (orientation, field) points that enter the spectrum. Probe:
+  6.6e-10 and 2.9e-9 relative to the full-basis gradient, reverse and forward mode. Jacobians
+  (e_sigma, zeta, Racah B, k) of a d^7 test case, scaled error against the full basis:
+  absorption 1.6e-1 -> 1.7e-9, field derivative 6.5e-2 -> 3.5e-9, Lorentzian at 4 K
+  2.8e-2 -> 1.7e-9. The module docstring's error estimate (O((Ritz error/gap)^(1/2)), measured
+  on d^8 only) was wrong and is replaced.
+- Spectra are unchanged: bit-identical with and without parameters on the graph, and to 0.9.29.
+  Runs without graph inputs skip the extra work (same cost); with graph inputs the probe sweep
+  (igloo 6, 781 fields) takes 6.1 s against 1.5 s before (wrong) and 55 s with
+  `subspace=False`. `fdmr` and `subspace=False` are not affected.
+
+### Tests
+
+- `test_lft_ddnpow.py`: `test_d7_ritz_gradients_match_full_basis` (absorption, field derivative,
+  Lorentzian 4 K; bound 1e-7), `test_d7_ritz_gradients_vs_central_differences` (Richardson,
+  bound 1e-5; central differences of this spectrum bottom out at ~1e-6) and
+  `test_d7_ritz_values_identical_on_and_off_graph` (bit identity, reverse = forward mode). The
+  first two fail on 0.9.29.
 
 ## [0.9.29] — 2026-11-13
 
