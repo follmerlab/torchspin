@@ -28,6 +28,29 @@ from torchspin.constants import PLANCK, BMAGN, NMAGN
 from torchspin.rotations import erot
 
 
+def _check_nonzero_hyperfine(sys: SpinSystem, iNuc: int, A_mat: torch.Tensor) -> None:
+    """Second-order terms need inv(A): raise as EasySpin for a zero principal value.
+
+    EasySpin endorfrq_perturb.m has no check: inv(A) (:176) warns "Matrix is
+    singular" and the frequencies come out NaN.  EasySpin resfreqs_perturb.m and
+    resfields_perturb.m:120-127 raise 'All hyperfine coupling constants must be
+    non-zero.' for any zero entry of a diagonal ``Sys.A``; torchspin raises that
+    error here too, rather than NaN.  torchspin substituted a zero matrix for
+    inv(A) instead, so the second-order result was silently wrong (B79).  A singular full ``Sys.A`` raises the same
+    error.  Only the second order uses the inverse; the first order still runs.
+    Same check as ``resfields_perturb`` (B65).
+    """
+    if sys.fullA:
+        singular = bool(torch.linalg.matrix_rank(A_mat.detach()) < 3)
+    else:
+        singular = bool((sys.A[iNuc, :].detach() == 0).any())
+    if singular:
+        raise ValueError(
+            f"endorfrq_perturb: All hyperfine coupling constants must be non-zero "
+            f"(nucleus {iNuc + 1}, {sys.Nucs[iNuc]}): second-order perturbation theory "
+            "needs inv(A). Use a small non-zero value, order=1, or matrix diagonalization.")
+
+
 def endorfrq_perturb(
     sys: SpinSystem,
     B_field_mT: float,
@@ -50,6 +73,8 @@ def endorfrq_perturb(
         molecular frame is ``n = (sin θ cos φ, sin θ sin φ, cos θ)``.
     order:
         Perturbation order: 1 or 2 (default 2).
+        Second order needs inv(A): a zero hyperfine principal value (or a
+        singular full A) raises ``ValueError``.
     nuclei:
         List of 0-based nucleus indices to include.  Default: all nuclei.
     opt:
@@ -119,7 +144,7 @@ def endorfrq_perturb(
         g = sys.g[:3, :].to(dt)
     else:
         g_diag = torch.diag(sys.g[0, :].to(dt))
-        R_g2M = erot(sys.gFrame[0, :].detach().tolist()).T
+        R_g2M = erot(sys.gFrame[0, :]).T
         Rg = torch.as_tensor(R_g2M, dtype=dt, device=device)
         g = Rg @ g_diag @ Rg.T
 
@@ -136,7 +161,7 @@ def endorfrq_perturb(
             D_mat = sys.D[:3, :].to(dt)
         else:
             D_diag = torch.diag(sys.D[0, :].to(dt))
-            R_D2M = erot(sys.DFrame[0, :].tolist()).T
+            R_D2M = erot(sys.DFrame[0, :]).T
             RD = torch.as_tensor(R_D2M, dtype=dt, device=device)
             D_mat = RD @ D_diag @ RD.T
         # Traceless (Iwasaki requirement)
@@ -197,7 +222,7 @@ def endorfrq_perturb(
             A_mat = sys.A[3 * iNuc : 3 * iNuc + 3, :].to(dt)
         else:
             A_diag = torch.diag(sys.A[iNuc, :].to(dt))
-            R_A2M = erot(sys.AFrame[iNuc, :].tolist()).T
+            R_A2M = erot(sys.AFrame[iNuc, :]).T
             RA = torch.as_tensor(R_A2M, dtype=dt, device=device)
             A_mat = RA @ A_diag @ RA.T
 
@@ -213,7 +238,7 @@ def endorfrq_perturb(
             else:
                 Q_diag = torch.diag(sys.Q[iNuc, :].to(dt))
                 if hasattr(sys, 'QFrame') and sys.QFrame is not None:
-                    R_Q2M = erot(sys.QFrame[iNuc, :].tolist()).T
+                    R_Q2M = erot(sys.QFrame[iNuc, :]).T
                     RQ = torch.as_tensor(R_Q2M, dtype=dt, device=device)
                     Q_mat = RQ @ Q_diag @ RQ.T
                 else:
@@ -224,10 +249,8 @@ def endorfrq_perturb(
 
         # Second-order A invariants (independent of mS and mI)
         if order >= 2:
-            try:
-                invA = torch.linalg.inv(A_mat)
-            except Exception:
-                invA = torch.zeros(3, 3, dtype=dt, device=device)
+            _check_nonzero_hyperfine(sys, iNuc, A_mat)
+            invA = torch.linalg.inv(A_mat)
             trAA = float((A_mat.T @ A_mat).trace())
             detA = float(torch.linalg.det(A_mat))
             A_u_norm_sq = float((A_mat @ u).dot(A_mat @ u))

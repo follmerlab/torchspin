@@ -92,9 +92,12 @@ def ham_ez(
             g = torch.diag(pre[i0, :]).to(device=device)  # (3,3) diagonal
 
         # Rotate g into molecular frame
-        ang = sys.gFrame[i0].tolist()
-        if any(a != 0.0 for a in ang):
-            R_M2g = erot(ang, device=device)
+        # angles stay a tensor (differentiable erot); the detached list only
+        # decides whether to rotate
+        ang_t = sys.gFrame[i0]
+        ang = ang_t.detach().tolist()
+        if ang_t.requires_grad or any(a != 0.0 for a in ang):
+            R_M2g = erot(ang_t, device=device)
             R_g2M = R_M2g.T
             g = R_g2M.double() @ g.double() @ R_g2M.T.double()
 

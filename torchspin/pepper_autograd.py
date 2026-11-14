@@ -19,11 +19,26 @@ powder average here is smooth at the same GridSize as pepper, the forward output
 equals pepper's to rounding, and the harmonic/line shape are EasySpin's.
 
 Supported: field sweeps, ``Opt.Method='matrix'`` and ``'perturb*'`` (pepper's
-perturbation route: single electron, no strain), every grid symmetry, ``GridSize`` int or ``[N, Ninterp]``,
+perturbation route: single electron, no strain), every grid symmetry (O3, i.e. isotropic
+systems: per-line templates as in pepper), ``GridSize`` int or ``[N, Ninterp]``,
 ``Harmonic`` 0-2, global ``lw``/``lwpp`` (Gaussian and/or Lorentzian, tensors
 allowed), ``Temperature``, strains, ``Opt.Transitions`` (matrix route only).  Strains (HStrain, gStrain, AStrain on the graph; DStrain magnitudes are
 constants) use the summation branch.  ``ModAmp`` (pseudo-modulation, torch).  Not yet: ``mwPhase``, ordering,
 photoselection, crystals, frequency sweeps (these raise ``NotImplementedError``).
+
+Grid symmetry (``GridSymmetry='auto'``): :func:`torchspin.hamsymm.grid_symmetry`, which
+is ``hamsymm`` unless a symmetry input (tensor, frame, high-order term, strain) requires
+grad.  Then the grid has the symmetry of the differentiated *parameterization* (B1):
+the autograd leaves behind those inputs get a generic perturbation and each input moves
+along ``J @ dp``.  A scalar g keeps O3, ``[g_perp, g_perp, g_par]`` built from two
+leaves keeps Dinfh, but an axial g given as three independent numbers gets D2h, an
+isotropic one D2h, a differentiated frame Ci -- otherwise the gradient along the
+symmetry-breaking directions would be wrong.  Such a run's spectrum then differs from the
+forward-only spectrum (grad-free inputs) by the grid discretization error: 0.1 % for a
+Cu(II) case at GridSize [31, 4], but up to ~17 % for an isotropic system, whose lines the
+projection bins where O3 draws exact templates.  Set ``Options.GridSymmetry`` explicitly
+to compare a gradient run with a forward-only one, or parameterize the symmetry you mean
+(a scalar g, shared leaves).
 """
 from __future__ import annotations
 
@@ -37,7 +52,7 @@ import torch
 
 from torchspin.experiment import Experiment, Options, auto_batch_size
 from torchspin.ham import ham
-from torchspin.hamsymm import hamsymm
+from torchspin.hamsymm import grid_symmetry
 from torchspin.resfields_batch import resfields_batch
 from torchspin.sphgrid import sphgrid
 from torchspin.spinsystem import SpinSystem
@@ -502,6 +517,11 @@ def _check_supported(sys: SpinSystem, exp: Experiment, opt: Options) -> None:
     mod_amp = getattr(exp, 'ModAmp', 0.0)
     if mod_amp is not None and float(torch.as_tensor(mod_amp).detach()) > 0 and int(exp.Harmonic) < 1:
         raise ValueError('With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.')
+    if torch.is_tensor(mod_amp) and mod_amp.requires_grad and float(mod_amp.detach()) <= 0:
+        # ModAmp = 0 switches from pseudo-modulation to the plain field-derivative
+        # harmonic: the spectrum is discontinuous there, so no gradient exists (B92)
+        raise ValueError('pepper_autograd: Exp.ModAmp requires grad but is <= 0; the spectrum is not '
+                         'differentiable in ModAmp there (ModAmp = 0 switches off field modulation).')
     if float(getattr(exp, 'mwPhase', 0.0) or 0.0) != 0.0:
         raise NotImplementedError('pepper_autograd: Exp.mwPhase (dispersion) is not supported.')
     for name in ('Ordering', 'lightBeam', 'SampleFrame', 'CrystalSymmetry', 'MolFrame'):
@@ -528,6 +548,20 @@ def _check_supported(sys: SpinSystem, exp: Experiment, opt: Options) -> None:
                                   'nucleus separately in Nucs.')
     if int(exp.Harmonic) not in (0, 1, 2):
         raise ValueError('Harmonic must be 0, 1 or 2.')
+
+
+def _check_facets(grid_sym, N, n_orient, tri, facet_w) -> None:
+    """Refuse an empty or non-finite triangulation (B66).  Projecting onto no
+    facets gives an all-zero spectrum with zero gradient, which is
+    indistinguishable from "no resonance in range"; every grid that reaches the
+    projection has orientations, so an empty set of facets is always a bug."""
+    w = np.asarray(facet_w, dtype=float)
+    n_fac = w.size if tri is None else int(np.asarray(tri).reshape(-1, 3).shape[0])
+    if n_fac == 0 or w.size != n_fac or not np.all(np.isfinite(w)) or not np.any(w > 0):
+        raise RuntimeError(
+            f"pepper_autograd: the '{grid_sym}' grid with GridSize {N} ({n_orient} "
+            f"orientations) has no usable facets for the powder projection "
+            f"({n_fac} facets, weights {w.tolist()[:4]}); refusing to return an all-zero spectrum.")
 
 
 def pepper_autograd(sys_or_list, exp: Experiment, opt: Optional[Options] = None) -> tuple[torch.Tensor, torch.Tensor]:
@@ -587,16 +621,40 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
     H0, mux, muy, muz = ham(sys)
     H0, mux, muy, muz = H0.to(device), mux.to(device), muy.to(device), muz.to(device)
 
+    # Options.QuadraticZeeman: lB = 2, 3 Sys.Ham terms in the matrix search (the
+    # implicit-function gradient at the Newton step then uses the full slope).
+    # Both this and Opt.Transitions apply to the powder and the Exp.Orientations
+    # paths, as in pepper's _resonances.
+    zho = None
+    if bool(getattr(opt, 'QuadraticZeeman', False)):
+        from torchspin.ham_ezho import field_nonlinear_zeeman_ops, has_field_nonlinear_zeeman
+        if has_field_nonlinear_zeeman(sys):
+            if str(opt.Method).startswith('perturb'):
+                raise NotImplementedError(
+                    f"pepper_autograd: Options.Method='{opt.Method}' does not support "
+                    f"Options.QuadraticZeeman=True with field-quadratic/cubic Sys.Ham terms; "
+                    f"use Method='matrix'.")
+            zho = tuple(None if g is None else g.to(device) for g in field_nonlinear_zeeman_ops(sys))
+    # Opt.Transitions (as in pepper): user level pairs replace the pre-selection;
+    # 'all' also switches the intensity post-selection off
+    user_tr = getattr(opt, 'Transitions', None)
+    if user_tr is not None and str(opt.Method).startswith('perturb'):
+        raise ValueError("Options.Transitions cannot be used with perturbation theory "
+                         f"(Options.Method='{opt.Method}'); use Method='matrix'.")
+    user_pairs, trans_all = _pep._user_transitions(user_tr, H0.shape[0]) if user_tr is not None else (None, False)
+
     user_ori = _pep._user_orientations(exp)
     if user_ori is not None:
         return _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori,
-                                    strain_lorentz=strain_lorentz)
+                                    strain_lorentz=strain_lorentz, zeeman_ho=zho,
+                                    pairs=user_pairs, trans_all=trans_all)
 
     # Grid symmetry and knots (discrete; detached)
     grid_sym = opt.GridSymmetry
     R_sym2mol = torch.eye(3, dtype=_F64)
     if grid_sym in ('auto', '', None):
-        grid_sym, R_sym2mol = hamsymm(sys)
+        # grid valid along the differentiated parameterization (B1)
+        grid_sym, R_sym2mol = grid_symmetry(sys)
     N_coarse, N_interp = opt.grid_size_coarse, opt.grid_size_interp
     nfKnots = (N_coarse - 1) * N_interp + 1 if N_interp > 1 else N_coarse
     phi_arr, theta_arr, _, _ = sphgrid(grid_sym, N_coarse)
@@ -620,26 +678,18 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
     use_perturb = (str(opt.Method).startswith('perturb') and sys.nElectrons == 1
                    and not strain_present and not needs_exact_boltz)
     all_B, all_I, all_P, all_Wl = [None] * n_orient, [None] * n_orient, [None] * n_orient, [None] * n_orient
-    # Options.QuadraticZeeman: lB = 2, 3 Sys.Ham terms in the matrix search (the
-    # implicit-function gradient at the Newton step then uses the full slope).
-    zho = None
-    if bool(getattr(opt, 'QuadraticZeeman', False)):
-        from torchspin.ham_ezho import field_nonlinear_zeeman_ops, has_field_nonlinear_zeeman
-        if has_field_nonlinear_zeeman(sys):
-            if str(opt.Method).startswith('perturb'):
-                raise NotImplementedError(
-                    f"pepper_autograd: Options.Method='{opt.Method}' does not support "
-                    f"Options.QuadraticZeeman=True with field-quadratic/cubic Sys.Ham terms; "
-                    f"use Method='matrix'.")
-            zho = tuple(None if g is None else g.to(device) for g in field_nonlinear_zeeman_ops(sys))
-    # Opt.Transitions (as in pepper): user level pairs replace the pre-selection;
-    # 'all' also switches the intensity post-selection off
-    user_tr = getattr(opt, 'Transitions', None)
-    if user_tr is not None and str(opt.Method).startswith('perturb'):
-        raise ValueError("Options.Transitions cannot be used with perturbation theory "
-                         f"(Options.Method='{opt.Method}'); use Method='matrix'.")
-    user_pairs, trans_all = _pep._user_transitions(user_tr, H0.shape[0]) if user_tr is not None else (None, False)
     post_thr = 0.0 if trans_all else float(opt.Threshold)
+
+    if grid_sym == 'O3':
+        # Isotropic system, one orientation (pepper's O3 branch, EasySpin
+        # ~anisotropicSpectrum): a sphere has no facets to project, so every line
+        # gets an exact template at its exact position.  That is the
+        # Exp.Orientations stick sum with the single O3 orientation (weight 4π,
+        # i.e. w = 1), with the same resonance search, templates and harmonic.
+        w_o3 = torch.ones(n_orient, dtype=_F64, device=device)
+        return _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, (phi_arr, theta_arr, w_o3),
+                                    strain_lorentz=strain_lorentz, zeeman_ho=zho,
+                                    pairs=user_pairs, trans_all=trans_all)
     if use_perturb:
         from torchspin.resfields_perturb import resfields_perturb_batch
         _w = B_hi - B_lo
@@ -705,6 +755,7 @@ def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> t
         B_f, I_f, W_f, theta_final, N_final = B_c, I_c, W_c, theta_sym, N_coarse
 
     tri, facet_w = _pep._facets(grid_sym, N_final, theta_final)
+    _check_facets(grid_sym, N_final, n_orient, tri, facet_w)
     facet_w_t = torch.as_tensor(np.asarray(facet_w, dtype=float), dtype=_F64, device=device)
     if not has_strain:
         # Projection (density) and χ integral
@@ -793,13 +844,16 @@ def _lorentzian_bins_t(x: torch.Tensor, pos: torch.Tensor, fwhm: torch.Tensor, a
     return out
 
 
-def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, strain_lorentz=False):
+def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, strain_lorentz=False,
+                         zeeman_ho=None, pairs=None, trans_all=False):
     """``Exp.Orientations`` on the graph: the stick sum of
     ``pepper._pepper_single``'s orientation branch — χ-averaged resonances at the
     given molecular-frame field directions, amplitude I·4π·w, per-line templates
     (strain width or Sys.lw(1) Gaussian, else Sys.lw(2) Lorentzian), the rest of
-    Sys.lw convolved, harmonic as in pepper.  Differentiable in the spin-system
-    tensors, Sys.lw and the orientation weights."""
+    Sys.lw convolved, harmonic as in pepper.  ``zeeman_ho`` (Options.QuadraticZeeman)
+    and ``pairs`` (Opt.Transitions; ``trans_all``: 'all', Threshold 0) go to the
+    resonance search as in pepper.  Differentiable in the spin-system tensors,
+    Sys.lw and the orientation weights."""
     device = H0.device
     nPoints = x.shape[0]
     phi, theta, w = user_ori
@@ -825,10 +879,12 @@ def _orientations_single(sys, exp, opt, x, dx, H0, mux, muy, muz, user_ori, stra
             Bs.append(B_list[k][keep]); Is.append(I_list[k][keep])
             ks.append(torch.full((int(keep.sum()),), k, dtype=torch.long, device=device))
     else:
+        opt_rf = _dc_replace(opt, Threshold=0.0) if trans_all and opt.Threshold != 0 else opt
         batch = auto_batch_size(opt.BatchSize, H0.shape[0], n_orient)
         for s0 in range(0, n_orient, batch):
             e0 = min(s0 + batch, n_orient)
-            B_list, I_list, W_list = resfields_batch(H0, mux, muy, muz, phi[s0:e0], theta[s0:e0], exp, opt, sys=sys)
+            B_list, I_list, W_list = resfields_batch(H0, mux, muy, muz, phi[s0:e0], theta[s0:e0], exp, opt_rf, sys=sys,
+                                                     pairs=pairs, zeeman_ho=zeeman_ho)
             for j in range(e0 - s0):
                 b = B_list[j]
                 if b is None or b.numel() == 0:
