@@ -14,6 +14,42 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.30] — 2026-11-14
+
+### Fixed
+
+- **`lft.ddnpow.simulate`: wrong spectrum gradients on the default Rayleigh-Ritz path
+  (`subspace=True`) (B94).** The sweep is solved in a detached basis Q (low eigenvectors at three
+  fields and at zero field). The eigenvectors were differentiated inside the fixed Q only, so
+  their components outside Q were dropped, and the Ritz problem coupled the low states to the
+  SVD-mixture directions of Q (not eigenvectors) with spurious gaps. Transition energies were
+  right (Hellmann-Feynman on accurate Ritz vectors); transition probabilities were not, whenever
+  a parameter moves the low states' admixture of states outside Q. d^7 Co(II) (120 states, four
+  AOM ligands, X band, reported from the YangHolonomy co_kramers_epr survey): d/d e_sigma
+  +27.7 % and +9.9 % at 160 and 240 mT against the full basis (which agrees with central
+  differences); at one orientation dP/d e_sigma -2.18e-5 against -4.157e-4. The derivatives now
+  come from first-order perturbation theory around the detached Ritz pairs, as zero-valued graph
+  terms: energies by Hellmann-Feynman on the kk low Ritz vectors (level mean at degeneracies, as
+  `eigh_gauge`), eigenvectors from the couplings inside that cluster plus a reduced-resolvent
+  solve in its complement, at the (orientation, field) points that enter the spectrum. Probe:
+  6.6e-10 and 2.9e-9 relative to the full-basis gradient, reverse and forward mode. Jacobians
+  (e_sigma, zeta, Racah B, k) of a d^7 test case, scaled error against the full basis:
+  absorption 1.6e-1 -> 1.7e-9, field derivative 6.5e-2 -> 3.5e-9, Lorentzian at 4 K
+  2.8e-2 -> 1.7e-9. The module docstring's error estimate (O((Ritz error/gap)^(1/2)), measured
+  on d^8 only) was wrong and is replaced.
+- Spectra are unchanged: bit-identical with and without parameters on the graph, and to 0.9.29.
+  Runs without graph inputs skip the extra work (same cost); with graph inputs the probe sweep
+  (igloo 6, 781 fields) takes 6.1 s against 1.5 s before (wrong) and 55 s with
+  `subspace=False`. `fdmr` and `subspace=False` are not affected.
+
+### Tests
+
+- `test_lft_ddnpow.py`: `test_d7_ritz_gradients_match_full_basis` (absorption, field derivative,
+  Lorentzian 4 K; bound 1e-7), `test_d7_ritz_gradients_vs_central_differences` (Richardson,
+  bound 1e-5; central differences of this spectrum bottom out at ~1e-6) and
+  `test_d7_ritz_values_identical_on_and_off_graph` (bit identity, reverse = forward mode). The
+  first two fail on 0.9.29.
+
 ## [0.9.29] — 2026-11-13
 
 ### Fixed
