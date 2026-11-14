@@ -6,8 +6,8 @@ from parameter tensors and, by default (``method='pepper'``), evaluates it with
 (resonance-field search with transition tracking, EasySpin grid interpolation,
 SOPHE triangle/zone projection, EasySpin convolution and harmonic) written on
 the autograd graph.  The forward output equals :func:`torchspin.pepper` to
-rounding and ``torch.autograd`` propagates gradients to ``g``, ``A``, ``D`` and
-``lw_mT``.
+rounding and ``torch.autograd`` propagates gradients to ``g``, ``A``, ``D``,
+``lw_mT`` and ``Temperature``.
 
 The two earlier stand-alone models are kept as ``method='broadband'`` (N-spin:
 diagonalize H(B) at every field point, soft Gaussian per transition and
@@ -577,45 +577,137 @@ def differentiable_spectrum(
     Temperature: Optional[float | torch.Tensor] = None,
     method: str = 'pepper',
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Fully differentiable powder CW EPR spectrum.
+    """Differentiable CW EPR powder spectrum of a one-electron spin system.
+
+    Builds a :class:`~torchspin.spinsystem.SpinSystem`, an
+    :class:`~torchspin.experiment.Experiment` (field sweep) and
+    :class:`~torchspin.experiment.Options` from the arguments and, with the
+    default ``method='pepper'``, evaluates them with
+    :func:`torchspin.pepper_autograd.pepper_autograd`, whose forward output
+    equals :func:`torchspin.pepper` to rounding.  ``torch.autograd`` then
+    propagates gradients to every argument passed as a tensor with
+    ``requires_grad=True``: ``g``, ``A``, ``D``, ``lw_mT`` and
+    ``Temperature``.
 
     Parameters
     ----------
-    g:
-        Principal g-values ``[gx, gy, gz]`` (shape ``(3,)``); ``requires_grad=True``
-        enables gradients.
-    lw_mT:
-        Gaussian line width (FWHM, mT); a scalar tensor with ``requires_grad``
-        enables line-width gradients.
-    mwFreq_GHz, B_range, nPoints, Harmonic:
-        Spectrometer frequency (GHz), sweep ``(B_min, B_max)`` in mT, number of
-        points, detection harmonic (0, 1, 2).
-    GridSize:
-        pepper's ``Options.GridSize``: an int ``N`` (knots along the quarter meridian,
-        projection at the knots) or ``[N, Ninterp]`` (EasySpin grid interpolation).
-        Default 31.  For ``method='broadband'``/``'analytical'`` only an int is used.
-    GridSymmetry:
-        ``'auto'`` (from the Hamiltonian, default) or an explicit symmetry
-        (``'D2h'``, ``'Dinfh'``, ``'Ci'`` ...).
-    device:
-        Torch device; defaults to ``g.device``.
-    S, Nucs, A, D:
-        Electron spin, nuclear isotopes, hyperfine tensors (``(nNuclei, 3)`` or
-        ``(3*nNuclei, 3)``, MHz) and zero-field splitting (``[D, E]``, ``D`` or
-        ``[Dx, Dy, Dz]``, MHz).  ``A`` and ``D`` may ``requires_grad``.
-    Temperature:
-        Temperature (K) for Boltzmann populations; ``None`` = infinite.  A scalar
-        tensor with ``requires_grad`` enables temperature gradients.
-    method:
-        ``'pepper'`` (default): :func:`torchspin.pepper_autograd.pepper_autograd`,
-        identical to :func:`torchspin.pepper` in the forward direction.
-        ``'broadband'`` / ``'analytical'``: the earlier stand-alone models
-        (deprecated; orientation-grid ripple, see the module docstring).
+    g : torch.Tensor, shape (3,)
+        Principal g values ``[gx, gy, gz]`` (dimensionless), in the molecular
+        frame (no ``gFrame``).  Must be exactly 1-D with three entries.  Its
+        device sets the default ``device`` and its dtype the dtype of ``spec``.
+    lw_mT : float or torch.Tensor
+        Gaussian line width, FWHM in mT (``Sys.lw = [lw_mT, 0]``); must be
+        positive.  A 0-d tensor that requires grad gives line-width gradients.
+    mwFreq_GHz : float
+        Microwave frequency in GHz (converted with ``float``; not
+        differentiable).
+    B_range : tuple of float
+        Field sweep ``(B_min, B_max)`` in mT, ``B_min < B_max``.
+    nPoints : int, default 1024
+        Number of points of the field axis.
+    Harmonic : int, default 1
+        Detection harmonic: 0 absorption, 1 first derivative, 2 second
+        derivative.
+    GridSize : int or list of int, default 31
+        ``Options.GridSize``: an int ``N`` (knots along a quarter meridian,
+        no interpolation) or ``[N, N_interp]`` (EasySpin grid interpolation).
+        The deprecated methods use only the first value.
+    GridSymmetry : str, default 'auto'
+        ``Options.GridSymmetry``: ``'auto'`` (also ``''`` or ``None``) detects
+        the symmetry from the Hamiltonian; otherwise one of EasySpin's grid
+        symmetries (``'D2h'``, ``'Dinfh'``, ``'Ci'``, ``'C1'``, ``'O3'``, ...).
+    device : str, optional
+        Torch device for the computation.  Default ``None`` = ``str(g.device)``.
+    S : float, default 0.5
+        Electron spin quantum number (one electron spin).
+    Nucs : list of str, optional
+        Nuclear isotopes, e.g. ``['1H']`` or ``['14N', '1H']`` (as
+        ``SpinSystem.Nucs``).  Default ``None``: no nuclei.
+    A : torch.Tensor, optional
+        Hyperfine couplings in MHz, any form ``SpinSystem.A`` accepts for one
+        electron spin, typically principal values ``(nNuclei, 3)`` or full
+        tensors ``(3*nNuclei, 3)``; a 1-D ``(3,)`` tensor is one nucleus.  Used
+        only together with ``Nucs`` (with ``method='pepper'`` an ``A`` without
+        ``Nucs`` is ignored).  Must be on the same device as ``g``.
+    D : torch.Tensor, optional
+        Zero-field splitting in MHz (needs ``S >= 1``): a 0-d or ``(1,)``
+        tensor ``D`` (E = 0), ``(2,)`` ``[D, E]`` or ``(3,)`` principal values
+        ``[Dxx, Dyy, Dzz]``.  Must be on the same device as ``g``.
+    Temperature : float or torch.Tensor, optional
+        Temperature in K for Boltzmann populations.  Default ``None``: infinite
+        temperature (equal populations).  A 0-d tensor that requires grad
+        gives temperature gradients.
+    method : {'pepper', 'broadband', 'analytical'}, default 'pepper'
+        ``'pepper'``: :func:`~torchspin.pepper_autograd.pepper_autograd`.
+        ``'broadband'`` (diagonalize H(B) at every field point, soft Gaussian
+        per transition) and ``'analytical'`` (closed-form S = 1/2 resonance
+        fields; used only when ``Nucs``, ``D`` are ``None`` and ``S = 0.5``,
+        otherwise the broadband model runs) are the earlier stand-alone
+        models.  They sum discrete orientations without interpolation or
+        projection, carry orientation-grid ripple and are deprecated.
 
     Returns
     -------
-    B_axis, spec : torch.Tensor
-        Field axis (mT) and spectrum on the autograd graph.
+    B_axis : torch.Tensor, shape (nPoints,)
+        Field axis in mT, ``linspace(B_min, B_max, nPoints)``, on ``g.device``.
+    spec : torch.Tensor, shape (nPoints,)
+        Spectrum (pepper's intensity scale and harmonic), dtype of ``g``, on
+        ``g.device``, on the autograd graph of the inputs that require grad.
+
+    Raises
+    ------
+    ValueError
+        If ``g`` is not of shape ``(3,)``, ``lw_mT <= 0``, ``Harmonic`` is not
+        0, 1 or 2, ``A`` or ``D`` is on a different device than ``g``,
+        ``method`` is unknown, or the constructed ``SpinSystem``,
+        ``Experiment`` or ``Options`` rejects a value (e.g. an unknown
+        isotope, ``B_min >= B_max``, ``mwFreq_GHz <= 0``, an unknown
+        ``GridSymmetry``).
+
+    Warns
+    -----
+    DeprecationWarning
+        For ``method='broadband'`` and ``method='analytical'``.
+
+    See Also
+    --------
+    torchspin.pepper_autograd.pepper_autograd : The differentiable pepper path
+        for arbitrary ``SpinSystem``, ``Experiment`` and ``Options``.
+    torchspin.pepper : Same forward result; switches to the differentiable
+        path itself when an input requires grad.
+    torchspin.esfit : Least-squares fitting.
+
+    Notes
+    -----
+    For anything beyond one electron spin with principal g values (``gFrame``,
+    strains, Lorentzian widths, several electron spins, frequency sweeps), build
+    the ``SpinSystem`` yourself and call ``pepper``/``pepper_autograd``.  See
+    KNOWN_LIMITATIONS.md, "Autograd — differentiable pepper" for the gradient
+    validation and the unsupported configurations.
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torchspin import differentiable_spectrum
+    >>> g = torch.tensor([2.0, 2.1, 2.2], dtype=torch.float64, requires_grad=True)
+    >>> B, spec = differentiable_spectrum(g, lw_mT=1.0, mwFreq_GHz=9.5,
+    ...                                   B_range=(300.0, 350.0), nPoints=256,
+    ...                                   GridSize=10)
+    >>> B.shape, spec.shape, spec.requires_grad
+    (torch.Size([256]), torch.Size([256]), True)
+    >>> (grad_g,) = torch.autograd.grad(spec.pow(2).sum(), g)
+    >>> grad_g.shape
+    torch.Size([3])
+
+    Gradients with respect to a hyperfine tensor and the line width:
+
+    >>> A = torch.tensor([[20.0, 20.0, 80.0]], dtype=torch.float64, requires_grad=True)
+    >>> lw = torch.tensor(1.0, dtype=torch.float64, requires_grad=True)
+    >>> B, spec = differentiable_spectrum(g, lw, 9.5, (300.0, 350.0), nPoints=256,
+    ...                                   GridSize=10, Nucs=['1H'], A=A)
+    >>> grad_A, grad_lw = torch.autograd.grad(spec.pow(2).sum(), [A, lw])
+    >>> grad_A.shape, grad_lw.shape
+    (torch.Size([1, 3]), torch.Size([]))
     """
     import warnings
     if g.dim() != 1 or g.shape[0] != 3:
