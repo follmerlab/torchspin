@@ -40,12 +40,24 @@ Rayleigh-Ritz subspace (``subspace=True``, the default)
 -------------------------------------------------------
 The field sweep is solved in the span Q of the low eigenvectors at three fields of the sweep
 and at zero field (orthonormalized by an SVD), as telser-tools does.  Q is a discrete choice and
-is built on DETACHED values; Q^H H(theta) Q is linear in the parameters theta for fixed Q, so it
-is assembled on the graph and diagonalized with :func:`torchspin.lft._linalg.eigh_gauge`.  The
-forward values are the Ritz values, and their derivative is v_R^H dH v_R with the Ritz vector
-v_R, which differs from the full-basis derivative by O(|v_R - v|) ~ (Ritz energy error / outer
-gap)^(1/2).  Measured against ``subspace=False`` (full N x N eigh at every point; d^8, 45 states):
-spectra agree to < 1e-7 and Jacobians to ~2e-6 of the largest response.
+is built on DETACHED values.  The forward values are the Ritz pairs of Q^H H Q.
+
+Derivatives (since 0.9.30, B94).  Only the kk lowest Ritz pairs (the states needed plus the rest
+of their zero-field cluster) are accurate eigenpairs; the other directions of Q are SVD mixtures
+of higher states.  With a parameter on the graph (reverse or forward mode), the Ritz pairs are
+taken as values and their derivatives come from first-order perturbation theory, as zero-valued
+graph terms: energies by Hellmann-Feynman on the low Ritz vectors (level mean at degeneracies, as
+:func:`torchspin.lft._linalg.eigh_gauge`), eigenvectors from the couplings inside that cluster
+plus the reduced-resolvent solve (P (H - lambda) P + W W^H)^-1 P dH v in its complement
+(P = 1 - W W^H, W the cluster), done only at the (orientation, field) points that enter the
+spectrum.  The derivative is exact up to the Ritz residual.  Before 0.9.30 the eigenvectors were
+differentiated inside the fixed Q only, which drops their components outside Q: the transition
+probabilities' derivatives were wrong whenever the parameters move the low states' admixture of
+states outside Q (d^7 Co(II): spectrum gradients 10-28 % off).  Measured against
+``subspace=False`` (full N x N eigh at every point): d^7 (120 states) spectra 1.4e-9, Jacobians
+(e_sigma, zeta, Racah B, k) 1.7e-9 to 3.5e-9 of the largest response; d^8 (45 states) spectra
+< 1e-7.  Without graph inputs the extra work is skipped and the values are bit-identical; with
+them a d^7 sweep costs ~4-6x the no-gradient run (the full basis ~40-60x).
 
 Discrete choices (all on detached values): the grid extent (``extent='auto'``: the octant when
 the detached V has D2h symmetry about x, y, z, otherwise the hemisphere; a perturbation of V
@@ -72,10 +84,11 @@ from typing import NamedTuple
 
 import numpy as np
 import torch
+import torch.autograd.forward_ad as fwAD
 
 from . import _powder
 from . import units as _u
-from ._linalg import eigh_gauge
+from ._linalg import degeneracy_mask, eigh_gauge
 from ._operators import dn_operators
 from .ddn import TORCHSPIN_CONSTANTS, Constants, hamiltonian, zeeman_operators
 
@@ -246,14 +259,48 @@ def _use_subspace(ctx: _Ctx, fields: np.ndarray) -> bool:
     return ctx.subspace and 4 * _keff(ctx, float(np.max(np.abs(fields)))) < ctx.n_full
 
 
+def _on_graph(*ts: torch.Tensor) -> bool:
+    """Whether any tensor carries a reverse-mode (grad enabled) or forward-mode derivative."""
+    for t in ts:
+        if t.requires_grad and torch.is_grad_enabled():
+            return True
+        if fwAD.unpack_dual(t).tangent is not None:
+            return True
+    return False
+
+
+class _RitzAux(NamedTuple):
+    """Detached Ritz data of one chunk for :func:`_ritz_vector_derivative` (graph path only)."""
+
+    q: torch.Tensor        # (c, N, m) basis
+    c: torch.Tensor        # (c, nf, m, kk) coefficients of the kk low Ritz vectors
+    lam: torch.Tensor      # (c, nf, kk) their Ritz values
+    dh0s: torch.Tensor     # (c, m, m) q^H (h0 - h0.detach()) q: zero-valued, on the graph
+    dzs: torch.Tensor      # (c, m, m) q^H (nmu - nmu.detach()) q: zero-valued, on the graph
+
+
+def _herm(x: torch.Tensor) -> torch.Tensor:
+    return 0.5 * (x + x.conj().transpose(-2, -1))
+
+
 def _solve_sweep(ctx: _Ctx, d: torch.Tensor, fields: np.ndarray):
-    """Energies (c, nf, K) and vectors (c, nf, N, K) of the K lowest states, on the graph."""
+    """Energies (c, nf, K) and vectors (c, nf, N, K) of the K lowest states, and the Ritz data
+    (:class:`_RitzAux`, or None) that :func:`_ritz_vector_derivative` needs.
+
+    Rayleigh-Ritz path with parameters on the graph (B94): the values are the detached Ritz pairs
+    (bit-identical to the no-graph path) and the derivatives are exact first-order perturbation
+    theory, as zero-valued graph terms.  Only the kk lowest Ritz pairs are accurate eigenpairs
+    (the rest of span(Q) holds SVD mixtures of the higher states), so the energy derivatives come
+    from the low cluster alone (Hellmann-Feynman, level mean at degeneracies as in
+    :func:`eigh_gauge`), and the eigenvector derivatives, which need the complement of that cluster
+    as well, are added by :func:`_ritz_vector_derivative` at the points that enter the spectrum.
+    """
     k = ctx.k_need
     nmu = ctx.field_matrix(d)                                                      # (c, N, N)
     f = torch.as_tensor(fields, dtype=_F64, device=ctx.dev).to(_C128)[None, :, None, None]
     if not _use_subspace(ctx, fields):
         w, v = eigh_gauge(ctx.h0 + ctx.c.mu_b * f * nmu[:, None])
-        return w[..., :k], v[..., :k]
+        return w[..., :k], v[..., :k], None
     kk = _keff(ctx, float(np.max(np.abs(fields))))
     lo, hi = float(np.min(fields)), float(np.max(fields))
     bs = np.array([lo, 0.5 * (lo + hi), hi]) if hi > lo else np.array([lo])
@@ -262,9 +309,70 @@ def _solve_sweep(ctx: _Ctx, d: torch.Tensor, fields: np.ndarray):
     h0s = qh @ ctx.h0.to(_C128) @ q                                                # linear in the parameters
     zs = qh @ nmu @ q
     hs = h0s[:, None] + ctx.c.mu_b * f * zs[:, None]
-    w, c = eigh_gauge(0.5 * (hs + hs.conj().transpose(-2, -1)))
+    if not _on_graph(hs):
+        w, c = eigh_gauge(_herm(hs))
+        return w[..., :k], q[:, None] @ c[..., :k], None
+    with torch.no_grad():
+        w, c = torch.linalg.eigh(_herm(hs.detach()))                               # = eigh_gauge's forward
     v = q[:, None] @ c[..., :k]
-    return w[..., :k], v
+    lam = w[..., :kk]
+    ck = c[..., :kk]
+    dh0s = h0s - h0s.detach()
+    dzs = zs - zs.detach()
+    dhs = dh0s[:, None] + ctx.c.mu_b * f * dzs[:, None]                            # (c, nf, m, m), zero
+    diag = torch.einsum("...ai,...ab,...bi->...i", ck.conj(), dhs, ck).real        # (c, nf, kk)
+    deg = degeneracy_mask(lam).to(_F64)
+    de = (deg @ diag.unsqueeze(-1)).squeeze(-1) / deg.sum(-1)                      # level mean
+    e = w[..., :k] + de[..., :k]
+    return e, v, _RitzAux(q, ck, lam, dh0s, dzs)
+
+
+def _ritz_vector_derivative(ctx: _Ctx, aux: _RitzAux, d: torch.Tensor, ci: torch.Tensor, fi: torch.Tensor,
+                            fields: np.ndarray, budget: int = 4_000_000) -> torch.Tensor:
+    """Zero-valued (s, N, K) term carrying the eigenvector derivative at the points (ci, fi) of the
+    chunk with directions ``d``.
+
+    dv_i = sum_{j in cluster, j not in i's level} W_j (W_j^H dH W_i) / (l_i - l_j)
+           - (P (H - l_i) P + W W^H)^-1 P dH W_i,        P = 1 - W W^H,
+    W the kk low Ritz vectors (exact eigenvectors to the Ritz residual), the second term the
+    reduced-resolvent solve in the complement of the cluster (the part a fixed basis misses).
+    """
+    k = ctx.k_need
+    n = ctx.n_full
+    fb = torch.as_tensor(fields, dtype=_F64, device=ctx.dev)
+    dh0 = ctx.h0.to(_C128) - ctx.h0.detach().to(_C128)                             # (N, N), zero
+    out = []
+    step = max(1, budget // max(1, k * n * n))
+    for a in range(0, len(ci), step):
+        cs, fs = ci[a:a + step], fi[a:a + step]
+        b = fb[fs].to(_C128)[:, None, None]
+        nmu = ctx.field_matrix(d[cs])                                     # (s, N, N), graph in k
+        dH = dh0 + ctx.c.mu_b * b * (nmu - nmu.detach())
+        q = aux.q[cs]
+        ck = aux.c[cs, fs]                                                         # (s, m, kk)
+        lam = aux.lam[cs, fs]                                                      # (s, kk)
+        dhs = aux.dh0s[cs] + ctx.c.mu_b * b * aux.dzs[cs]
+        with torch.no_grad():
+            W = q @ ck                                                             # (s, N, kk)
+            Wh = W.conj().transpose(-2, -1)
+            H = ctx.h0.detach().to(_C128) + ctx.c.mu_b * b * nmu.detach()
+            HW = H @ W
+            PHP = H - HW @ Wh - W @ HW.conj().transpose(-2, -1) + W @ (Wh @ HW) @ Wh
+            WWh = W @ Wh
+            eye = torch.eye(n, dtype=_C128, device=ctx.dev)
+            lk = lam[:, :k].to(_C128)[..., None, None]                            # (s, K, 1, 1)
+            A = PHP[:, None] - lk * eye + (1.0 + lk) * WWh[:, None]                # P(H-l)P + WW^H
+            deg = degeneracy_mask(lam)
+            E = lam.unsqueeze(-2) - lam.unsqueeze(-1)                              # E[j, i] = l_i - l_j
+            F = torch.where(deg, torch.zeros_like(E), 1.0 / torch.where(deg, torch.ones_like(E), E))
+        G = ck.conj().transpose(-2, -1) @ dhs @ ck                                 # (s, kk, kk), zero
+        v_in = W @ (F.to(_C128) * G)[..., :k]
+        Wk = W[..., :k]
+        r = dH @ Wk
+        r = r - W @ (Wh @ r)                                                       # P dH W_i
+        v_out = -torch.linalg.solve(A, r.transpose(-2, -1).unsqueeze(-1)).squeeze(-1).transpose(-2, -1)
+        out.append(v_in + v_out)
+    return torch.cat(out, 0)
 
 
 def _grid(ctx: _Ctx, igloo: int, angle_range, degrees: bool, grid: str, extent: str) -> _powder.Grid:
@@ -306,7 +414,7 @@ def _epr_field(ctx: _Ctx, g: _powder.Grid, fields: np.ndarray, freq_mhz: torch.T
     fpos = float(freq_cm.detach()) > 0
     for sl in _chunk(g.n_points, per):
         d = g.directions[sl]
-        e, v = _solve_sweep(ctx, d, fields)
+        e, v, aux = _solve_sweep(ctx, d, fields)
         tr = e[..., ctx.pj] - e[..., ctx.pi]
         tmhz = tr * ctx.mhz_per_cm
         w = wepr[sl, None, None].expand(tr.shape)
@@ -318,6 +426,8 @@ def _epr_field(ctx: _Ctx, g: _powder.Grid, fields: np.ndarray, freq_mhz: torch.T
             continue
         dsel = d[ci]
         vs = v[ci, fi]
+        if aux is not None:
+            vs = vs + _ritz_vector_derivative(ctx, aux, d, ci, fi, fields)
         P = ctx.probabilities(vs, dsel)
         t = tr[ci, fi]
         if not ff:
