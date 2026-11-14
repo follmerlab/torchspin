@@ -183,17 +183,14 @@ _GRAD_CASES = {
 # parameter.  Measured (case 1 / case 2): A 1.0e-6 / 9.9e-9 (h = 1e-6 A;
 # 1e-5: 7e-4, truncation), g 3.9e-8 / 1.9e-8 (h = 1e-7 g; 1e-6: 8e-4; 1e-8:
 # 1.7e-7, roundoff), lw 4.2e-9 / 1.2e-8 (h = 1e-4 lw)
-_GRAD_STEPS = {'A': (1e-6, 3e-6), 'g': (1e-7, 1.2e-7), 'lw': (1e-4, 4e-8)}
+_GRAD_STEPS = {'A': (1e-6, 3e-6), 'g': (1e-7, 1.2e-7), 'lw': (2.5e-5, 4e-8)}
 
 
-# case1 d/dlw is removed (0.9.35, B85): its central-difference reference is limited by a step
-# of ~5e-8 in this weighted sum as a function of lw (root-search round-off; present identically
-# on 0.9.34: the CD error is -1.3e-4, +3.6e-4, -6.3e-4 at relative steps 1e-4, 5e-5, 2.5e-5 on
-# both versions, i.e. proportional to 1/h), so the 4e-8 bound held only by chance (6e-9 on
-# 0.9.34, 1.1e-7 with the centered bins; autograd agrees with the 4e-4 step to 7e-6 on both).
-# The lw gradient is checked against the converged value in test_projection_accuracy.py.
-@pytest.mark.parametrize('name,field', [(n, f) for n in _GRAD_CASES for f in _GRAD_STEPS
-                                        if (n, f) != ('case1', 'lw')])
+# lw step 2.5e-5 (B85, 0.9.35; was 1e-4): with the centered bins case1's d/dlw is small (6.16),
+# and the h^2 truncation error of the central difference at 1e-4 is 1.07e-7 relative; at 2.5e-5
+# it is 7.7e-9 (8.0e-9 at 8 threads); case2 1.8e-10.  Bound unchanged.
+@pytest.mark.parametrize('field', list(_GRAD_STEPS))
+@pytest.mark.parametrize('name', list(_GRAD_CASES))
 def test_gradient_vs_central_differences(research_calls, name, field):
     """d/dA, d/dg, d/dlw (Gaussian FWHM) of a weighted sum of the spectrum on
     the re-searched cases vs converged central differences."""

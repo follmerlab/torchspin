@@ -486,10 +486,10 @@ two nearest points. EasySpin's `projecttriangles.c`/`projectzones.c` integrate o
   their projection bins) was regenerated with the centered bins. The sixteen coarse-grid
   ([19 4]) checks the centered bins moved now compare with `ref_converged_b85.npz` (field axis
   16-32x finer, point values), bounds measured x 1.05; 0.9.34 exceeds every one of them (by
-  1.9x for b50_stick_wide's max deviation, otherwise 4-600x). The case1
-  d/dlw central-difference check was removed: its reference is limited by a ~5e-8 step in the
-  weighted sum as a function of lw (root-search round-off, identical on 0.9.34), and lw is
-  checked against the converged gradient instead.
+  1.9x for b50_stick_wide's max deviation, otherwise 4-600x). The lw
+  central-difference step is 2.5e-5 (was 1e-4; case1's d/dlw is small with the centered bins and
+  the h^2 truncation error at 1e-4 was 1.07e-7), bound unchanged; lw is also checked against the
+  converged gradient.
 - **Other binning.** pepper's stick-accumulation branches (unreachable since every non-O3 grid
   without strain projects) now split linearly too. The template paths were already centered.
   salt's field-swept and isotropic fixed-field stick paths round to the nearest point

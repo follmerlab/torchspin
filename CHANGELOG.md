@@ -61,10 +61,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   s52_b4_C2h_h1, s52_rhombic_h1, b50_h1, b50_stick_wide, oh_auto; pepper and pepper_autograd) now
   compare with `ref_converged_b85.npz` (`generate_converged_b85_refs.py`: field axis 16-32x finer,
   GridSize [181 1], point values at x_k), bounds = measured x 1.05; 0.9.34 fails all of them
-  (e.g. case3 max deviation 0.337 vs bound 3.70e-2). The case1 d/dlw central-difference check in
-  `test_missing_knots.py` is removed: its reference is limited by a ~5e-8 step in the weighted sum
-  as a function of lw (root-search round-off, identical on 0.9.34; the 4e-8 bound held by
-  chance); lw is now checked against the converged gradient.
+  (e.g. case3 max deviation 0.337 vs bound 3.70e-2). The lw central-difference step in
+  `test_missing_knots.py` is 2.5e-5 (was 1e-4): case1's d/dlw is small (6.16) with the centered bins,
+  and the h^2 truncation error at 1e-4 was 1.07e-7 relative (7.7e-9 at 2.5e-5); bound 4e-8 unchanged.
 - `test_projection_accuracy.py`: rhombic lw 0.3 mT, 512 points vs a converged reference (max
   error 3.73e-2, 0.9.34 0.321), d/dlw and d/dg_y vs converged values (1.1e-3 and 3.3e-5;
   0.9.34 5.2e-2 and 3.3e-3), isotropic-direction gradient at 4096 points vs converged O3
