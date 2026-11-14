@@ -454,17 +454,42 @@ two nearest points. EasySpin's `projecttriangles.c`/`projectzones.c` integrate o
   EasySpin mapped onto centered bins.
 - **EasySpin comparisons.** 168 comparisons moved (spectra built by projection; cosine typically
   0.98-0.999, stick spectra and very narrow lines down to 0.95). They stay as they were, strict
-  xfail with the measured numbers (`torchspin/tests/_b85.py`), and are re-run in
-  `test_b85_easyspin_centered.py` against EasySpin's spectrum mapped onto centered bins
-  ((-b[k-2] + 13 b[k-1] + 13 b[k] - b[k+1])/24): 73 pass with their original tolerances; 95 have
-  tolerances calibrated to EasySpin's box binning (1e-5..1e-9, stick spectra) and are strict
-  xfail there too, with both numbers.
-- **torchspin-only references.** The converged references of `ref_missing_knots.npz` were
-  regenerated with the centered bins. Sixteen coarse-grid ([19 4]) vs converged-grid bounds,
-  measured before 0.9.35 with about 10 % margin, are exceeded by 2-27 % (e.g. case3 max
-  deviation 1.35e-2 -> 1.54e-2, bound 1.42e-2): the orientation-grid error seen through the
-  hat instead of the box. They and one central-difference check of d/dlw (step-sensitive:
-  1.1e-7 against a 4e-8 bound) are strict xfail pending a re-baselining decision.
+  xfail with the measured numbers (`torchspin/tests/_b85.py`). Parity moved for two reasons:
+  EasySpin's projected spectra are half an increment low, and the hat smooths with variance
+  dx²/6 against the box's dx²/12. Against EasySpin's spectrum shifted by dx/2 (linear
+  interpolation) 61 of the 168 meet their original tolerances (36 %); against EasySpin mapped
+  onto centered hat bins ((-b[k-2] + 13 b[k-1] + 13 b[k] - b[k+1])/24,
+  `test_b85_easyspin_centered.py`) 73 do. The other 95 have tolerances calibrated to EasySpin's
+  box binning (1e-5..1e-9, stick spectra) and are strict xfail there too, with both numbers.
+- **Physical accuracy (hat chosen over a centered box, 2026-11-14).** Against converged
+  references (field axis 16-32x finer, GridSize [181 1] without interpolation, point values of
+  the converged spectrum at x_k), max error / max (0.9.34 | hat | centered box with a linear
+  split below one bin, branch `dev/b85-box`):
+
+  | case | 0.9.34 | hat | box |
+  |---|---|---|---|
+  | rhombic S = 1/2, 512 pts / 40 mT, lw 1 mT, 1st harmonic | 1.0e-1 | 3.6e-3 | 3.2e-3 |
+  | same, lw 0.3 mT | 3.3e-1 | 3.7e-2 | 3.1e-2 |
+  | Cu, A = [50 50 500] MHz, lw 0.3 mT, 1024 pts | 3.4e-1 | 5.0e-2 | 4.8e-2 |
+  | isotropic on a forced D2h grid, 512 / 4096 pts | 8.8e-2 / 5.5e-2 | 1.3e-2 / 4.7e-5 | same |
+  | case3 (S = 5/2, B4), [181 1] | 3.2e-1 | 4.3e-2 | 3.8e-2 |
+  | salt 1H ENDOR, lw 0.05 MHz | 1.8e-1 | 3.7e-2 | 3.2e-2 |
+
+  Best-fit shift: 0.9.34 +0.46..+0.54 dx, hat and box below 0.03 dx. Gradients against
+  converged values (rhombic, 512 points): d/dg_y relative error 3.7e-3 | 3.3e-5 | 2.0e-3,
+  d/dlw 5.3e-2 | 1.1e-3 | 9.8e-4; isotropic direction (three g leaves) at 4096 points: wrong
+  sign | 3.2 % | 3.2 %. The box is 5-30 % closer in the forward spectrum of narrow lines (half
+  the smoothing), but its blend of box and split for facets narrower than one bin gives
+  derivatives 10-60x less accurate in g and a kink at width dx; the hat was chosen.
+  `test_projection_accuracy.py` keeps the hat numbers.
+- **torchspin-only references.** `ref_missing_knots.npz` (same axis as the tests, so it shares
+  their projection bins) was regenerated with the centered bins. The sixteen coarse-grid
+  ([19 4]) checks the centered bins moved now compare with `ref_converged_b85.npz` (field axis
+  16-32x finer, point values), bounds measured x 1.05; 0.9.34 exceeds every one of them (by
+  1.9x for b50_stick_wide's max deviation, otherwise 4-600x). The case1
+  d/dlw central-difference check was removed: its reference is limited by a ~5e-8 step in the
+  weighted sum as a function of lw (root-search round-off, identical on 0.9.34), and lw is
+  checked against the converged gradient instead.
 - **Other binning.** pepper's stick-accumulation branches (unreachable since every non-O3 grid
   without strain projects) now split linearly too. The template paths were already centered.
   salt's field-swept stick paths round to the nearest point (centered, no gradient; the mode

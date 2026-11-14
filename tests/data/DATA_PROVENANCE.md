@@ -208,6 +208,18 @@ transitions. Not an EasySpin oracle, but independent of the code under test
 (no missing knots, no interpolation); without interpolation torchspin and EasySpin agree
 (Cu case, Ci [181 1]: cosine 1.000000, B88 EasySpin check). Used by `test_missing_knots.py`
 and the four validation files above.
+Regenerated with torchspin 0.9.35 (centered hat bins, B85), torch 2.10, OMP_NUM_THREADS=8.
+
+**Converged field-axis references (B85, 0.9.35, added 2026-11-14):**
+`ref_converged_b85.npz` — Python (`generate_converged_b85_refs.py`, torchspin 0.9.35, torch 2.10,
+OMP_NUM_THREADS=4). Six of the cases above (case3, case3_c2h, case3r, b50_h1, b50_stick_wide,
+oh_auto) on a field axis 32x finer (16x for the 2048/2801-point and Oh cases), extended so that
+no transition leaves it, GridSize [181 1] without interpolation, sampled at the test's points
+(point values of the converged spectrum). `ref_missing_knots.npz` shares the test's axis and so
+its projection bins; these do not. Used by the coarse-vs-converged checks of
+`test_missing_knots.py`, `test_interp_nan_edges_matlab_validation.py`,
+`test_sphgrid_maxphi_matlab_validation.py` and `test_pepper_nanlinear_matlab_validation.py` that the
+centered bins moved (B85).
 
 **MD analysis:**
 `mdhmm_*.mat` (4 files), `mdload_files_*.mat` (2 files) — Python

@@ -45,6 +45,7 @@ import pytest
 import torch
 
 import torchspin.pepper  # noqa: F401  (module, not the re-exported function)
+from torchspin.tests._b85 import converged_refs
 from torchspin import Experiment, Options, SpinSystem, pepper
 from torchspin.pepper_autograd import _interp_slots_t, pepper_autograd
 
@@ -60,7 +61,7 @@ _spec.loader.exec_module(gen)
 @pytest.fixture(scope='module')
 def ref():
     assert REF.exists(), f'reference file missing: {REF}'
-    return np.load(REF)
+    return converged_refs(REF)
 
 
 _metrics = gen.metrics
@@ -85,10 +86,12 @@ def research_calls(monkeypatch):
 
 # (case, GridSize): bounds on (1 - cosine, max|dev|/max) vs the converged
 # reference, interior; measured x 1.05 (see the module docstring)
+REF_KEY: dict = {('case3', (19, 4)): 'b85:case3'}
 REF_BOUNDS = {
     ('case1', (19, 4)): (0.0552, 0.345),
     ('case2', (19, 4)): (4.7e-6, 5.2e-3),
-    ('case3', (19, 4)): (1.01e-4, 1.42e-2),
+    # B85 (0.9.35): vs the converged reference (16-32x finer axis, [181 1], point values; ref_converged_b85.npz), measured x 1.05; 0.9.34: 1 - cos 3.67e-2, max dev 0.337
+    ('case3', (19, 4)): (3.49e-4, 3.70e-2),
 }
 
 
@@ -99,8 +102,9 @@ def test_vs_converged_reference(ref, research_calls, name, grid, func):
     fn = pepper if func == 'pepper' else pepper_autograd
     x, y = fn(s, e, Options(GridSize=list(grid), Verbosity=0, **okw))
     x = x.numpy(); y = y.detach().numpy().ravel()
-    assert np.allclose(x, ref[name + '_x'], rtol=0, atol=1e-9)
-    c, d = _metrics(y, ref[name], _interior(x, s))
+    rn = REF_KEY.get((name, grid), name)
+    assert np.allclose(x, ref[rn + '_x'], rtol=0, atol=1e-9)
+    c, d = _metrics(y, ref[rn], _interior(x, s))
     print(f'{name} {grid} {func}: 1 - cosine {c:.4e}, max dev {d:.4e}')
     assert research_calls, 'the range cuts transitions: the re-search must run'
     cmax, dmax = REF_BOUNDS[(name, grid)]
@@ -182,8 +186,14 @@ _GRAD_CASES = {
 _GRAD_STEPS = {'A': (1e-6, 3e-6), 'g': (1e-7, 1.2e-7), 'lw': (1e-4, 4e-8)}
 
 
-@pytest.mark.parametrize('field', list(_GRAD_STEPS))
-@pytest.mark.parametrize('name', list(_GRAD_CASES))
+# case1 d/dlw is removed (0.9.35, B85): its central-difference reference is limited by a step
+# of ~5e-8 in this weighted sum as a function of lw (root-search round-off; present identically
+# on 0.9.34: the CD error is -1.3e-4, +3.6e-4, -6.3e-4 at relative steps 1e-4, 5e-5, 2.5e-5 on
+# both versions, i.e. proportional to 1/h), so the 4e-8 bound held only by chance (6e-9 on
+# 0.9.34, 1.1e-7 with the centered bins; autograd agrees with the 4e-4 step to 7e-6 on both).
+# The lw gradient is checked against the converged value in test_projection_accuracy.py.
+@pytest.mark.parametrize('name,field', [(n, f) for n in _GRAD_CASES for f in _GRAD_STEPS
+                                        if (n, f) != ('case1', 'lw')])
 def test_gradient_vs_central_differences(research_calls, name, field):
     """d/dA, d/dg, d/dlw (Gaussian FWHM) of a weighted sum of the spectrum on
     the re-searched cases vs converged central differences."""
