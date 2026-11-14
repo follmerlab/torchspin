@@ -517,6 +517,11 @@ def _check_supported(sys: SpinSystem, exp: Experiment, opt: Options) -> None:
     mod_amp = getattr(exp, 'ModAmp', 0.0)
     if mod_amp is not None and float(torch.as_tensor(mod_amp).detach()) > 0 and int(exp.Harmonic) < 1:
         raise ValueError('With field modulation (Exp.ModAmp), Exp.Harmonic=0 does not work.')
+    if torch.is_tensor(mod_amp) and mod_amp.requires_grad and float(mod_amp.detach()) <= 0:
+        # ModAmp = 0 switches from pseudo-modulation to the plain field-derivative
+        # harmonic: the spectrum is discontinuous there, so no gradient exists (B92)
+        raise ValueError('pepper_autograd: Exp.ModAmp requires grad but is <= 0; the spectrum is not '
+                         'differentiable in ModAmp there (ModAmp = 0 switches off field modulation).')
     if float(getattr(exp, 'mwPhase', 0.0) or 0.0) != 0.0:
         raise NotImplementedError('pepper_autograd: Exp.mwPhase (dispersion) is not supported.')
     for name in ('Ordering', 'lightBeam', 'SampleFrame', 'CrystalSymmetry', 'MolFrame'):
@@ -586,7 +591,22 @@ def pepper_autograd(sys_or_list, exp: Experiment, opt: Optional[Options] = None)
         w = getattr(c, 'weight', 1.0)
         spec = spec * (w if torch.is_tensor(w) else float(w))
         total = spec if total is None else total + spec
-    return x, total
+    # B77: an exact +0.0 that depends on every differentiable grad input, so that
+    # an input whose lines are all outside Exp.Range (early return, empty
+    # component) gets a zero gradient instead of a detached spectrum or an
+    # unused-tensor error. Only inputs kept on the graph are listed: the
+    # spin-system Euler frames are on it since 0.9.17 (B3) and Exp.ModAmp since
+    # 0.9.27 (B92); gnscale, DStrain, Exp.Range/CenterSweep,
+    # Exp.lightScatter and the Experiment frames are read as floats, and a grad
+    # tensor there still raises "does not require grad" instead of getting a
+    # silent zero (Stevens B and BFrame: not verified, not listed).
+    from torchspin.autograd import connect_inputs
+    total = connect_inputs(total, sys_or_list, (
+        'g', 'A', 'A_', 'D', 'D_', 'Q', 'ee', 'nn', 'sigma', 'lw', 'lwpp',
+        'HStrain', 'HStrainL', 'gStrain', 'AStrain', 'gAStrainCorr', 'weight',
+        'gFrame', 'AFrame', 'DFrame', 'QFrame', 'eeFrame', 'nnFrame', 'sigmaFrame'))
+    return x, connect_inputs(total, exp, ('mwFreq', 'Temperature', 'Orientations', 'OrientationWeights',
+                                          'ModAmp'))
 
 
 def _pepper_autograd_single(sys: SpinSystem, exp: Experiment, opt: Options) -> tuple[torch.Tensor, torch.Tensor]:

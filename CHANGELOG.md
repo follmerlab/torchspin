@@ -142,6 +142,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   The B48 gradient test runs with `PaddingMultiplier=0` (padding copies the clipped end bins
   225 times and limits central differences to ~1e-6; without it they converge to 1e-8).
 
+## [0.9.27] — 2026-11-12
+
+### Fixed
+
+- **`Exp.ModAmp` gradients are correct on every torch version; at Harmonic 2 they were silently
+  wrong on torch <= 2.14 (B92).** The pseudo-modulation kernel (`dataproc.fieldmod_t`, used by
+  `pepper_autograd` and `pepper` with grad inputs) is a Bessel function of ModAmp, and
+  `torch.special.bessel_j0`/`bessel_j1` have no derivative before torch 2.15: their outputs left
+  the graph without an error. A grad ModAmp therefore raised "does not require grad" at
+  Harmonic 1 on torch <= 2.14, and at Harmonic 2 the upward recurrence
+  J2 = 2/x J1 - J0 kept only its 2/x path: S = 1/2, g = [2.0 2.05 2.1], lw 0.5, ModAmp 0.5,
+  loss sum(y^2): autograd -90.59 against central differences 10.004 on torch 2.10 and 2.14.1
+  (CI's py3.10 torch). On torch 2.15 the gradient was already right. `dataproc._bessel_j01` now
+  supplies the backward itself (J0' = -J1, J1' = J0 - J1/x, 1/2 at x = 0) on every version; the
+  forward values are torch's, so spectra are unchanged (bit-identical). Gradients against
+  central differences: rel 1e-9..1e-7 for Harmonic 1 and 2, ModAmp below the bin width,
+  overmodulated, powder and `Exp.Orientations`, on torch 2.10, 2.14.1 and 2.15. A grad ModAmp
+  <= 0 now raises `ValueError` (ModAmp = 0 switches off field modulation; the spectrum is not
+  continuous there). Only ModAmp was affected: every other float-read input raises on all
+  three torch versions, and `torch.special` is used nowhere else.
 ## [0.9.26] — 2026-11-12
 
 ### Fixed
@@ -278,6 +298,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   endorfrq_perturb.m has no check and returns NaN; torchspin raises there too. First order needs
   no inverse and still runs. Results with non-zero A are bit-identical. Same check as
   `resfields_perturb` (B65). See KNOWN_LIMITATIONS.md. Tests in `test_perturb_zero_hyperfine.py`.
+## [0.9.22] — 2026-11-12
+
+### Fixed
+
+- **`pepper_autograd` and `salt` with no resonance in range stay on the autograd graph (B77).**
+  When no line of a system fell inside `Exp.Range`, `pepper_autograd` returned a detached zero
+  spectrum (the powder early return, pepper_autograd.py:621; the `Exp.Orientations` path built
+  its zeros from the orientation weights only), and a component without lines in range was not
+  used in the graph of a multi-component sum. `torch.autograd.grad` then raised ("does not
+  require grad" or "appears to not have been used in the graph"), so a fit whose lines drifted
+  out of the window crashed; a grad `Sys.lw` was lost as well, because the early return skipped
+  the convolution. `salt`'s fixed-field mode did the same with no ENDOR line in `freq_range`.
+  New `torchspin.autograd.connect_inputs` subtracts `0.0 * sum((t - t.detach()).sum())` over the
+  inputs each function keeps on the graph (`pepper_autograd`: `g`, `A`, `D`, `Q`, `ee`, `nn`,
+  `sigma`, `lw`/`lwpp`, `HStrain`, `HStrainL`, `gStrain`, `AStrain`, `gAStrainCorr`, `weight`,
+  `Exp.mwFreq`, `Exp.Temperature`, `Exp.Orientations`/`OrientationWeights`; `salt`: `g`, `A`,
+  `Q`, `sigma`, `HStrain`, `lw_mhz`). Such an input now gets an exact zero gradient of its own
+  shape, `pepper` (which routes grad inputs to `pepper_autograd`) included. The term is exactly
+  `+0.0`, so every spectrum value, `-0.0` included, and every in-range gradient are bit-identical
+  to 0.9.0; without grad inputs nothing is added (about 4 µs per call). Inputs the forward path
+  reads as floats (Euler frames, `gnscale`, `DStrain`, `Exp.ModAmp`, `Exp.Range`, `salt`'s
+  `Exp.Field`/`mwFreq`/`ExciteWidth`) are not connected: they still raise instead of getting a
+  silent zero gradient. Frequency sweeps still raise `NotImplementedError`.
+  With 0.9.17 (B3, frame angles on the graph) and 0.9.27 (B92, `Exp.ModAmp` gradients) the
+  spin-system Euler frames (`gFrame`, `AFrame`, `DFrame`, `QFrame`, `eeFrame`, `nnFrame`,
+  `sigmaFrame`; `pepper_autograd` and `salt`) and `Exp.ModAmp` (`pepper_autograd`) are
+  connected as well.
+
 ## [0.9.21] — 2026-11-12
 
 ### Fixed

@@ -214,16 +214,50 @@ def fieldmod(B: np.ndarray, spc: np.ndarray, mod_amp: float, harmonic: int = 1) 
     return np.real(y_mod)
 
 
+def _bessel_j01(x):
+    """``(J_0(x), J_1(x))`` with an explicit backward.
+
+    ``torch.special.bessel_j0``/``bessel_j1`` have no derivative before torch
+    2.15: their outputs silently leave the graph, so a gradient through them is
+    missing (Harmonic 1: raises) or partial (Harmonic >= 2: the recurrence in
+    :func:`_besselj_t` keeps only its 2k/x path, a silently wrong gradient; B92).
+    The backward here is the same on every torch version: J_0' = -J_1,
+    J_1' = J_0 - J_1/x (1/2 at x = 0).  The forward values are torch's.
+    """
+    import torch
+
+    class _J01(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, xin):
+            j0 = torch.special.bessel_j0(xin)
+            j1 = torch.special.bessel_j1(xin)
+            ctx.save_for_backward(xin, j0, j1)
+            return j0, j1
+
+        @staticmethod
+        def backward(ctx, g0, g1):
+            xin, j0, j1 = ctx.saved_tensors
+            zero = xin == 0
+            xs = torch.where(zero, torch.ones_like(xin), xin)
+            dj1 = torch.where(zero, torch.full_like(xin, 0.5), j0 - j1 / xs)
+            return -j1 * g0 + dj1 * g1
+
+    if not (torch.is_tensor(x) and x.requires_grad):
+        return torch.special.bessel_j0(x), torch.special.bessel_j1(x)
+    return _J01.apply(x)
+
+
 def _besselj_t(n: int, x):
     """Bessel function J_n(x) of integer order in torch (orders 0-2 in closed form,
-    higher orders by upward recurrence with a small-argument series)."""
+    higher orders by upward recurrence with a small-argument series);
+    differentiable in ``x`` on every torch version (:func:`_bessel_j01`)."""
     import torch
     x = torch.as_tensor(x)
+    j0, j1 = _bessel_j01(x)
     if n == 0:
-        return torch.special.bessel_j0(x)
+        return j0
     if n == 1:
-        return torch.special.bessel_j1(x)
-    j0, j1 = torch.special.bessel_j0(x), torch.special.bessel_j1(x)
+        return j1
     small = x.abs() < 1e-3
     xs = torch.where(small, torch.ones_like(x), x)
     jm, jc = j0, j1
@@ -236,8 +270,9 @@ def _besselj_t(n: int, x):
 
 
 def fieldmod_t(B, spc, mod_amp, harmonic: int = 1):
-    """:func:`fieldmod` in torch (differentiable in ``spc`` and ``mod_amp``): the
-    same Jacobi–Anger Bessel kernel applied by FFT on the 2N+1 grid."""
+    """:func:`fieldmod` in torch (differentiable in ``spc`` and ``mod_amp`` on
+    every torch version): the same Jacobi–Anger Bessel kernel applied by FFT on
+    the 2N+1 grid."""
     import torch
     B = torch.as_tensor(B, dtype=torch.float64)
     spc = torch.as_tensor(spc)
