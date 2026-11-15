@@ -3,7 +3,8 @@
 Self-contained checks (closed forms, unit consistency, gradients against central differences
 and gradcheck with forward AD), and parity with telser-tools (engine copy bit-identical; the 27
 DPN reference runs, exact and as DPN/DPNFIT compute them; ligand fields; doublet g; gradients
-against central differences of the NumPy oracle) when telser-tools is installed.
+against central differences of the NumPy oracle): live when telser-tools is importable, else its
+frozen outputs (data/telser/refs, see ``_telser_refs``).
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from torchspin import lft
 from torchspin.lft import dpn
 from torchspin.lft._engines import pn
 from torchspin.lft.units import energy_factor
+from torchspin.tests import _telser_refs as R
 
 F64 = torch.float64
 CM_TO_MHZ = energy_factor("cm^-1", "MHz")
@@ -262,29 +264,56 @@ def _ref():
     return json.loads((DATA / "dpn_inputs.json").read_text())["cases"]
 
 
-def _c(C):
-    return dpn.Constants(mu_b=C.mu_b * 10.0, g_e=C.g_e, k_b=C.k_b)          # cm^-1/G -> cm^-1/mT
+def _consts(C):
+    return dict(mu_b=C.mu_b, g_e=C.g_e, k_b=C.k_b)
+
+
+def _c(c):
+    return dpn.Constants(mu_b=c["mu_b"] * 10.0, g_e=c["g_e"], k_b=c["k_b"])    # cm^-1/G -> cm^-1/mT
+
+
+# L2 = Re(sum_i L_i @ L_i) has irrational entries (sqrt 2), so its last bit depends on the BLAS
+# summation order (platform); it is not stored: telser-tools' L2 must equal that expression bit for
+# bit, and the test evaluates it on the stored L in its own process, as both packages do.
+_PN_FIELDS = ("coulomb", "excitation", "so", "L", "S", "S2", "n_orb")
+
+
+@R.oracle("dpn")
+def _telser_engine():
+    from telser_tools.dpn import engine, ligand_field, terms
+    out = []
+    for n in range(7):
+        b = engine.operators(n)
+        tb, pb = terms.term_projectors(n)
+        out.append(dict(dets=list(b.dets), ops={f: np.asarray(getattr(b, f)) for f in _PN_FIELDS},
+                        L2_is_sum_LL=bool(np.array_equal(b.L2, np.real(sum(x @ x for x in b.L)))),
+                        labels=[t.label for t in tb], P=np.asarray(pb)))
+    return dict(U_REAL=ligand_field.U_REAL, n=out)
 
 
 def test_engine_copy_is_bit_identical():
-    engine = pytest.importorskip("telser_tools.dpn.engine")
-    terms = pytest.importorskip("telser_tools.dpn.terms")
-    lf = pytest.importorskip("telser_tools.dpn.ligand_field")
-    assert np.array_equal(pn.U_REAL, lf.U_REAL)
+    ref = R.ref(_telser_engine)
+    assert np.array_equal(pn.U_REAL, ref["U_REAL"])
     for n in range(7):
-        a, b = pn.operators(n), engine.operators(n)
-        assert a.dets == b.dets
-        for f in ("coulomb", "excitation", "so", "L", "S", "L2", "S2", "n_orb"):
-            assert np.array_equal(getattr(a, f), getattr(b, f)), (n, f)
+        a, b = pn.operators(n), ref["n"][n]
+        assert list(a.dets) == b["dets"]
+        for f in _PN_FIELDS:
+            assert np.array_equal(getattr(a, f), b["ops"][f]), (n, f)
+        assert b["L2_is_sum_LL"]
+        assert np.array_equal(a.L2, np.real(sum(x @ x for x in b["ops"]["L"]))), (n, "L2")
         ta, pa = pn.term_projectors(n)
-        tb, pb = terms.term_projectors(n)
-        assert [t.label for t in ta] == [t.label for t in tb]
-        np.testing.assert_allclose(pa, pb, rtol=0, atol=1e-12)
+        assert [t.label for t in ta] == b["labels"]
+        np.testing.assert_allclose(pa, b["P"], rtol=0, atol=1e-12)
+
+
+@R.oracle("dpn")
+def _telser_dpn_constants():
+    from telser_tools.dpn.hamiltonian import DPN_CONSTANTS
+    return _consts(DPN_CONSTANTS)
 
 
 def test_dpn_constants_match_telser():
-    h = pytest.importorskip("telser_tools.dpn.hamiltonian")
-    c = _c(h.DPN_CONSTANTS)
+    c = _c(R.ref(_telser_dpn_constants))
     assert dpn.DPN_CONSTANTS.mu_b == pytest.approx(c.mu_b, rel=1e-15)
     assert dpn.DPN_CONSTANTS.g_e == c.g_e and dpn.DPN_CONSTANTS.k_b == c.k_b
 
@@ -292,9 +321,9 @@ def test_dpn_constants_match_telser():
 _RUNS = [k for k, c in _ref().items() if c["returncode"] == 0]
 
 
-@pytest.mark.parametrize("name", _RUNS)
-def test_reference_runs_exact_and_dpn_match_numpy(name):
-    tdpn = pytest.importorskip("telser_tools.dpn")
+@R.oracle("dpn", cases=_RUNS)
+def _telser_reference_run(name):
+    import telser_tools.dpn as tdpn
     from telser_tools.dpn import compat
     from telser_tools.dpn.hamiltonian import DPN_CONSTANTS
     from telser_tools.dpn.inputfile import parse_input
@@ -302,52 +331,80 @@ def test_reference_runs_exact_and_dpn_match_numpy(name):
     d = parse_input(_ref()[name]["stdin"])
     p = d.parameters()
     fields = [None] if d.H0 <= 0 else [d.H0 * np.eye(3)[i] for i in range(3)]
+    out = []
     for f in fields:
+        out.append(dict(field=f, exact=tdpn.PnSystem(d.n, DPN_CONSTANTS).solve(p, f).energies,
+                        **{prog: compat.dpn_solution(d.n, p, f, d.lf_type, prog).energies
+                           for prog in ("dpn", "dpnfit")}))
+    return dict(n=d.n, lf_type=d.lf_type, constants=_consts(DPN_CONSTANTS),
+                p=dict(F2=p.F2, zeta=p.zeta, alpha=p.alpha, A=p.A, V=p.ligand_field, k=list(p.k)), runs=out)
+
+
+@pytest.mark.parametrize("name", _RUNS)
+def test_reference_runs_exact_and_dpn_match_numpy(name):
+    ref = R.ref(_telser_reference_run, name)
+    n, p, C = ref["n"], ref["p"], _c(ref["constants"])
+    for run in ref["runs"]:
+        f = run["field"]
         fm = None if f is None else f / 10.0                           # G -> mT
-        want = tdpn.PnSystem(d.n, DPN_CONSTANTS).solve(p, f).energies
-        got = dpn.levels(d.n, F2=p.F2, zeta=p.zeta, alpha=p.alpha, A=p.A, V=p.ligand_field, k=p.k, field=fm,
-                         units="cm^-1", constants=_c(DPN_CONSTANTS)).numpy()
-        np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-9)
+        got = dpn.levels(n, F2=p["F2"], zeta=p["zeta"], alpha=p["alpha"], A=p["A"], V=p["V"], k=tuple(p["k"]),
+                         field=fm, units="cm^-1", constants=C).numpy()
+        np.testing.assert_allclose(got, run["exact"], rtol=1e-10, atol=1e-9)
         for prog in ("dpn", "dpnfit"):
-            want = compat.dpn_solution(d.n, p, f, d.lf_type, prog).energies
-            h = dpn.dpn_hamiltonian(d.n, F2=p.F2, zeta=p.zeta, V=p.ligand_field, k=p.k, alpha=p.alpha, field=fm,
-                                    lf_type=d.lf_type, program=prog, units="cm^-1", constants=_c(DPN_CONSTANTS))
-            np.testing.assert_allclose(torch.linalg.eigvalsh(h).numpy(), want, rtol=1e-10, atol=1e-9)
+            h = dpn.dpn_hamiltonian(n, F2=p["F2"], zeta=p["zeta"], V=p["V"], k=tuple(p["k"]), alpha=p["alpha"],
+                                    field=fm, lf_type=ref["lf_type"], program=prog, units="cm^-1", constants=C)
+            np.testing.assert_allclose(torch.linalg.eigvalsh(h).numpy(), run[prog], rtol=1e-10, atol=1e-9)
+
+
+@R.oracle("dpn")
+def _telser_ligand_fields():
+    from telser_tools.dpn import compat
+    from telser_tools.dpn import ligand_field as lf
+
+    ligs = [lf.Ligand(30, 20, 10, 1000, 300, 200), lf.Ligand(100, 200, 0, 800, 100, 150)]
+    v = lf.aom(ligs)
+    return dict(ligs=[[l.theta, l.phi, l.psi, l.e_sigma, l.e_pi_x, l.e_pi_y] for l in ligs], v=v,
+                iso=[dict(theta_phi=[[l.theta, l.phi] for l in lig], V=lf.aom(lig))
+                     for lig in (lf.octahedron(900, 200), lf.tetrahedron(900, 200))],
+                cf=lf.crystal_field(300, -70), m_basis=lf.to_m_basis(v),
+                internal=[compat.internal_m_matrix(v, "A", True, np_) for np_ in (1, 2, 3)])
 
 
 def test_ligand_field_constructors_match_numpy():
-    lf = pytest.importorskip("telser_tools.dpn.ligand_field")
-    from telser_tools.dpn import compat
-
-    ligs = [lf.Ligand(30, 20, 10, 1000, 300, 200), lf.Ligand(100, 200, 0, 800, 100, 150)]
-    mine = [lft.Ligand.from_degrees(l.theta, l.phi, l.psi, e_sigma=l.e_sigma, e_pi_x=l.e_pi_x, e_pi_y=l.e_pi_y)
-            for l in ligs]
-    v = lf.aom(ligs)
+    ref = R.ref(_telser_ligand_fields)
+    mine = [lft.Ligand.from_degrees(t, ph, ps, e_sigma=es, e_pi_x=ex, e_pi_y=ey)
+            for t, ph, ps, es, ex, ey in ref["ligs"]]
+    v = ref["v"]
     np.testing.assert_allclose(dpn.aom(mine).numpy(), v, atol=1e-12)
-    for lig in (lf.octahedron(900, 200), lf.tetrahedron(900, 200)):
-        n = np.array([[np.sin(np.radians(l.theta)) * np.cos(np.radians(l.phi)),
-                       np.sin(np.radians(l.theta)) * np.sin(np.radians(l.phi)), np.cos(np.radians(l.theta))]
-                      for l in lig])
-        np.testing.assert_allclose(dpn.aom_isotropic(torch.tensor(n), 900.0, 200.0).numpy(), lf.aom(lig), atol=1e-10)
-    np.testing.assert_allclose(dpn.crystal_field(300.0, -70.0).numpy(), lf.crystal_field(300, -70), atol=0)
-    np.testing.assert_allclose(dpn.to_m_basis(torch.tensor(v)).numpy(), lf.to_m_basis(v), atol=1e-12)
-    for np_ in (1, 2, 3):
-        np.testing.assert_allclose(dpn.internal_m_matrix(torch.tensor(v), "A", True, np_).numpy(),
-                                   compat.internal_m_matrix(v, "A", True, np_), atol=1e-12)
+    for lig in ref["iso"]:
+        n = np.array([[np.sin(np.radians(t)) * np.cos(np.radians(ph)), np.sin(np.radians(t)) * np.sin(np.radians(ph)),
+                       np.cos(np.radians(t))] for t, ph in lig["theta_phi"]])
+        np.testing.assert_allclose(dpn.aom_isotropic(torch.tensor(n), 900.0, 200.0).numpy(), lig["V"], atol=1e-10)
+    np.testing.assert_allclose(dpn.crystal_field(300.0, -70.0).numpy(), ref["cf"], atol=0)
+    np.testing.assert_allclose(dpn.to_m_basis(torch.tensor(v)).numpy(), ref["m_basis"], atol=1e-12)
+    for np_, want in zip((1, 2, 3), ref["internal"]):
+        np.testing.assert_allclose(dpn.internal_m_matrix(torch.tensor(v), "A", True, np_).numpy(), want, atol=1e-12)
 
 
-@pytest.mark.parametrize("n", [1, 5])   # p3: 4S ground, doublet gap ~0.03 cm^-1 (ill-conditioned in both codes)
-def test_g_tensor_matches_numpy(n):
-    tdpn = pytest.importorskip("telser_tools.dpn")
+@R.oracle("dpn", cases=[1, 5])
+def _telser_g_tensor(n):
+    import telser_tools.dpn as tdpn
     from telser_tools.dpn import ligand_field as lf
     from telser_tools.dpn.hamiltonian import CODATA2018
 
     v = lf.aom([lf.Ligand(20, 10, 5, 2000, 300, 100), lf.Ligand(110, 80, 0, 1500, 200, 400)])
     p = tdpn.Parameters(F2=45000, zeta=400, ligand_field=v, k=(0.9, 0.8, 0.95))
     g_np, gg_np = tdpn.PnSystem(n).solve(p).g_tensor()
-    g = dpn.g_tensor(n, F2=p.F2, zeta=p.zeta, V=v, k=p.k, units="cm^-1", constants=_c(CODATA2018))
-    np.testing.assert_allclose(g.ggT.numpy(), gg_np, rtol=1e-10, atol=1e-12)
-    np.testing.assert_allclose(g.principal.numpy(), g_np, rtol=1e-10, atol=1e-12)
+    return dict(V=v, F2=p.F2, zeta=p.zeta, k=list(p.k), g=g_np, ggT=gg_np, constants=_consts(CODATA2018))
+
+
+@pytest.mark.parametrize("n", [1, 5])   # p3: 4S ground, doublet gap ~0.03 cm^-1 (ill-conditioned in both codes)
+def test_g_tensor_matches_numpy(n):
+    ref = R.ref(_telser_g_tensor, n)
+    g = dpn.g_tensor(n, F2=ref["F2"], zeta=ref["zeta"], V=ref["V"], k=tuple(ref["k"]), units="cm^-1",
+                     constants=_c(ref["constants"]))
+    np.testing.assert_allclose(g.ggT.numpy(), ref["ggT"], rtol=1e-10, atol=1e-12)
+    np.testing.assert_allclose(g.principal.numpy(), ref["g"], rtol=1e-10, atol=1e-12)
 
 
 def _np_fd(fun, x, rels=(1e-3, 1e-4, 1e-5)):
@@ -367,35 +424,62 @@ def _level_mean_matrix(e, tol=1e-6):
     return np.array([(grp == g) / np.sum(grp == g) for g in range(grp[-1] + 1)])
 
 
-@pytest.mark.parametrize("n,field,deg", [(2, (300.0, 1200.0, 2500.0), False), (3, None, True), (1, None, True),
-                                         (2, None, True), (4, (0.0, 0.0, 4000.0), False)])
-def test_energy_gradients_vs_numpy_including_degenerate_levels(n, field, deg):
-    tdpn = pytest.importorskip("telser_tools.dpn")
+_GRAD_CASES = [(2, (300.0, 1200.0, 2500.0), False), (3, None, True), (1, None, True), (2, None, True),
+               (4, (0.0, 0.0, 4000.0), False)]
+
+
+def _x0_levels(deg):
+    return np.array([42000.0, 350.0, 30.0, 900.0, 0.0 if deg else 140.0, 0.9, 0.85, 0.8])
+
+
+_FD_DRIFT = {"*$.fds*": 3e-6}
+
+
+# drift: central differences carry round-off / h (3e-7 OpenBLAS vs Accelerate)
+@R.oracle("dpn", cases=range(len(_GRAD_CASES)), drift=_FD_DRIFT)
+def _telser_level_gradients(i):
+    """Energies at x0 and central differences (three steps) of the level means M E(x)."""
+    import telser_tools.dpn as tdpn
     from telser_tools.dpn import ligand_field as lf
     from telser_tools.dpn.hamiltonian import CODATA2018
+
+    n, field, deg = _GRAD_CASES[i]
 
     def params(x):
         return tdpn.Parameters(F2=x[0], zeta=x[1], alpha=x[2], ligand_field=lf.crystal_field(x[3], x[4]),
                                k=tuple(x[5:8]))
 
-    x0 = np.array([42000.0, 350.0, 30.0, 900.0, 0.0 if deg else 140.0, 0.9, 0.85, 0.8])
+    x0 = _x0_levels(deg)
     sysn = tdpn.PnSystem(n)
     e0 = sysn.energies(params(x0), field)
+    M = _level_mean_matrix(e0)
+    return dict(e0=e0, fds=_np_fd(lambda x: M @ sysn.energies(params(x), field), x0), constants=_consts(CODATA2018))
+
+
+@pytest.mark.parametrize("i,n,field,deg", [(i, *c) for i, c in enumerate(_GRAD_CASES)])
+def test_energy_gradients_vs_numpy_including_degenerate_levels(i, n, field, deg):
+    ref = R.ref(_telser_level_gradients, i)
+    x0 = _x0_levels(deg)
+    e0 = ref["e0"]
     M = _level_mean_matrix(e0)
     if deg:
         assert M.shape[0] < len(e0)
     fm = None if field is None else torch.tensor(field, dtype=F64) / 10.0
-    J = torch.func.jacfwd(lambda x: dpn.levels(n, field=fm, units="cm^-1", constants=_c(CODATA2018), **_kw(x)))(
-        torch.tensor(x0)).numpy()
+    J = torch.func.jacfwd(lambda x: dpn.levels(n, field=fm, units="cm^-1", constants=_c(ref["constants"]),
+                                               **_kw(x)))(torch.tensor(x0)).numpy()
     assert np.isfinite(J).all()
     Jl = M @ J
     np.testing.assert_allclose(J, (M > 0).T.astype(float) @ Jl, atol=1e-8)
-    _assert_np_grad(Jl, _np_fd(lambda x: M @ sysn.energies(params(x), field), x0))
+    _assert_np_grad(Jl, ref["fds"])
 
 
-@pytest.mark.parametrize("n", [1, 5])
-def test_kramers_g_gradient_vs_numpy(n):
-    tdpn = pytest.importorskip("telser_tools.dpn")
+_X0_GG = np.r_[45000.0, 400.0, 0.9, 0.95, 20.0, 10.0, 110.0, 80.0]
+
+
+# drift: central differences carry round-off / h (3e-7 OpenBLAS vs Accelerate)
+@R.oracle("dpn", cases=[1, 5], drift=_FD_DRIFT)
+def _telser_kramers_g_gradient(n):
+    import telser_tools.dpn as tdpn
     from telser_tools.dpn import ligand_field as lf
     from telser_tools.dpn.hamiltonian import CODATA2018
 
@@ -404,31 +488,58 @@ def test_kramers_g_gradient_vs_numpy(n):
         p = tdpn.Parameters(F2=x[0], zeta=x[1], ligand_field=v, k=(x[2], x[2], x[3]))
         return tdpn.PnSystem(n).solve(p).g_tensor()[1].ravel()
 
+    return dict(gg=numpy_gg(_X0_GG), fds=_np_fd(numpy_gg, _X0_GG), constants=_consts(CODATA2018))
+
+
+@pytest.mark.parametrize("n", [1, 5])
+def test_kramers_g_gradient_vs_numpy(n):
+    ref = R.ref(_telser_kramers_g_gradient, n)
+
     def torch_gg(x):
         e = torch.tensor([[2000.0, 300.0, 100.0], [1500.0, 200.0, 400.0]], dtype=F64)
         V = dpn.aom_from_angles(x[[4, 6]], x[[5, 7]], torch.zeros(2, dtype=F64), e, degrees=True)
         return dpn.g_tensor(n, F2=x[0], zeta=x[1], V=V, k=torch.stack([x[2], x[2], x[3]]), units="cm^-1",
-                            constants=_c(CODATA2018)).ggT.reshape(-1)
+                            constants=_c(ref["constants"])).ggT.reshape(-1)
 
-    x0 = np.r_[45000.0, 400.0, 0.9, 0.95, 20.0, 10.0, 110.0, 80.0]
-    np.testing.assert_allclose(torch_gg(torch.tensor(x0)).numpy(), numpy_gg(x0), rtol=1e-10, atol=1e-12)
+    x0 = _X0_GG
+    np.testing.assert_allclose(torch_gg(torch.tensor(x0)).numpy(), ref["gg"], rtol=1e-10, atol=1e-12)
     J = torch.func.jacfwd(torch_gg)(torch.tensor(x0)).numpy()
-    _assert_np_grad(J, _np_fd(numpy_gg, x0))
+    _assert_np_grad(J, ref["fds"])
 
 
-@pytest.mark.parametrize("n,lft_type,prog", [(4, "A", "dpn"), (5, "X", "dpnfit"), (2, "A", "dpnfit")])
-def test_dpn_matrix_gradients_vs_numpy(n, lft_type, prog):
-    tdpn = pytest.importorskip("telser_tools.dpn")
+_MATRIX_CASES = [(4, "A", "dpn"), (5, "X", "dpnfit"), (2, "A", "dpnfit")]
+_X0_MATRIX = np.array([41000.0, 500.0, 20.0, 1500.0, 350.0, 0.85])
+_F_MATRIX = np.array([0.0, 0.0, 3000.0])
+
+
+# drift: central differences carry round-off / h (3e-7 OpenBLAS vs Accelerate)
+@R.oracle("dpn", cases=range(len(_MATRIX_CASES)), drift=_FD_DRIFT)
+def _telser_dpn_matrix_gradients(i):
+    import telser_tools.dpn as tdpn
     from telser_tools.dpn import compat
     from telser_tools.dpn import ligand_field as lf
 
-    f = np.array([0.0, 0.0, 3000.0])
+    n, lft_type, prog = _MATRIX_CASES[i]
 
     def V_np(x):
         if lft_type == "A":
             return lf.aom([lf.Ligand(0, 0, 0, x[3], x[4], x[4]), lf.Ligand(90, 0, 0, x[3], x[4], x[4]),
                            lf.Ligand(90, 90, 0, 0.8 * x[3], 0.0, 0.0)])
         return lf.crystal_field(x[3], x[4])
+
+    def e_np(x):
+        p = tdpn.Parameters(F2=x[0], zeta=x[1], alpha=x[2], ligand_field=V_np(x), k=(0.9, 0.9, x[5]))
+        return compat.dpn_solution(n, p, _F_MATRIX, lft_type, prog).energies
+
+    e0 = e_np(_X0_MATRIX)
+    M = _level_mean_matrix(e0)
+    return dict(e0=e0, fds=_np_fd(lambda x: M @ e_np(x), _X0_MATRIX))
+
+
+@pytest.mark.parametrize("i,n,lft_type,prog", [(i, *c) for i, c in enumerate(_MATRIX_CASES)])
+def test_dpn_matrix_gradients_vs_numpy(i, n, lft_type, prog):
+    ref = R.ref(_telser_dpn_matrix_gradients, i)
+    f = _F_MATRIX
 
     def V_t(x):
         if lft_type == "A":
@@ -439,10 +550,6 @@ def test_dpn_matrix_gradients_vs_numpy(n, lft_type, prog):
                              torch.stack([0.8 * x[3], z, z])])
             return dpn.aom_from_angles(th, ph, torch.zeros(3, dtype=F64), e, degrees=True)
         return dpn.crystal_field(x[3], x[4])
-
-    def e_np(x):
-        p = tdpn.Parameters(F2=x[0], zeta=x[1], alpha=x[2], ligand_field=V_np(x), k=(0.9, 0.9, x[5]))
-        return compat.dpn_solution(n, p, f, lft_type, prog).energies
 
     def e_t(x):
         k = torch.stack([torch.tensor(0.9, dtype=F64), torch.tensor(0.9, dtype=F64), x[5]])
@@ -458,8 +565,8 @@ def test_dpn_matrix_gradients_vs_numpy(n, lft_type, prog):
                                                   field=torch.tensor(f / 10.0), lf_type=lft_type, program=prog,
                                                   units="cm^-1"))
 
-    x0 = np.array([41000.0, 500.0, 20.0, 1500.0, 350.0, 0.85])
-    np.testing.assert_allclose(e_t(torch.tensor(x0)).numpy(), e_np(x0), atol=1e-9)
-    M = _level_mean_matrix(e_np(x0))
+    x0 = _X0_MATRIX
+    np.testing.assert_allclose(e_t(torch.tensor(x0)).numpy(), ref["e0"], atol=1e-9)
+    M = _level_mean_matrix(ref["e0"])
     J = M @ torch.func.jacfwd(e_t_gauge)(torch.tensor(x0)).numpy()
-    _assert_np_grad(J, _np_fd(lambda x: M @ e_np(x), x0))
+    _assert_np_grad(J, ref["fds"])

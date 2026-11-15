@@ -1,7 +1,8 @@
 """torchspin.lft.ddnpow: powder EPR (field-swept and FDMR) directly from the complete d^n model.
 
 * forward parity with telser-tools' NumPy DDNPOW (exact mode) on every runnable DDNPOW reference
-  input and every cheap option switch (skipped without telser-tools);
+  input and every cheap option switch (live when telser-tools is importable, else against its
+  frozen outputs in data/telser/refs, see ``_telser_refs``);
 * a cross-check against :func:`torchspin.pepper` through :func:`torchspin.lft.dn2sys` in the
   effective-spin limit (well-isolated Cu(II) doublet, no hyperfine);
 * gradients (forward-mode AD) against central differences, and the Rayleigh-Ritz subspace on
@@ -21,7 +22,6 @@ from __future__ import annotations
 
 import copy
 import json
-from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +33,7 @@ from torchspin import lft
 from torchspin.lft import _powder, ddn, ddnpow
 from torchspin.lft._engines import igloo
 from torchspin.lft.units import energy_factor
+from torchspin.tests import _telser_refs as R
 
 F64 = torch.float64
 EPS = np.finfo(float).eps
@@ -328,96 +329,121 @@ def test_d7_ritz_values_identical_on_and_off_graph():
 
 
 # ------------------------------------------------------------------------------ parity with telser-tools
-@lru_cache(maxsize=None)
-def _telser():
-    return pytest.importorskip("telser_tools.ddnpow"), pytest.importorskip("telser_tools.ddn.hamiltonian").CODATA2018
+# telser-tools' values come from oracles: live when it is importable, else the frozen copies in
+# data/telser/refs/ddnpow.npz (see _telser_refs)
+_SWITCH_INPUTS = (("d2_mindiola_hf", dict(igloo=2, npts=60)), ("d1_tet_deriv_lorentz", dict(igloo=3)))
+_SWITCHES = (dict(frequency_factor=False), dict(normalized_populations=False), dict(exact_cutoff=False),
+             dict(field_derivative=False), dict(grid="fortran"), dict(extent="hemisphere"), dict(subspace=False))
 
 
-def _inp(name, **over):
-    tp, _ = _telser()
+def _case_id(name, over=None, opt=None):
+    fmt = lambda d: ",".join(f"{k}={v}" for k, v in (d or {}).items())  # noqa: E731
+    return f"{name}|{fmt(over)}|{fmt(opt)}"
+
+
+_CASES = {_case_id(n): (n, {}, {}) for n in sorted(INPUTS)}
+_CASES.update({_case_id(n, over, opt): (n, over, opt) for opt in _SWITCHES for n, over in _SWITCH_INPUTS})
+_INP_FIELDS = ("n", "i_min", "i_max", "j_min", "j_max", "width", "shape", "cutoff", "temperature", "h1mode", "igloo",
+               "powder", "angle_range", "kind", "h0", "freq_ghz", "deriv")
+
+
+@R.oracle("ddnpow", cases=list(_CASES))
+def _telser_spectrum(case):
+    """The parsed input (with the test's overrides; what _ours needs), its x axis (field in G, or energy in
+    MHz for kind F), and telser-tools' exact-mode spectrum with the options; for an exactly vanishing
+    spectrum also the maximum of the same run with h1mode = 0 (its scale)."""
+    import telser_tools.ddnpow as tp
+    from telser_tools.ddn.hamiltonian import CODATA2018 as C18
+    name, over, opt = _CASES[case]
     inp = tp.parse_input(INPUTS[name])
     for k, v in over.items():
         setattr(inp, k, v)
-    return inp
-
-
-def _ours(inp, **opt):
-    """Our spectrum for a NumPy DdnpowInput (cm^-1 parameters, telser-tools' CODATA 2018 constants)."""
-    tp, C18 = _telser()
     p = inp.parameters()
-    kw = dict(zeta=p.zeta, V=None if p.ligand_field is None else torch.tensor(p.ligand_field), k=p.k, alpha=p.alpha)
-    if p.slater is not None:
-        kw["slater"] = tuple(p.slater)
-    else:
-        kw.update(B=p.B, C=p.C, A=p.A)
-    pairs = [(i - 1, j - 1) for i in range(inp.i_min, inp.i_max + 1) for j in range(inp.j_min, inp.j_max + 1)
+    x = tp.program.energy_axis(inp, CM_TO_MHZ)[1] if inp.kind == "F" else tp.program.field_axis(inp)[1]
+    y = tp.simulate(inp, **opt).spectra[0].y
+    alt = None
+    if np.abs(y).max() < 1e-20:
+        i2 = copy.copy(inp)
+        i2.h1mode = 0.0
+        alt = float(np.abs(tp.simulate(i2, **opt).spectra[0].y).max())
+    return dict(C18=dict(mu_b=C18.mu_b, g_e=C18.g_e, k_b=C18.k_b),
+                inp={f: getattr(inp, f) for f in _INP_FIELDS},
+                params=dict(zeta=p.zeta, V=p.ligand_field, k=list(p.k), alpha=p.alpha,
+                            slater=None if p.slater is None else list(p.slater), B=p.B, C=p.C, A=p.A),
+                x=x, y=y, h1mode0_max=alt)
+
+
+def _dn_kwargs(p):
+    kw = dict(zeta=p["zeta"], V=None if p["V"] is None else torch.tensor(p["V"]), k=tuple(p["k"]), alpha=p["alpha"])
+    kw.update(slater=tuple(p["slater"])) if p["slater"] is not None else kw.update(B=p["B"], C=p["C"], A=p["A"])
+    return kw
+
+
+def _ours(ref, **opt):
+    """Our spectrum for a telser-tools DdnpowInput (cm^-1 parameters, telser-tools' CODATA 2018 constants)."""
+    inp, c = ref["inp"], ref["C18"]
+    kw = _dn_kwargs(ref["params"])
+    pairs = [(i - 1, j - 1) for i in range(inp["i_min"], inp["i_max"] + 1)
+             for j in range(inp["j_min"], inp["j_max"] + 1)
              if j > i]
-    kw.update(pairs=pairs, width=torch.tensor(inp.width, dtype=F64) / CM_TO_MHZ, shape=inp.shape, cutoff=inp.cutoff,
-              temperature=inp.temperature, h1mode=inp.h1mode, igloo=inp.igloo, units="cm^-1", degrees=True,
-              angle_range=None if inp.powder else inp.angle_range,
-              constants=ddn.Constants(mu_b=C18.mu_b * 10.0, g_e=C18.g_e, k_b=C18.k_b), **opt)
+    angle_range = None if inp["powder"] or inp["angle_range"] is None else tuple(inp["angle_range"])
+    kw.update(pairs=pairs, width=torch.tensor(inp["width"], dtype=F64) / CM_TO_MHZ, shape=inp["shape"],
+              cutoff=inp["cutoff"], temperature=inp["temperature"], h1mode=inp["h1mode"], igloo=inp["igloo"],
+              units="cm^-1", degrees=True, angle_range=angle_range,
+              constants=ddn.Constants(mu_b=c["mu_b"] * 10.0, g_e=c["g_e"], k_b=c["k_b"]), **opt)
     with torch.no_grad():
-        if inp.kind == "F":
-            _, xmhz = tp.program.energy_axis(inp, CM_TO_MHZ)
-            x = xmhz / CM_TO_MHZ                                                    # cm^-1 (or THz) -> cm^-1
+        if inp["kind"] == "F":
+            x = ref["x"] / CM_TO_MHZ                                                # cm^-1 (or THz) -> cm^-1
             kw.pop("subspace", None)
             kw.pop("field_derivative", None)
-            return ddnpow.fdmr(inp.n, torch.tensor(x), field=inp.h0 / 10.0, **kw).spectrum.numpy()
-        _, fields = tp.program.field_axis(inp)
-        y = ddnpow.simulate(inp.n, fields / 10.0, inp.freq_ghz, derivative=inp.deriv, **kw).spectrum.numpy()
-        return y * (0.1 if inp.deriv and opt.get("field_derivative", True) else 1.0)   # d/dB per mT -> per G
+            return ddnpow.fdmr(inp["n"], torch.tensor(x), field=inp["h0"] / 10.0, **kw).spectrum.numpy()
+        y = ddnpow.simulate(inp["n"], ref["x"] / 10.0, inp["freq_ghz"], derivative=inp["deriv"], **kw).spectrum.numpy()
+        return y * (0.1 if inp["deriv"] and opt.get("field_derivative", True) else 1.0)   # d/dB per mT -> per G
 
 
-def _roundoff_tolerance(inp) -> float:
-    p = inp.parameters()
-    kw = dict(zeta=p.zeta, V=None if p.ligand_field is None else torch.tensor(p.ligand_field), k=p.k, alpha=p.alpha)
-    kw.update(slater=tuple(p.slater)) if p.slater is not None else kw.update(B=p.B, C=p.C, A=p.A)
-    E = ddn.levels(inp.n, units="cm^-1", **kw).numpy()
-    w_cm = min(w for w in inp.width if w > 0) / CM_TO_MHZ
+def _roundoff_tolerance(ref) -> float:
+    E = ddn.levels(ref["inp"]["n"], units="cm^-1", **_dn_kwargs(ref["params"])).numpy()
+    w_cm = min(w for w in ref["inp"]["width"] if w > 0) / CM_TO_MHZ
     return max(1e-10, 2 * len(E) * EPS * np.abs(E).max() / w_cm)
 
 
-def _assert_parity(inp, **opt):
-    tp, _ = _telser()
-    a = tp.simulate(inp, **opt).spectra[0].y
-    y = _ours(inp, **opt)
+def _assert_parity(name, over=None, **opt):
+    ref = R.ref(_telser_spectrum, _case_id(name, over, opt))
+    a = ref["y"]
+    y = _ours(ref, **opt)
     scale = np.abs(a).max()
     if scale < 1e-20:
-        i2 = copy.copy(inp)
-        i2.h1mode = 0.0
-        scale = 1e-2 * np.abs(tp.simulate(i2, **opt).spectra[0].y).max()
+        scale = 1e-2 * ref["h1mode0_max"]
     dev = np.abs(a - y).max() / scale
-    tol = _roundoff_tolerance(inp)
+    tol = _roundoff_tolerance(ref)
     assert dev <= tol, (dev, tol)
     return dev
 
 
 @pytest.mark.parametrize("name", [n for n in sorted(INPUTS) if n not in LARGE])
 def test_parity_golden_inputs(name):
-    _assert_parity(_inp(name))
+    _assert_parity(name)
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("name", LARGE)
 def test_parity_large_golden_inputs(name):
     """The three largest inputs (d^8, d^3; Rayleigh-Ritz sweep, populations): ~3 s each for both ports."""
-    _assert_parity(_inp(name))
+    _assert_parity(name)
 
 
-@pytest.mark.parametrize("over", [dict(frequency_factor=False), dict(normalized_populations=False),
-                                  dict(exact_cutoff=False), dict(field_derivative=False), dict(grid="fortran"),
-                                  dict(extent="hemisphere"), dict(subspace=False)])
+@pytest.mark.parametrize("over", _SWITCHES)
 def test_parity_option_switches(over):
-    _assert_parity(_inp("d2_mindiola_hf", igloo=2, npts=60), **over)
-    _assert_parity(_inp("d1_tet_deriv_lorentz", igloo=3), **over)
+    for name, inp_over in _SWITCH_INPUTS:
+        _assert_parity(name, inp_over, **over)
 
 
-def test_numpy_itself_is_roundoff_limited():
-    """Shifting the energy origin (H0 + 1000 I, the same physics) moves NumPy's own spectrum by the
-    same order as the torch/NumPy difference."""
-    tp, _ = _telser()
+@R.oracle("ddnpow", drift={"*$.shift": None})          # shift is itself a round-off measurement
+def _telser_origin_shift():
+    """max |y - y'| / max |y| of telser-tools' d1_tet_deriv_lorentz spectrum, y' with H0 + 1000 I."""
+    import telser_tools.ddnpow as tp
     from telser_tools.ddnloop import model as M
-    inp = _inp("d1_tet_deriv_lorentz")
+    inp = tp.parse_input(INPUTS["d1_tet_deriv_lorentz"])
     a = tp.simulate(inp).spectra[0].y
     orig = M.Model.h0
     try:
@@ -425,19 +451,35 @@ def test_numpy_itself_is_roundoff_limited():
         b = tp.simulate(inp).spectra[0].y
     finally:
         M.Model.h0 = orig
-    shift = np.abs(a - b).max() / np.abs(a).max()
-    dev = _assert_parity(inp)
+    return dict(shift=float(np.abs(a - b).max() / np.abs(a).max()))
+
+
+def test_numpy_itself_is_roundoff_limited():
+    """Shifting the energy origin (H0 + 1000 I, the same physics) moves NumPy's own spectrum by the
+    same order as the torch/NumPy difference."""
+    shift = R.ref(_telser_origin_shift)["shift"]
+    dev = _assert_parity("d1_tet_deriv_lorentz")
     assert shift > 1e-9 and dev < 3 * shift
 
 
-def test_grid_engine_parity_with_telser_tools():
-    pytest.importorskip("telser_tools")
+_GRID_ARGS = [(4, 1, None), (6, 2, None), (5, 1, (10.0, 70.0, 0.0, 40.0))]
+
+
+@R.oracle("ddnpow")
+def _telser_grids():
     from telser_tools.ddpowh import grid as tg
     from telser_tools.ddpowh import lineshape as tls
-    for args in [(4, 1, None), (6, 2, None), (5, 1, (10.0, 70.0, 0.0, 40.0))]:
-        for ours, ref in [(igloo.exact_grid(*args), tg.exact_grid(*args)),
-                          (igloo.fortran_grid(*args), tg.fortran_grid(*args))]:
-            np.testing.assert_array_equal(ours.directions, ref.directions)
-            np.testing.assert_array_equal(ours.weight, ref.weight)
-    assert igloo.DL2 == tls.DL2
-    assert igloo.area_fraction("G", 8, True) == tls.area_fraction("G", 8, True)
+    grids = [{kind: dict(directions=g.directions, weight=g.weight)
+              for kind, g in (("exact", tg.exact_grid(*args)), ("fortran", tg.fortran_grid(*args)))}
+             for args in _GRID_ARGS]
+    return dict(grids=grids, DL2=tls.DL2, area_fraction_G8=tls.area_fraction("G", 8, True))
+
+
+def test_grid_engine_parity_with_telser_tools():
+    ref = R.ref(_telser_grids)
+    for args, want in zip(_GRID_ARGS, ref["grids"]):
+        for ours, kind in ((igloo.exact_grid(*args), "exact"), (igloo.fortran_grid(*args), "fortran")):
+            R.same_bits(ours.directions, want[kind]["directions"], f"{kind}{args} directions")
+            R.same_bits(ours.weight, want[kind]["weight"], f"{kind}{args} weight")
+    R.same_bits(igloo.DL2, ref["DL2"], "DL2")
+    R.same_bits(igloo.area_fraction("G", 8, True), ref["area_fraction_G8"], "area_fraction")

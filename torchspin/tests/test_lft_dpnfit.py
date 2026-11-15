@@ -1,10 +1,11 @@
 """torchspin.lft.dpnfit: p^n band-energy fits with an exact (forward-AD) Jacobian.
 
 Self-contained: one-band closed forms, noise-free recovery, units, the Jacobian against
-central differences, LOWSPN, the hole route.  With telser-tools installed: on every DPNFIT
-reference input the NumPy program accepts (both modes), the residuals equal NumPy's, the
-Jacobian equals telser_tools_diff's and converged central differences of NumPy's residuals,
-and fits reach the same objective, uncertainties and null directions.
+central differences, LOWSPN, the hole route.  Against telser-tools (live when it is importable,
+else its frozen outputs, data/telser/refs, see ``_telser_refs``): on every DPNFIT reference input
+the NumPy program accepts (both modes), the residuals equal NumPy's, the Jacobian equals
+telser_tools_diff's and converged central differences of NumPy's residuals, and fits reach the
+same objective, uncertainties and null directions.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import torch
 
 from torchspin.lft import dpn, dpnfit
 from torchspin.lft.units import energy_factor
+from torchspin.tests import _telser_refs as R
 
 F64 = torch.float64
 CM_TO_MHZ = energy_factor("cm^-1", "MHz")
@@ -205,113 +207,173 @@ def _ref():
     return json.loads((DATA / "dpnfit_inputs.json").read_text())["cases"]
 
 
+# the DPNFIT reference inputs telser-tools accepts (the others it rejects, findings DPNFIT-04/-05);
+# test_cases_cover_every_configuration_and_mode checks this list against telser-tools
+CASES = ["dpn_fit_AOM", "p2_fit_XF", "p3_fit_XF", "p4_fit_XF", "p1_xf_zeta_ds", "p1_porb_fit", "p5_xf_zeta_ds",
+         "p2_free_trees", "p2_xf_fit", "p2_aom_fit", "p3_heavy_fit", "p3_one_param", "p4_aom_fit", "p2_1D_field_z",
+         "p3_4S_field_z", "p2_1D_field_x", "p3_4S_field_x", "p1_field_general", "p2_aom_field_general",
+         "p4_aom_field_general", "p3_aom_field_general", "p5_xf_field_general", "p2_aom_tilted", "p1_aom_tilted",
+         "p1_nlam3", "p1_nlam5", "p2_lowspn_wrong_ground_fixed", "p2_lowspn_wrong_ground_fit"]
+MODES = ["exact", "dpn"]
+
+
 def _numpy_prob(name, mode):
-    pytest.importorskip("telser_tools.dpnfit")
     from telser_tools.dpnfit import parse_input
 
     return parse_input(_ref()[name]["stdin"]).program(mode)
 
 
-@lru_cache(maxsize=None)
-def _cases():
-    try:
-        from telser_tools.dpnfit import parse_input
-    except ImportError:
-        return ["telser-tools-missing"]
-    out = []
-    for k, c in _ref().items():
-        try:
-            parse_input(c["stdin"]).program()
-            out.append(k)
-        except Exception:  # noqa: BLE001  (inputs the original rejects, findings DPNFIT-04/-05)
-            pass
-    return out
-
-
-def _convert(p) -> dpnfit.DpnFit:
-    """A torchspin DpnFit from a telser_tools DpnFit (cm^-1, degrees, gauss -> mT, the oracle's constants)."""
+def _problem(p) -> dict:
+    """What _convert needs of a telser_tools DpnFit (cm^-1, degrees, gauss; the oracle's constants)."""
     from telser_tools.dpn.hamiltonian import CODATA2018, DPN_CONSTANTS
 
     m = p.model
     C = CODATA2018 if m.mode == "exact" else DPN_CONSTANTS
-    tm = dpnfit.DpnFitModel(m.n, m.lf_type, m.nlam, angles=list(m.angles), isymm=list(m.isymm),
-                            blfact=list(m.blfact), pi_factors=list(m.pi_factors), orbital_isymm=list(m.orbital_isymm),
-                            B0=m.H0 / 10.0, theta=m.theta, phi=m.phi, k=tuple(m.k), mode=m.mode, degrees=True,
-                            units="cm^-1", constants=dpn.Constants(C.mu_b * 10.0, C.g_e, C.k_b))
     fp = p.fit_parameters()
-    return dpnfit.DpnFit(tm, [o.state for o in p.observations], [o.energy for o in p.observations],
-                         [o.weight for o in p.observations], x0=[q.value for q in fp], free=[not q.fixed for q in fp],
-                         lower=[q.lower for q in fp], upper=[q.upper for q in fp],
-                         step=[q.step if q.step else max(abs(q.value), 1.0) for q in fp], spngrnd=p.spngrnd,
-                         lowspn=bool(p.lowspn))
+    return dict(model=dict(n=m.n, lf_type=m.lf_type, nlam=m.nlam, angles=list(m.angles), isymm=list(m.isymm),
+                           blfact=list(m.blfact), pi_factors=list(m.pi_factors), orbital_isymm=list(m.orbital_isymm),
+                           H0=m.H0, theta=m.theta, phi=m.phi, k=list(m.k), mode=m.mode),
+                constants=[C.mu_b, C.g_e, C.k_b],
+                obs=dict(state=[o.state for o in p.observations], energy=[o.energy for o in p.observations],
+                         weight=[o.weight for o in p.observations]),
+                fp=dict(value=[q.value for q in fp], fixed=[q.fixed for q in fp], lower=[q.lower for q in fp],
+                        upper=[q.upper for q in fp], step=[q.step for q in fp]),
+                spngrnd=p.spngrnd, lowspn=p.lowspn, x0=np.array(p.x0, float))
+
+
+def _convert(d) -> dpnfit.DpnFit:
+    """A torchspin DpnFit from a telser_tools DpnFit (via _problem; gauss -> mT)."""
+    m, (mu_b, g_e, k_b), fp, ob = d["model"], d["constants"], d["fp"], d["obs"]
+    tm = dpnfit.DpnFitModel(m["n"], m["lf_type"], m["nlam"], angles=list(m["angles"]), isymm=list(m["isymm"]),
+                            blfact=list(m["blfact"]), pi_factors=list(m["pi_factors"]),
+                            orbital_isymm=list(m["orbital_isymm"]), B0=m["H0"] / 10.0, theta=m["theta"],
+                            phi=m["phi"], k=tuple(m["k"]), mode=m["mode"], degrees=True, units="cm^-1",
+                            constants=dpn.Constants(mu_b * 10.0, g_e, k_b))
+    return dpnfit.DpnFit(tm, ob["state"], ob["energy"], ob["weight"], x0=fp["value"],
+                         free=[not f for f in fp["fixed"]], lower=fp["lower"], upper=fp["upper"],
+                         step=[s if s else max(abs(v), 1.0) for s, v in zip(fp["step"], fp["value"])],
+                         spngrnd=d["spngrnd"], lowspn=bool(d["lowspn"]))
+
+
+@R.oracle("dpnfit")
+def _telser_cases():
+    from telser_tools.dpnfit import parse_input
+
+    accepted, configs = [], {}
+    for k, c in _ref().items():
+        try:
+            parse_input(c["stdin"]).program()
+        except Exception:  # noqa: BLE001  (inputs the original rejects, findings DPNFIT-04/-05)
+            continue
+        accepted.append(k)
+        m = _numpy_prob(k, "exact").model
+        configs[k] = dict(n=m.n, lf_type=m.lf_type, has_field=bool(m.has_field))
+    return dict(accepted=accepted, configs=configs)
 
 
 def test_cases_cover_every_configuration_and_mode():
-    pytest.importorskip("telser_tools.dpnfit")
-    cases = _cases()
+    ref = R.ref(_telser_cases)
+    assert ref["accepted"] == CASES
+    cases = CASES
     assert len(cases) >= 28
-    probs = [_numpy_prob(k, "exact") for k in cases]
-    assert {q.model.n for q in probs} == {1, 2, 3, 4, 5}
-    assert {q.model.lf_type.upper() for q in probs} == {"A", "X", "P"}
-    assert any(q.model.has_field for q in probs)
+    probs = [ref["configs"][k] for k in cases]
+    assert {q["n"] for q in probs} == {1, 2, 3, 4, 5}
+    assert {q["lf_type"].upper() for q in probs} == {"A", "X", "P"}
+    assert any(q["has_field"] for q in probs)
 
 
-@pytest.mark.parametrize("mode", ["exact", "dpn"])
-@pytest.mark.parametrize("name", _cases())
-def test_residuals_and_jacobian_match_numpy(name, mode):
-    p = _numpy_prob(name, mode)
+_FD_DRIFT = {"*$.fds*": 3e-6}
+
+
+# drift: central differences carry round-off / h (3e-7 OpenBLAS vs Accelerate)
+@R.oracle("dpnfit", cases=[f"{n}:{m}" for n in CASES for m in MODES], drift=_FD_DRIFT)
+def _telser_residuals(case):
+    import telser_tools_diff.dpnfit as diff
     from telser_tools.fitting import jacobian
 
-    q = _convert(p)
+    name, mode = case.split(":")
+    p = _numpy_prob(name, mode)
     # a generic point: at the symmetric start values single parameters split degenerate levels,
     # where ranked energies have no derivative (Kramers degeneracies remain and are tested)
     rng = np.random.default_rng(zlib.crc32(name.encode()))
     x = np.array(p.x0, float)
     x = x + rng.uniform(0.02, 0.08, len(x)) * np.maximum(np.abs(x), 50.0)
-    np.testing.assert_allclose(q.residuals(x).detach().numpy(), p.residuals(x), rtol=1e-10, atol=1e-8)
-    hn = np.asarray(p.model.hamiltonian(x), complex)
+    return dict(problem=_problem(p), x=x, residuals=p.residuals(x), H=np.asarray(p.model.hamiltonian(x), complex),
+                fds=[jacobian(p.residuals, x, r * np.maximum(np.abs(x), 1.0)) for r in (1e-3, 1e-4, 1e-5)],
+                Jd=np.asarray(diff.dpnfit_jacobian(p)(x, np.ones(len(x), bool))))
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("name", CASES)
+def test_residuals_and_jacobian_match_numpy(name, mode):
+    ref = R.ref(_telser_residuals, f"{name}:{mode}")
+    q = _convert(ref["problem"])
+    x = ref["x"]
+    np.testing.assert_allclose(q.residuals(x).detach().numpy(), ref["residuals"], rtol=1e-10, atol=1e-8)
+    hn = ref["H"]
     np.testing.assert_allclose(q.model.hamiltonian(x).numpy(), hn, rtol=0, atol=1e-9 * max(1.0, np.abs(hn).max()))
     J = q.jacobian(x)
-    fds = [jacobian(p.residuals, x, r * np.maximum(np.abs(x), 1.0)) for r in (1e-3, 1e-4, 1e-5)]
-    _assert_grad(J, fds)
-    diff = pytest.importorskip("telser_tools_diff.dpnfit")
-    Jd = diff.dpnfit_jacobian(p)(x, np.ones(len(x), bool))
-    np.testing.assert_allclose(J, Jd, rtol=0, atol=1e-9 * max(np.abs(J).max(), 1e-300))
+    _assert_grad(J, ref["fds"])
+    np.testing.assert_allclose(J, ref["Jd"], rtol=0, atol=1e-9 * max(np.abs(J).max(), 1e-300))
+
+
+_LOWSPN = "p2_lowspn_wrong_ground_fit"
+
+
+@R.oracle("dpnfit")
+def _telser_lowspn():
+    p = _numpy_prob(_LOWSPN, "exact")
+    ev = p.evaluate(np.asarray(p.x0, float))
+    return dict(problem=_problem(p), ground_spin_ok=ev.ground_spin_ok, residuals=np.asarray(ev.residuals),
+                spins=np.asarray(ev.spins), dominant=list(ev.dominant))
 
 
 def test_lowspn_case_matches_numpy():
-    name = "p2_lowspn_wrong_ground_fit"
-    if name not in _cases():
-        pytest.skip("reference case unavailable")
-    p = _numpy_prob(name, "exact")
-    q = _convert(p)
-    x = np.asarray(p.x0, float)
-    ev_n, ev_t = p.evaluate(x), q.evaluate(x)
-    assert ev_n.ground_spin_ok == ev_t.ground_spin_ok is False
-    np.testing.assert_allclose(ev_t.residuals, ev_n.residuals, rtol=1e-12)
-    np.testing.assert_allclose(ev_t.spins, ev_n.spins)
-    assert ev_t.dominant == ev_n.dominant
+    assert _LOWSPN in CASES
+    ref = R.ref(_telser_lowspn)
+    q = _convert(ref["problem"])
+    x = ref["problem"]["x0"]
+    ev_t = q.evaluate(x)
+    assert ref["ground_spin_ok"] == ev_t.ground_spin_ok is False
+    np.testing.assert_allclose(ev_t.residuals, ref["residuals"], rtol=1e-12)
+    np.testing.assert_allclose(ev_t.spins, ref["spins"])
+    assert list(ev_t.dominant) == ref["dominant"]
 
 
 FITS = ["dpn_fit_AOM", "p2_fit_XF", "p3_fit_XF", "p4_fit_XF", "p2_aom_fit", "p1_porb_fit"]
 
 
-@pytest.mark.parametrize("name", FITS)
-def test_fit_matches_numpy(name):
-    p = _numpy_prob(name, "exact")
-    if not any(not q.fixed for q in p.fit_parameters()):
-        pytest.skip("no free parameter")
-    a = p.fit(monitor=False, track_crossings=False)
-    b = _convert(p).fit()
-    assert b.objective == pytest.approx(a.result.objective, rel=1e-6, abs=1e-8)
+# drift: standard errors of nearly undetermined parameters (3.7e-4 OpenBLAS vs Accelerate; the test's rtol 1e-3)
+@R.oracle("dpnfit", cases=FITS, drift={"*stderr*": 1e-3})
+def _telser_fit(name):
     from telser_tools.fitting import null_directions
 
-    na = null_directions(a.result)
-    assert len(b.null) == len(na)             # p2_aom_fit: e_sigma - e_pi of one ligand only
-    if na:
+    p = _numpy_prob(name, "exact")
+    out = dict(problem=_problem(p), has_free=any(not q.fixed for q in p.fit_parameters()))
+    if not out["has_free"]:
+        return out
+    a = p.fit(monitor=False, track_crossings=False)
+    meas = a.measurements
+    out.update(objective=a.result.objective, n_null=len(null_directions(a.result)), free=np.asarray(a.result.free),
+               stderr=np.asarray(a.result.stderr),
+               measurements=None if meas is None else dict(stderr_stepit=np.asarray(meas.stderr_stepit),
+                                                           n_measurements=meas.n_measurements))
+    return out
+
+
+@pytest.mark.parametrize("name", FITS)
+def test_fit_matches_numpy(name):
+    ref = R.ref(_telser_fit, name)
+    if not ref["has_free"]:
+        pytest.skip("no free parameter")
+    b = _convert(ref["problem"]).fit()
+    assert b.objective == pytest.approx(ref["objective"], rel=1e-6, abs=1e-8)
+    assert len(b.null) == ref["n_null"]            # p2_aom_fit: e_sigma - e_pi of one ligand only
+    if ref["n_null"]:
         return
-    f = a.result.free
-    np.testing.assert_allclose(b.stderr[f], a.result.stderr[f], rtol=1e-3)
-    if a.measurements is not None:
-        np.testing.assert_allclose(b.measurements.stderr_unscaled[f], a.measurements.stderr_stepit[f], rtol=1e-3)
-        assert b.measurements.n_measurements == a.measurements.n_measurements
+    f = ref["free"]
+    np.testing.assert_allclose(b.stderr[f], ref["stderr"][f], rtol=1e-3)
+    if ref["measurements"] is not None:
+        m = ref["measurements"]
+        np.testing.assert_allclose(b.measurements.stderr_unscaled[f], m["stderr_stepit"][f], rtol=1e-3)
+        assert b.measurements.n_measurements == m["n_measurements"]

@@ -3,7 +3,8 @@
 Self-contained: Telser's DTD.F printout on every fixture set (``tests/data/telser/dtd_fortran.json``,
 5-6 printed digits), forward/inverse round trips, closed forms, radians vs degrees, validation,
 gradients (central differences, gradcheck in both modes, inverse of the forward Jacobian).
-With telser-tools installed: parity with ``telser_tools.dtd`` (corrected mode) at rel 1e-10.
+Parity with ``telser_tools.dtd`` (corrected mode) at rel 1e-10: live when telser-tools is
+importable, else against its frozen outputs (see ``_telser_refs``).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import pytest
 import torch
 
 from torchspin.lft import dtd as tdt
+from torchspin.tests import _telser_refs as R
 
 F64 = torch.float64
 RUNS = json.loads((Path(__file__).parent / "data" / "telser" / "dtd_fortran.json").read_text())["runs"]
@@ -204,37 +206,76 @@ def test_inverse_is_inverse_of_forward():
 
 
 # ------------------------------------------------------------------------------ parity with telser-tools
-@pytest.mark.parametrize("rs", SETS, ids=lambda rs: rs[0]["name"])
-def test_parity_with_telser_tools(rs):
-    np_td = pytest.importorskip("telser_tools.dtd.townes_dailey")
-    run, s = rs
+# live telser-tools when importable, else its frozen outputs (data/telser/refs/dtd.npz, see _telser_refs)
+_DTD_FIELDS = ("two_theta_deg", "n", "c", "a", "b", "nt", "alpha1", "eta", "p_zz", "p_xx", "p_yy")
+
+
+@R.oracle("dtd", cases=range(len(SETS)))
+def _telser_dtd(k):
+    from telser_tools.dtd import townes_dailey as np_td
+    run, s = SETS[k]
     try:
         ref = _call(np_td.from_angle, np_td.from_alphas, run, s)
     except ValueError:
+        return dict(raises="ValueError")
+    return dict(raises=None, **{f: None if getattr(ref, f) is None else float(getattr(ref, f)) for f in _DTD_FIELDS})
+
+
+@pytest.mark.parametrize("k", range(len(SETS)), ids=[rs[0]["name"] for rs in SETS])
+def test_parity_with_telser_tools(k):
+    run, s = SETS[k]
+    ref = R.ref(_telser_dtd, k)
+    if ref["raises"] is not None:                      # telser-tools raised ValueError
         with pytest.raises(ValueError):
             _torch(run, s)
         return
     got = _torch(run, s)
-    close(got.two_theta, ref.two_theta_deg)
-    for k in ("n", "c", "a", "b", "nt"):
-        close(getattr(got, k), getattr(ref, k))
-    if ref.alpha1 is not None:
-        close(got.alpha1, ref.alpha1)
-    close(tdt.asymmetry(torch.tensor(s["input"]["p"], dtype=F64)), ref.eta)
-    close(tdt.efg_from_populations(run["p0"], ref.two_theta_deg, ref.a, ref.b, ref.c, degrees=True),
-          [ref.p_zz, ref.p_xx, ref.p_yy])
+    close(got.two_theta, ref["two_theta_deg"])
+    for f in ("n", "c", "a", "b", "nt"):
+        close(getattr(got, f), ref[f])
+    if ref["alpha1"] is not None:
+        close(got.alpha1, ref["alpha1"])
+    close(tdt.asymmetry(torch.tensor(s["input"]["p"], dtype=F64)), ref["eta"])
+    close(tdt.efg_from_populations(run["p0"], ref["two_theta_deg"], ref["a"], ref["b"], ref["c"], degrees=True),
+          [ref["p_zz"], ref["p_xx"], ref["p_yy"]])
 
 
-def test_gradients_vs_telser_tools_central_differences():
-    np_td = pytest.importorskip("telser_tools.dtd.townes_dailey")
-    x = np.array([10.0, 120.0, 1.5, 3.2, -1.8, -1.4])
+_GRAD_X = np.array([10.0, 120.0, 1.5, 3.2, -1.8, -1.4])
+_GRAD_STEPS = (1e-4, 1e-5, 1e-6)
+
+
+def _fd_columns(fun, x, h):
+    """Central differences with step h in every coordinate (as in best_fd)."""
+    cols = []
+    for j in range(len(x)):
+        xp, xm = x.copy(), x.copy()
+        xp[j] += h
+        xm[j] -= h
+        cols.append((fun(xp) - fun(xm)) / (2 * h))
+    return np.array(cols).T
+
+
+@R.oracle("dtd")
+def _telser_dtd_central_differences():
+    """Central-difference Jacobians of telser-tools' from_angle (n, a, b, nt) at _GRAD_X, one per step."""
+    from telser_tools.dtd import townes_dailey as np_td
 
     def npf(z):
         r = np_td.from_angle(*z[:3], *z[3:], trace_tol=1.0)
         return np.array([r.n, r.a, r.b, r.nt])
 
+    return [_fd_columns(npf, _GRAD_X.copy(), h) for h in _GRAD_STEPS]
+
+
+def test_gradients_vs_telser_tools_central_differences():
+    fds = R.ref(_telser_dtd_central_differences)
+
     def tf(z):
         r = tdt.from_angle(*z.unbind(), degrees=True, trace_tol=1.0)
         return torch.stack([r.n, r.a, r.b, r.nt])
 
-    assert best_fd(npf, x, rev_jac(tf, x)) < 1e-8
+    J = rev_jac(tf, _GRAD_X)
+    err = np.full(len(_GRAD_X), np.inf)                # best_fd on the stored central differences
+    for fd in fds:
+        err = np.minimum(err, np.abs(J - fd).max(0))
+    assert err.max() / max(np.abs(J).max(), 1e-300) < 1e-8

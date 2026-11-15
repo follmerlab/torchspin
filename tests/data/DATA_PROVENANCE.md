@@ -229,6 +229,26 @@ centered bins moved (B85).
 
 ---
 
+## telser-tools References (torchspin.lft parity)
+
+`torchspin/tests/data/telser/refs/<group>.npz`: the telser-tools outputs used by the
+`torchspin.lft` parity tests (`torchspin/tests/test_lft_<group>.py`), so that those tests run
+without telser-tools (as in CI). Tag: **External** (Joshua Telser's programs as ported to
+NumPy in telser-tools, the source of the `torchspin.lft` port; independent of the torchspin
+code under test). Each file holds the values of the oracles that the test module registers
+(`torchspin/tests/_telser_refs.py`), as a JSON tree plus one flat array per dtype, with no
+pickles. Each file also stores its provenance. With telser-tools importable, the tests use
+live telser-tools instead, and `test_lft_telser_refs.py` checks that the frozen values still
+match it to 1e-10 × max(1, |largest entry|). `test_lft_magnetometry.py` stays live-only: its
+oracle, `telser_tools_diff`, runs on torch, so a frozen copy would depend on the torch
+version.
+
+| Generator | Files | telser-tools | Date | Environment |
+|-----------|-------|--------------|------|-------------|
+| `torchspin/tests/data/telser/generate_telser_refs.py` (run from the repo root: `PYTHONPATH=.:<telser-tools>/src OMP_NUM_THREADS=1 python torchspin/tests/data/telser/generate_telser_refs.py`) | `core`, `ddn`, `ddnloop`, `ddnpow`, `ddpowh`, `dipole`, `dlsd5`, `dpn`, `dpnfit`, `dsoxf`, `dtd`, `tanabe_sugano`, `telser2torchspin` (13 files, 2.6 MiB) | `12e4cf6d6d10d0f552076e52072c0ad160265b6e` (branch `differentiable-ddn`, clean tree) | 2026-11-15 (UTC) | Python 3.12.15, NumPy 2.5.3, SciPy 1.18.1, torch 2.10.0 (used by `telser_tools_diff` in the `dpnfit` oracles), macOS 15.5 arm64, NumPy on OpenBLAS, single thread |
+
+---
+
 ## Notes
 
 1. Files tagged "MATLAB" are the authoritative source of truth for numerical

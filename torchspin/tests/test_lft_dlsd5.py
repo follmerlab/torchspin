@@ -2,8 +2,9 @@
 
 The NumPy oracle is the solver copied into ``torchspin.lft._engines.dlsd5``, so forward parity,
 gradients against central differences and the inverse-of-forward Jacobian checks run without
-telser-tools.  When telser-tools is installed, the copied engine is checked to reproduce it
-exactly on every fixture (``tests/data/telser/dlsd5_fortran.json``, inputs of Telser's DLSD5 runs).
+telser-tools.  The copied engine is checked to reproduce telser-tools exactly on every fixture
+(``tests/data/telser/dlsd5_fortran.json``, inputs of Telser's DLSD5 runs): live when telser-tools
+is importable, else against its frozen outputs (see ``_telser_refs``).
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import torch.autograd.forward_ad as fwAD
 from torchspin import lft
 from torchspin.lft import dlsd5 as td
 from torchspin.lft._engines import dlsd5 as E
+from torchspin.tests import _telser_refs as R
 
 F64 = torch.float64
 REF = json.loads((Path(__file__).parent / "data" / "telser" / "dlsd5_fortran.json").read_text())
@@ -70,57 +72,112 @@ def _tri_kw(mode, val):
 
 
 # ------------------------------------------------------------------------------ the copied engine == telser-tools
-def _telser():
-    pytest.importorskip("telser_tools.dlsd5")
-    from telser_tools.dlsd5 import hamiltonian, tetragonal, trigonal
-    return hamiltonian, tetragonal, trigonal
-
-
+# live telser-tools when importable, else its frozen outputs (data/telser/refs/dlsd5.npz, see _telser_refs);
+# the solutions are stored field by field (dataclass name and fields; floats exactly)
 def _same(a, b):
     """Dataclass solutions equal field by field (floats exactly, NaN == NaN)."""
     assert type(a).__name__ == type(b).__name__
     for f in a.__dataclass_fields__:
         x, y = getattr(a, f), getattr(b, f)
-        if isinstance(x, float) and isinstance(y, float) and math.isnan(x):
-            assert math.isnan(y), f
+        if isinstance(x, float) and isinstance(y, float):
+            # NaN == NaN; exact live; frozen: round-off of the O(1) normalized coefficients and g values
+            # the fields are computed from (Linux: c = 0.0992 moved by 2.4e-16, 1 ulp of 1)
+            R.same_bits(x, y, f, scale_floor=1.0)
         else:
             assert x == y, (f, x, y)
 
 
+_TET_ABC = [c["input"] for c in REF["tetragonal_from_abc"]] + [(0.3, 0.4, 0.9), (1.2, 0.3, 0.9)]
+
+
+def _freeze_all(sols):
+    return [R.freeze_obj(x) for x in sols]
+
+
+@R.oracle("dlsd5", cases=["mcgarvey", "all"])
+def _telser_tetragonal(mode):
+    from telser_tools.dlsd5 import tetragonal as T
+    return dict(from_g=[[_freeze_all(T.from_g(*g, mode=mode, standardize=st)) for st in (True, False)]
+                        for g in (TET_G if mode == "mcgarvey" else TET_G[:2])],
+                complex=[_freeze_all(T.from_complex_coefficients(a, b, k)) for a, b, k in _TET_ABC],
+                real=[_freeze_all(T.from_real_coefficients(a, b, k)) for a, b, k in _TET_ABC])
+
+
 @pytest.mark.parametrize("mode", ["mcgarvey", "all"])
 def test_engine_copy_identical_to_telser_tools_tetragonal(mode):
-    _, T, _ = _telser()
-    for g in TET_G if mode == "mcgarvey" else TET_G[:2]:
-        for standardize in (True, False):
-            ref, got = T.from_g(*g, mode=mode, standardize=standardize), E.tetragonal_from_g(*g, mode=mode,
-                                                                                               standardize=standardize)
+    want = R.ref(_telser_tetragonal, mode)
+    for g, refs in zip(TET_G if mode == "mcgarvey" else TET_G[:2], want["from_g"], strict=True):
+        for standardize, ref in zip((True, False), refs, strict=True):
+            got = E.tetragonal_from_g(*g, mode=mode, standardize=standardize)
             assert len(ref) == len(got)
             for r, s in zip(ref, got):
-                _same(r, s)
-    for a, b, k in [c["input"] for c in REF["tetragonal_from_abc"]] + [(0.3, 0.4, 0.9), (1.2, 0.3, 0.9)]:
-        for r, s in zip(T.from_complex_coefficients(a, b, k), E.from_complex_coefficients(a, b, k)):
-            _same(r, s)
-        for r, s in zip(T.from_real_coefficients(a, b, k), E.from_real_coefficients(a, b, k)):
-            _same(r, s)
+                _same(R.thaw_obj(r), s)
+    for (a, b, k), rc, rr in zip(_TET_ABC, want["complex"], want["real"], strict=True):
+        for r, s in zip(rc, E.from_complex_coefficients(a, b, k)):
+            _same(R.thaw_obj(r), s)
+        for r, s in zip(rr, E.from_real_coefficients(a, b, k)):
+            _same(R.thaw_obj(r), s)
+
+
+_TRI_ABC = [c["input"] for c in REF["trigonal_from_coefficients"]]
+
+
+def _t2g_hole_reference(cf, k, L, SPIN, PAULI):
+    """(g_tensor, doublet_energies) of telser_tools.dlsd5.hamiltonian.solve_t2g_hole (xi = 1), the same
+    operations on telser-tools' L, SPIN and PAULI matrices.  g_tensor depends on the basis LAPACK's eigh
+    picks inside the Kramers doublet, so it is reproducible bit for bit only with the same LAPACK: the
+    oracle checks that this function equals telser-tools bit for bit, and the test compares the copied
+    engine with it in its own process (as the live comparison does)."""
+    cf = np.asarray(cf, dtype=float)
+    i2, i3 = np.eye(2), np.eye(3)
+    h = np.kron(cf, i2) + 1.0 * sum(np.kron(L[i], SPIN[i]) for i in range(3))
+    w, vecs = np.linalg.eigh(h)
+    doublet = vecs[:, -2:]
+    g = np.zeros((3, 3))
+    for i in range(3):
+        mu = k * np.kron(L[i], i2) + 2.0 * np.kron(i3, SPIN[i])
+        m = doublet.conj().T @ mu @ doublet
+        for j in range(3):
+            g[i, j] = np.real(np.trace(m @ PAULI[j]))
+    return g, w[::2].copy()
+
+
+@R.oracle("dlsd5")
+def _telser_trigonal_and_hamiltonian():
+    from telser_tools.dlsd5 import hamiltonian as H
+    from telser_tools.dlsd5 import trigonal as TR
+    L, SPIN, PAULI = ([np.asarray(x) for x in ops] for ops in (H._L, H._SPIN, H._PAULI))
+    holes = []
+    for cf in (H.tetragonal_cf(3.0, 1.0), H.trigonal_cf(-2.0)):
+        h = H.solve_t2g_hole(cf, 0.9)
+        g, w = _t2g_hole_reference(cf, 0.9, L, SPIN, PAULI)
+        holes.append(dict(cf=np.asarray(cf), reference_is_telser=bool(np.array_equal(h.g_tensor, g)
+                                                                     and np.array_equal(h.doublet_energies, w))))
+    return dict(BETA_OCT=TR.BETA_OCT,
+                from_g=[_freeze_all(TR.from_g(gpar, gperp, twist_deg=phi, **_tri_kw(mode, val)))
+                        for gpar, gperp, mode, val, phi in TRI_G],
+                from_coefficients=[_freeze_all(TR.from_coefficients(at, k)) for at, k in _TRI_ABC],
+                L=L, SPIN=SPIN, PAULI=PAULI, holes=holes)
 
 
 def test_engine_copy_identical_to_telser_tools_trigonal_and_hamiltonian():
-    H, _, TR = _telser()
-    assert E.BETA_OCT == TR.BETA_OCT
-    for gpar, gperp, mode, val, phi in TRI_G:
-        for r, s in zip(TR.from_g(gpar, gperp, twist_deg=phi, **_tri_kw(mode, val)),
-                        E.trigonal_from_g(gpar, gperp, twist_deg=phi, **_tri_kw(mode, val))):
-            _same(r, s)
-    for at, k in [c["input"] for c in REF["trigonal_from_coefficients"]]:
-        for r, s in zip(TR.from_coefficients(at, k), E.trigonal_from_coefficients(at, k)):
-            _same(r, s)
+    want = R.ref(_telser_trigonal_and_hamiltonian)
+    assert E.BETA_OCT == want["BETA_OCT"]
+    for (gpar, gperp, mode, val, phi), refs in zip(TRI_G, want["from_g"], strict=True):
+        for r, s in zip(refs, E.trigonal_from_g(gpar, gperp, twist_deg=phi, **_tri_kw(mode, val))):
+            _same(R.thaw_obj(r), s)
+    for (at, k), refs in zip(_TRI_ABC, want["from_coefficients"], strict=True):
+        for r, s in zip(refs, E.trigonal_from_coefficients(at, k)):
+            _same(R.thaw_obj(r), s)
     for i in range(3):
-        np.testing.assert_array_equal(E._L[i], H._L[i])
-        np.testing.assert_array_equal(E._SPIN[i], H._SPIN[i])
-    for cf in (H.tetragonal_cf(3.0, 1.0), H.trigonal_cf(-2.0)):
-        a, b = H.solve_t2g_hole(cf, 0.9), E.solve_t2g_hole(cf, 0.9)
-        np.testing.assert_array_equal(a.g_tensor, b.g_tensor)
-        np.testing.assert_array_equal(a.doublet_energies, b.doublet_energies)
+        np.testing.assert_array_equal(E._L[i], want["L"][i])
+        np.testing.assert_array_equal(E._SPIN[i], want["SPIN"][i])
+    for h in want["holes"]:
+        assert h["reference_is_telser"]               # _t2g_hole_reference == telser-tools bit for bit
+        g, w = _t2g_hole_reference(h["cf"], 0.9, want["L"], want["SPIN"], want["PAULI"])
+        b = E.solve_t2g_hole(h["cf"], 0.9)
+        np.testing.assert_array_equal(g, b.g_tensor)
+        np.testing.assert_array_equal(w, b.doublet_energies)
 
 
 # ------------------------------------------------------------------------------ against Telser's Fortran printout
