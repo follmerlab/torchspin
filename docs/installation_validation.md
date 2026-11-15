@@ -47,6 +47,7 @@ versions and `torch.version.cuda` printed.
 | 10 | MPS | `pepper(..., Options(device='mps'))` | **Fails**: `TypeError: Cannot convert a MPS Tensor to float64 dtype as the MPS framework doesn't support float64`. `device='cpu'` OK. Documented as unsupported |
 | 11 | `notebooks` extra | `pip install torch --index-url .../whl/cpu`, then `pip install "torchspin[notebooks] @ file://<wheel>"` | OK. torch kept. Installed jupyter 1.1.1, jupyterlab 4.6.6, notebook 7.6.5, ipykernel 7.4.0, ipywidgets 8.1.9, ipympl 0.10.0, matplotlib 3.11.2, cloudpickle 3.1.2, nbconvert 7.17.2 |
 | 12 | proposed CI job, routes part | the `routes` job steps of `.github/workflows/install-docs.yml`, run locally | OK on macOS. torch kept, CPU builds, and the dry-run report has no CUDA packages |
+| 13 | uv environment discovery | `uv pip install --dry-run six` in a directory with no venv; again in a subdirectory of one with `.venv`; `uv init --bare && uv add six` | No venv: `error: No virtual environment found; run uv venv to create an environment, or pass --system ...` (also with `CONDA_PREFIX` set to the conda base env). Parent `.venv`: found and used without activation. `uv add`: created `.venv` itself |
 
 The constraints-file and `--upgrade` checks (3b, 3c, 4b, 4c, 4d) were dry runs. The commands in
 3 and 4 were real installs.
@@ -70,9 +71,9 @@ checkout). The machine was shared with other heavy jobs (load average up to abou
 | 08 pepper playground | OK (`n_workers='auto'`: 12 spawned worker processes, notebook-cell model shipped by cloudpickle, no thread-pool fallback warning) | 642 s |
 | 09 fit GUI | OK headless (`%matplotlib widget`, `torchspin.fitgui` panel built, a 740-evaluation `FitSession` fit completed) | 30 s |
 
-## PyTorch version floor (metadata says `torch>=2.0,<3`)
+## PyTorch version floor (now `torch>=2.3,<3`)
 
-Smoke test with older PyTorch versions installed first, then the wheel:
+These runs used the wheel from 807b78b, which still declared `torch>=2.0,<3`. Each older PyTorch was installed first, then the wheel, then the smoke test:
 
 | PyTorch | NumPy | SciPy | Python | Result |
 |---|---|---|---|---|
@@ -85,8 +86,10 @@ Smoke test with older PyTorch versions installed first, then the wheel:
 | 2.4.1 | 2.5.4 | 1.18.1 | 3.12 | OK |
 | 2.5.1 | 2.5.4 | 1.18.1 | 3.12 | OK |
 
-The working floor is PyTorch 2.2, or 2.3 with NumPy 2. installation.md and the README state that floor.
-The metadata still says 2.0 (see the open question below). On Python 3.11 under uv-managed CPython,
+On this evidence the floor was raised to `torch>=2.3,<3` (commit 394c71b). The tuple `dim` in
+`torchspin/resfields_batch.py:224` needs 2.2, and 2.2 does not work with NumPy 2. Check with a wheel
+built from that commit: with PyTorch 2.2.2 preinstalled, `pip install <wheel>` replaced it with 2.15.0.
+With 2.5.1 preinstalled, pip kept it (`Requirement already satisfied: torch<3,>=2.3`). On Python 3.11 under uv-managed CPython,
 pip and uv chose the `macosx_11_0_x86_64` wheel for PyTorch 2.0.1 and 2.1.2. Those releases tag their
 arm64 wheels `cp311-none-...`. The `any(dim=tuple)` failure is an API error and does not depend on the
 architecture.
@@ -97,8 +100,8 @@ This configuration was tried in a scratch copy of the repository (appended to `p
 
 ```toml
 [dependency-groups]          # PEP 735: not part of the published wheel metadata
-cpu = ["torch>=2.0,<3"]
-cu130 = ["torch>=2.0,<3"]
+cpu = ["torch>=2.3,<3"]
+cu130 = ["torch>=2.3,<3"]
 
 [tool.uv]
 conflicts = [[{ group = "cpu" }, { group = "cu130" }]]
@@ -148,7 +151,7 @@ PyTorch from PyPI.
   `--torch-backend=cu130` / `auto` with a GPU, and `Options(device='cuda')` are untested here (the GPU
   consistency tests in `torchspin/tests/test_gpu_consistency.py` cover the latter on CUDA workstations).
 - **AMD ROCm, Intel XPU**: untested and not claimed.
-- **Intel Macs**: untested. The PyTorch 2.2.2 + NumPy 1.26 combination was validated on arm64 only.
+- **Intel Macs**: not supported since the floor became `torch>=2.3`, because their last PyTorch wheel is 2.2.2. Not tested.
 - **conda / mamba** environments with conda-installed PyTorch: untested.
 - **JupyterLab interactive use** of notebook 09 (`%matplotlib widget`, live panel): only headless
   `nbconvert` execution was checked.
@@ -158,9 +161,7 @@ PyTorch and `pip install -e ".[dev]"`. It does not check the documented routes. 
 `.github/workflows/install-docs.yml` does, for CPU builds on all three operating systems, and it checks
 that only the Linux PyPI resolution pulls CUDA packages.
 
-## Open questions
+## Follow-ups
 
-1. Raise the `torch` floor in `pyproject.toml` from `>=2.0` to `>=2.2` (or `>=2.3`, which also rules out
-   the NumPy 2 incompatibility)? This changes published metadata, so it is a release decision. It was
-   not changed here.
-2. The `notebooks` extra only reaches users with the next PyPI release. PyPI is at 0.8.0.
+- A PyPI release is planned after the documentation work merges. Until then, `pip install torchspin`
+  gets 0.8.0, which lacks the `notebooks` extra and declares `torch>=2.0,<3`.
