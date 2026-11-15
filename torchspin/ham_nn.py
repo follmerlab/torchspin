@@ -17,6 +17,7 @@ from typing import Optional
 
 import torch
 
+from torchspin.ham_ee import _validate_pair_spins
 from torchspin.rotations import erot
 from torchspin.spinops import sop
 from torchspin.spinsystem import SpinSystem
@@ -36,8 +37,11 @@ def ham_nn(
         Spin system.  Coupling tensors are in ``sys.nn`` (MHz) and frames
         in ``sys.nnFrame``.  If ``sys.nn`` is ``None``, returns zero matrix.
     nSpins:
-        1-based indices of nuclear spins to include (at least 2).
-        Defaults to all nuclei.
+        1-based indices of nuclear spins to include: at least 2, each in
+        ``1..nNuclei``, no duplicates; otherwise ``ValueError`` is raised (as
+        in EasySpin).  Ignored (zero matrix returned) when the system has
+        fewer than 2 nuclei or ``nn`` is absent or all zero, as in
+        EasySpin.  Defaults to all nuclei.
     dtype:
         Output dtype.  Default ``torch.complex128``.
     device:
@@ -55,14 +59,15 @@ def ham_nn(
 
     H = torch.zeros(n_states, n_states, dtype=dtype, device=device)
 
-    if n_nuclei < 2 or sys.nn is None:
+    # EasySpin ham_nn.m returns before checking nSpins when there are fewer
+    # than 2 nuclei or nn is absent or all zero
+    if n_nuclei < 2 or sys.nn is None or not bool(sys.nn.any()):
         return H
 
     if nSpins is None:
         nSpins = list(range(1, n_nuclei + 1))
 
-    if len(nSpins) < 2:
-        return H
+    nSpins = _validate_pair_spins(nSpins, n_nuclei, "nSpins")
 
     # Global pair list (1-based nuclear indices, sorted)
     all_nuc_pairs = list(combinations(range(1, n_nuclei + 1), 2))
@@ -71,11 +76,7 @@ def ham_nn(
     req_pairs = sorted(combinations(sorted(nSpins), 2))
 
     for iNuc_a, iNuc_b in req_pairs:
-        pair = (min(iNuc_a, iNuc_b), max(iNuc_a, iNuc_b))
-        try:
-            iPair = all_nuc_pairs.index(pair)
-        except ValueError:
-            continue
+        iPair = all_nuc_pairs.index((iNuc_a, iNuc_b))  # indices validated above
 
         # Construct 3×3 J matrix (MHz, float64)
         if sys.fullnn:

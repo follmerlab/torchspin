@@ -26,6 +26,38 @@ from torchspin.spinops import sop
 from torchspin.spinsystem import SpinSystem
 
 
+def _validate_pair_spins(spins, n_max: int, arg_name: str) -> list[int]:
+    """Validate 1-based spin indices for a pair-coupling Hamiltonian.
+
+    Mirrors the input checks of EasySpin ``ham_ee.m`` / ``ham_nn.m``: at
+    least two indices, each an integer in ``1..n_max``, no duplicates.
+    Invalid indices used to be skipped silently, returning a zero or partial
+    Hamiltonian (B80).
+    """
+    vals = list(spins)
+    if len(vals) < 2:
+        raise ValueError(
+            f"{arg_name} must contain at least 2 spin indices (got {vals}).")
+    idx = []
+    for v in vals:
+        try:
+            iv = int(v)
+            ok = (not isinstance(v, bool)) and iv == v
+        except (TypeError, ValueError):
+            ok = False
+        if not ok:
+            raise ValueError(
+                f"{arg_name} must contain integer spin indices (got {vals}).")
+        idx.append(iv)
+    if any(i < 1 or i > n_max for i in idx):
+        raise ValueError(
+            f"{arg_name} must contain 1-based values between 1 and {n_max} "
+            f"(got {idx}).")
+    if len(set(idx)) != len(idx):
+        raise ValueError(f"{arg_name} contains duplicate entries (got {idx}).")
+    return idx
+
+
 def ham_ee(
     sys: SpinSystem,
     eSpins: Optional[list[int]] = None,
@@ -41,7 +73,9 @@ def ham_ee(
         in ``sys.eeFrame``.
     eSpins:
         1-based indices of electron spins to include.  At least 2 must be
-        given.  Defaults to all electrons.
+        given, each in ``1..nElectrons`` and without duplicates; otherwise
+        ``ValueError`` is raised (as in EasySpin).  Defaults to all
+        electrons.
     dtype:
         Output dtype.  Default ``torch.complex128``.
     device:
@@ -68,8 +102,7 @@ def ham_ee(
     if eSpins is None:
         eSpins = list(range(1, n_electrons + 1))
 
-    if len(eSpins) < 2:
-        raise ValueError("eSpins must contain at least 2 electron indices.")
+    eSpins = _validate_pair_spins(eSpins, n_electrons, "eSpins")
 
     # Build ordered list of all pairs in the full system (for global indexing)
     # Pairs are in lexicographic order matching EasySpin
@@ -80,11 +113,7 @@ def ham_ee(
 
     for eSp1, eSp2 in req_pairs:
         # Find the global index of this pair
-        pair = (min(eSp1, eSp2), max(eSp1, eSp2))
-        try:
-            iPair = all_pairs.index(pair)
-        except ValueError:
-            continue
+        iPair = all_pairs.index((eSp1, eSp2))  # indices validated above
 
         # Construct 3×3 J matrix (float64)
         if sys.ee is None:

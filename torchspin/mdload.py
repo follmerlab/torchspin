@@ -13,6 +13,7 @@ Based on EasySpin's mdload.m and associated MD file readers.
 import numpy as np
 import struct
 import os
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple, Union
 
@@ -109,11 +110,28 @@ def _read_dcd(filename, atom_indices=None):
         istart = struct.unpack('<i', header[8:12])[0]
         nsavc = struct.unpack('<i', header[12:16])[0]
 
-        # Check for CHARMM extra block (unit cell info)
-        charmm_flag = struct.unpack('<i', header[80:84])[0]
-        has_extra_block = (charmm_flag & 0x1) != 0
-
-        delta = struct.unpack('<f', header[40:44])[0]
+        # CHARMM vs X-PLOR layout, as in md_readdcd.m. `header` starts at
+        # file offset 4, so header[k] is file byte k + 4. The int32 at file
+        # offset 84 (header[80:84]) is the CHARMM VERSION (24 in the bundled
+        # NAMD files), not a flag word (B97: its bit 0 was read as the
+        # unit-cell flag). VERSION > 0 means CHARMM: the int32 at file offset
+        # 48 is 1 when every frame starts with a unit-cell record (6 float64,
+        # 56 bytes with its markers) and the int32 at file offset 52 is 1 when
+        # every frame has a fourth coordinate record after z. VERSION == 0
+        # means X-PLOR: no extra records, and DELTA is a float64 at offset 44.
+        version = struct.unpack('<i', header[80:84])[0]
+        is_charmm = version > 0
+        if is_charmm:
+            has_extra_block = struct.unpack('<i', header[44:48])[0] == 1
+            # md_readdcd.m maps the 4-dims flag onto its unit-cell flag (and
+            # skips 56 bytes before x), which misreads such files; the 4th
+            # dimension is a coordinate-sized record after z, skipped below.
+            has_4dims = struct.unpack('<i', header[48:52])[0] == 1
+            delta = struct.unpack('<f', header[40:44])[0]
+        else:
+            has_extra_block = False
+            has_4dims = False
+            delta = struct.unpack('<d', header[40:48])[0]
         dt_internal = delta * max(nsavc, 1)
         dt = dt_internal * 48.88821e-15  # AKMA to seconds
 
@@ -136,8 +154,10 @@ def _read_dcd(filename, atom_indices=None):
             n_out = nAtoms
 
         frames_list = []
+        file_size = os.fstat(f.fileno()).st_size
 
         while True:
+            frame_start = f.tell()
             try:
                 # Skip extra block (unit cell) if present
                 if has_extra_block:
@@ -158,9 +178,15 @@ def _read_dcd(filename, atom_indices=None):
                         frame[dim, :] = coords[atom_indices]
                     else:
                         frame[dim, :] = coords
+                if has_4dims:  # CHARMM 4th dimension: skip the record
+                    rec4 = struct.unpack('<i', f.read(4))[0]
+                    if len(f.read(rec4 + 4)) < rec4 + 4:
+                        raise EOFError
 
                 frames_list.append(frame)
             except (struct.error, EOFError, ValueError):
+                _warn_partial_trajectory(filename, 'DCD', frame_start,
+                                         file_size, len(frames_list))
                 break
 
         nFrames = len(frames_list)
@@ -362,6 +388,21 @@ def _read_gro(filename, res_name, label_name):
 # TRR trajectory reader (md_readtrr.m)
 # ---------------------------------------------------------------------------
 
+def _warn_partial_trajectory(filename, fmt, frame_start, file_size, n_read):
+    """Warn when frame reading stops before the end of the file.
+
+    Reading stops at the first frame that cannot be decoded. At a clean end of
+    file nothing is left; otherwise the trailing bytes (a truncated last frame,
+    or data this reader does not understand) used to be dropped silently (B80).
+    """
+    if frame_start < file_size:
+        warnings.warn(
+            f"mdload: stopped reading {fmt} file '{filename}' after {n_read} "
+            f"frame(s); {file_size - frame_start} trailing byte(s) could not be "
+            "decoded as a frame (truncated file?) and were ignored.",
+            RuntimeWarning, stacklevel=3)
+
+
 def _read_trr(filename, atom_indices=None):
     """Read a TRR trajectory file (GROMACS format).
 
@@ -382,12 +423,16 @@ def _read_trr(filename, atom_indices=None):
 
     with open(filename, 'rb') as f:
         prev_time = None
+        file_size = os.fstat(f.fileno()).st_size
 
         while True:
+            frame_start = f.tell()
             try:
                 # TRR frame header
                 magic = struct.unpack('>i', f.read(4))[0]
                 if magic != 1993:
+                    _warn_partial_trajectory(filename, 'TRR', frame_start,
+                                             file_size, len(frames))
                     break
 
                 slen = struct.unpack('>i', f.read(4))[0]
@@ -450,6 +495,8 @@ def _read_trr(filename, atom_indices=None):
                 f.read(v_size + f_size)
 
             except (struct.error, ValueError):
+                _warn_partial_trajectory(filename, 'TRR', frame_start,
+                                         file_size, len(frames))
                 break
 
     if not frames:

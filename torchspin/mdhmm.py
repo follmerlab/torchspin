@@ -11,6 +11,8 @@ Based on EasySpin's mdhmm.m, mdhmm_em.m, mdhmm_kmeans.m.
 All angles are in **radians**.
 """
 
+import warnings
+
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
@@ -200,6 +202,13 @@ def _gaussian_prob_circular(data, mu, sigma):
         sigma_inv = np.linalg.inv(sigma)
         det_sigma = np.linalg.det(sigma)
     except np.linalg.LinAlgError:
+        # Singular covariance (e.g. a dihedral frozen within a state): add a
+        # small ridge, and say so instead of doing it silently (B80).
+        warnings.warn(
+            "mdhmm: singular state covariance matrix; regularized with "
+            "+1e-6*I (rad^2) to evaluate the Gaussian emission probability. "
+            "A dihedral may be (nearly) constant within a state.",
+            RuntimeWarning, stacklevel=2)
         sigma_reg = sigma + 1e-6 * np.eye(n_dim)
         sigma_inv = np.linalg.inv(sigma_reg)
         det_sigma = np.linalg.det(sigma_reg)

@@ -307,9 +307,10 @@ def _cos(a, b):
 @pytest.mark.parametrize("name", ['diag', 'gframe', 'diag_1H'])
 def test_pepper_gstrain_ham_matches_g(name):
     """Ham110/Ham112 + gStrain equals the same system with g given as Sys.g.
-    With a gFrame the automatic grid (B82, 0.9.24) is Ci for both, but in
+    With a gFrame the automatic grid (B82, 0.9.24) was Ci for both, but in
     different frames (Ham vs g 1.0e-3 of the maximum), so that case compares
-    them on an explicit Ci grid (7.8e-14)."""
+    them on an explicit Ci grid (7.8e-14).  Since 0.9.33 (B84) it is D2h in
+    the g frame for both."""
     c, s_h, s_g, exp = _gstrain_case(name)
     opt = Options(GridSymmetry='Ci') if name == 'gframe' else Options()
     y_h = np.asarray(pepper(s_h, exp, opt)[1])
@@ -322,10 +323,13 @@ def test_pepper_gstrain_ham_matches_g(name):
 
 
 # B82 (0.9.24): with gStrain and a gFrame EasySpin's automatic grid ignores the
-# strain and is under-symmetric; torchspin picks Ci.  Against EasySpin's g
+# strain and is under-symmetric; torchspin picked Ci.  Against EasySpin's g
 # spectrum: cosine 0.997209, max deviation 0.125 of the maximum (it was
-# > 0.9999999 when both used EasySpin's grid).  test_pepper_gstrain_ham_gframe_
-# converged_reference checks the default against a converged grid.
+# > 0.9999999 when both used EasySpin's grid).  Since 0.9.33 (B84) the widths
+# are rotation covariant, unlike EasySpin's (element-wise square of the
+# rotated strain matrix), and the grid is D2h in the g frame: cosine 0.976225,
+# max deviation 0.364.  test_pepper_gstrain_ham_gframe_converged_reference
+# checks the default against EasySpin's untilted spectrum and a converged grid.
 _B82_XFAIL = pytest.mark.xfail(
     strict=True, reason='B82: EasySpin\'s automatic grid ignores gStrain with a gFrame '
                         '(KNOWN_LIMITATIONS, automatic grid symmetry and strains)')
@@ -345,13 +349,28 @@ def test_pepper_gstrain_ham_vs_easyspin(name):
 
 
 def test_pepper_gstrain_ham_gframe_converged_reference():
-    """gFrame case on the default grid against a no-interpolation C1 [91 1] grid
-    (which agrees with C1 [181 1] to 6.7e-9 in 1 - cos): 1 - cos 1.070e-7 (Ham)
-    and 1.058e-7 (g); EasySpin's spectrum 2.777e-3."""
+    """gFrame case: the 'gframe' system is the 'diag' system rotated by gFrame.
+
+    Since 0.9.33 (B84; rotation-covariant strain widths) the default spectrum
+    (D2h [19 4] in the g frame) equals the untilted system's (1e-13) and
+    EasySpin's untilted ('diag') spectrum with the 'diag' tolerances (cosine
+    0.9999999966, max deviation 9.2e-5).  Against a no-interpolation C1 [91 1]
+    grid (which agrees with C1 [181 1] to 3.5e-8 in 1 - cos) the D2h grid at
+    [31 4] gives 8.8e-8 (Ham and g); the default [19 4] gives 9.5e-7, as for
+    the untilted system (before 0.9.33 the Ci default gave 1.07e-7 for the old,
+    non-covariant widths).  EasySpin's gframe spectrum: 2.40e-2.
+    """
     c, s_h, s_g, exp = _gstrain_case('gframe')
+    ref = np.asarray(_ref_cases()['diag'].spc, dtype=float)    # EasySpin, untilted
+    y0 = np.asarray(pepper(SpinSystem(S=[0.5], g=G, lw=float(c.SysH.lw),
+                                      gStrain=s_g.gStrain[0].tolist()), exp)[1])
     y_ref = np.asarray(pepper(s_g, exp, Options(GridSymmetry='C1', GridSize=[91, 1]))[1])
     for s in (s_h, s_g):
-        assert 1 - _cos(np.asarray(pepper(s, exp)[1]), y_ref) < 1.2e-7
+        y = np.asarray(pepper(s, exp)[1])
+        assert np.max(np.abs(y - y0)) < 1e-10 * np.max(np.abs(y0))
+        assert _cos(y, ref) > 0.9999999
+        assert np.max(np.abs(y - ref)) < 3e-4 * np.max(np.abs(ref))
+        assert 1 - _cos(np.asarray(pepper(s, exp, Options(GridSize=[31, 4]))[1]), y_ref) < 1.2e-7
     assert 1 - _cos(np.asarray(c.spc, dtype=float), y_ref) > 1e-3     # EasySpin's grid
 
 
