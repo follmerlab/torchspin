@@ -1,6 +1,6 @@
 """DDPOWH: powder EPR, FDMR, ENDOR and NMR/NQR spectra at field points, with Telser's level strain.
 
-Torch port of Joshua Telser's DDPOWH in its exact mode (via telser-tools, ``telser_tools_diff.ddpowh``),
+Torch port of Josh Telser's DDPOWH in its exact mode (via telser-tools, ``telser_tools_diff.ddpowh``),
 on a torchspin :class:`~torchspin.SpinSystem`.  The Hamiltonian is torchspin's (``ham``: H = H0 - B n.mu),
 plus two optional Telser terms that torchspin's core does not carry yet (``zeeman2`` for the second-order
 Zeeman w (mu_B B.S)^2 and ``h0_extra`` for the I.S^3 hyperfine U; :mod:`torchspin.lft.telser2torchspin`

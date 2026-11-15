@@ -1,6 +1,6 @@
 """DDNLOOP: d^n levels and EPR transitions over field, angle and parameter scans.
 
-Torch port of the numerical core of Joshua Telser's DDNLOOP (via telser-tools,
+Torch port of the numerical core of Josh Telser's DDNLOOP (via telser-tools,
 ``telser_tools_diff.ddnloop``), built on :mod:`torchspin.lft.ddn`.  For every scan point
 (field magnitude B, polar angle theta, azimuth phi) the complete d^n Hamiltonian with the field
 B (sin t cos p, sin t sin p, cos t) is diagonalized (batched over the scan), and DDNLOOP's

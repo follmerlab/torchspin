@@ -1,6 +1,6 @@
 """Frozen telser-tools outputs for the torchspin.lft parity tests.
 
-torchspin.lft ports Joshua Telser's programs from telser-tools, which CI does not install.  Every
+torchspin.lft ports Josh Telser's programs from telser-tools, which CI does not install.  Every
 value a parity test takes from telser-tools (results, parsed inputs, constants) comes from an
 *oracle*: a function in the test module, registered with :func:`oracle`, that calls telser-tools
 and returns plain data (a dict of NumPy arrays and JSON values).  The test asks :func:`ref` for it:

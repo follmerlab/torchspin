@@ -1,6 +1,6 @@
 # Ligand-field tools
 
-`torchspin.lft` brings Joshua Telser's ligand-field programs (DDN, DDNFIT,
+`torchspin.lft` brings Josh Telser's ligand-field programs (DDN, DDNFIT,
 DDNSUS, DDNMAG, DDNPOW, DPN, DSOXF, Tanabe–Sugano, DLSD5, ...) into torchspin,
 ported from [telser-tools](https://github.com/follmerlab/telser-tools).  Use
 them to go from a ligand-field model (Racah parameters, crystal field or

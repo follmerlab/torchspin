@@ -1,6 +1,6 @@
 """DDNPOW: powder EPR (field-swept and frequency-domain) directly from the complete d^n model.
 
-Torch port of Joshua Telser's DDNPOW in its exact mode (via telser-tools,
+Torch port of Josh Telser's DDNPOW in its exact mode (via telser-tools,
 ``telser_tools_diff.ddnpow``), built on :mod:`torchspin.lft.ddn`.  No spin Hamiltonian is
 involved: for every orientation n of the grid and every field B of the sweep,
 H = H0 + mu_B B n . (k L + g_e S) of the full d^n basis is diagonalized and every requested

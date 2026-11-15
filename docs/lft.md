@@ -1,6 +1,6 @@
 # `torchspin.lft`: ligand-field tools (Telser's programs, differentiable)
 
-`torchspin.lft` brings Joshua Telser's ligand-field and EPR programs into torchspin. Each one is
+`torchspin.lft` brings Josh Telser's ligand-field and EPR programs into torchspin. Each one is
 ported from [telser-tools](https://github.com/follmerlab/telser-tools) (`telser_tools_diff`), which
 reproduces the original Fortran. Every parameter can carry gradients, so a ligand-field model can be
 fitted directly to band energies, magnetometry, g values and EPR spectra, together, with exact

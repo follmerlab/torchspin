@@ -1,6 +1,6 @@
 # torchspin.lft: ligand-field tools
 
-`torchspin.lft` ports Joshua Telser's ligand-field programs (DDN, DDNPOW, DDPOWH, DPN, DSOXF,
+`torchspin.lft` ports Josh Telser's ligand-field programs (DDN, DDNPOW, DDPOWH, DPN, DSOXF,
 Tanabe–Sugano and others) as differentiable PyTorch code. It fits one ligand-field model jointly to
 band energies, magnetometry, g values and EPR spectra. The user guide is [lft.md](../lft.md).
 

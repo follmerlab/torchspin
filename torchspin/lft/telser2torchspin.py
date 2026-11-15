@@ -1,4 +1,4 @@
-"""Converters from Joshua Telser's spin-Hamiltonian conventions to torchspin objects.
+"""Converters from Josh Telser's spin-Hamiltonian conventions to torchspin objects.
 
 Telser's spin-Hamiltonian programs (DDZHQ, DDPOWH, DJDZE, DDPOWJ; ported to Python in telser-tools as
 ``telser_tools.{spin, ddzhq, ddpowh, dimer, djdze, ddpowj}``) compute physics that torchspin already has

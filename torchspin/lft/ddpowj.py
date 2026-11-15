@@ -1,6 +1,6 @@
 """DDPOWJ: field-swept powder EPR of an exchange-coupled dimer, with Telser's product level strain.
 
-Torch port of Joshua Telser's DDPOWJ in its exact mode (via telser-tools, ``telser_tools_diff.ddpowj``).  A
+Torch port of Josh Telser's DDPOWJ in its exact mode (via telser-tools, ``telser_tools_diff.ddpowj``).  A
 dimer is a two-electron torchspin :class:`~torchspin.SpinSystem` (``ee``, ``ee2``; build it from Telser's
 parameters with :func:`torchspin.lft.telser2torchspin.dimer2sys` or :func:`~torchspin.lft.telser2torchspin.ddpowj2sys`),
 so the spectrum is :func:`torchspin.lft.ddpowh.epr` with DDPOWJ's defaults:

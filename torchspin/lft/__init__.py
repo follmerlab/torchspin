@@ -1,4 +1,4 @@
-"""Ligand-field tools: Joshua Telser's programs as differentiable torchspin modules.
+"""Ligand-field tools: Josh Telser's programs as differentiable torchspin modules.
 
 Ported from telser-tools (``telser_tools_diff``).  Modules carry Telser's program names
 (the ligand-field constructors ``lft.aom``, ``lft.aom_isotropic``, ``lft.crystal_field``, ... and

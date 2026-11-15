@@ -59,7 +59,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   an acknowledgment that torchspin was developed with help from Claude (Anthropic).
 - KNOWN_LIMITATIONS: the garlic paragraph listed automatic sweep ranging, isotope mixtures,
   multi-component input and `separate` as not ported; they are ported.
-- "Joshua Telser" is now "Josh Telser" throughout the docs and docstrings.
+- The docs and docstrings refer to Josh Telser by the name he uses.
 
 ### Fixed
 
@@ -1652,7 +1652,7 @@ published separately.
 
 ### Added
 
-- **`torchspin.lft`: ligand-field tools.** Joshua Telser's programs, ported from
+- **`torchspin.lft`: ligand-field tools.** Josh Telser's programs, ported from
   telser-tools and differentiable. `lft.ddn`, `ddnloop`, `ddnpow`, `ddnfit`, `ddnsus`, `ddnmag`,
   `dpn`, `dpnfit`, `dsoxf`, `tanabe_sugano`, `dlsd5`, `dipole`, `dtd`.
   - `lft.fit.JointFit` fits one model to band energies, g values, χ, M and EPR spectra together,

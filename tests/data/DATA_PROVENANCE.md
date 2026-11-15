@@ -233,7 +233,7 @@ centered bins moved (B85).
 
 `torchspin/tests/data/telser/refs/<group>.npz`: the telser-tools outputs used by the
 `torchspin.lft` parity tests (`torchspin/tests/test_lft_<group>.py`), so that those tests run
-without telser-tools (as in CI). Tag: **External** (Joshua Telser's programs as ported to
+without telser-tools (as in CI). Tag: **External** (Josh Telser's programs as ported to
 NumPy in telser-tools, the source of the `torchspin.lft` port; independent of the torchspin
 code under test). Each file holds the values of the oracles that the test module registers
 (`torchspin/tests/_telser_refs.py`), as a JSON tree plus one flat array per dtype, with no
