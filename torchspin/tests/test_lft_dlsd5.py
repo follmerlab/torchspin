@@ -80,7 +80,9 @@ def _same(a, b):
     for f in a.__dataclass_fields__:
         x, y = getattr(a, f), getattr(b, f)
         if isinstance(x, float) and isinstance(y, float):
-            R.same_bits(x, y, f)                # NaN == NaN; exact live, round-off when frozen
+            # NaN == NaN; exact live; frozen: round-off of the O(1) normalized coefficients and g values
+            # the fields are computed from (Linux: c = 0.0992 moved by 2.4e-16, 1 ulp of 1)
+            R.same_bits(x, y, f, scale_floor=1.0)
         else:
             assert x == y, (f, x, y)
 

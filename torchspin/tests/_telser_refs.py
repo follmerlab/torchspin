@@ -80,9 +80,11 @@ def live() -> bool:
 FROZEN_ULPS = 4
 
 
-def same_bits(got, want, what: str = "") -> None:
+def same_bits(got, want, what: str = "", scale_floor: float = 0.0) -> None:
     """Assert ``got == want`` exactly when the oracle ran live; when it is a frozen copy, within
-    ``FROZEN_ULPS`` units in the last place of the largest |want| (cross-platform round-off only)."""
+    ``FROZEN_ULPS`` units in the last place of the largest |want| (cross-platform round-off only).
+    ``scale_floor``: the scale of the quantities the value was computed from, when larger (a small
+    result of O(1) operations carries O(1) round-off)."""
     g = np.asarray(got, dtype=float) if not isinstance(got, np.ndarray) else got
     w = np.asarray(want, dtype=float) if not isinstance(want, np.ndarray) else want
     assert g.shape == w.shape, (what, g.shape, w.shape)
@@ -92,7 +94,7 @@ def same_bits(got, want, what: str = "") -> None:
         return
     nan = np.isnan(w)
     assert np.array_equal(np.isnan(g), nan), what
-    scale = float(np.abs(w[~nan]).max()) if (~nan).any() else 0.0
+    scale = max(float(np.abs(w[~nan]).max()) if (~nan).any() else 0.0, scale_floor)
     bound = FROZEN_ULPS * float(np.spacing(max(scale, np.finfo(float).tiny)))
     d = float(np.abs(g[~nan] - w[~nan]).max()) if (~nan).any() else 0.0
     assert d <= bound, f"{what}: frozen copy differs by {d:.3g} (> {FROZEN_ULPS} ulp of {scale:.3g} = {bound:.3g})"
