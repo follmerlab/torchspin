@@ -151,10 +151,11 @@ LLMK, 256 points.
 - **(c) Tight threshold.** fast with `Opt.Threshold` 1e-10 or 1e-12 matches general direct (cosine
   0.999998, ratio 1.00013). torchspin's default (pruned basis with the mirror term) and its plain
   direct solve both match EasySpin's general direct solve at cosine 1.000000, ratio 1.00000.
-- **(d) `simple_tc1e-07`.** For the one loosened case of `test_chili_ext_matlab_validation.py`
-  (0.997 / 8 %), EasySpin's default fast output is 0.9979 / 1.069 from its own output at
-  `Threshold` 1e-10. torchspin matches the converged fast output at cosine 0.9999966. The loose entry
-  measures EasySpin's early stop, not a torchspin error.
+- **(d) `simple_tc1e-07`.** For the one case of `test_chili_ext_matlab_validation.py` that had been
+  loosened (0.997 / 8 %), EasySpin's default fast output is 0.9979 / 1.069 from its own output at
+  `Threshold` 1e-10. torchspin matches the converged fast output at cosine 0.9999966. The residual
+  is EasySpin's early stop, not a torchspin error, so the comparison with EasySpin's default output
+  is now a strict xfail at the default 0.999 / 2 %.
 
 ## Tests
 
@@ -263,8 +264,6 @@ The three-nucleus direct solves were stopped unfinished (see the end of the Scop
 
 ## Open items
 
-- **`simple_tc1e-07` loose entry.** It could be tightened against the converged EasySpin reference
-  (d), which torchspin matches at cosine 0.9999966. That decision is pending.
 - **Two nuclei in MATLAB.** A code comment records fast against general + MpSymm with an amplitude
   ratio of 2.0024, 0.12 % beyond the identity. Unexplained; possibly another early stop.
 - **The S = 1 mirror residual** of 2e-8 at D = 500 MHz is unexplained.

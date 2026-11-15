@@ -69,9 +69,9 @@ an explicit `MpSymm=True` raises. See [chili_empirical_rules.md](../chili_empiri
 **Against stored EasySpin output:**
 
 - `test_chili_ext_matlab_validation.py::test_chili_vs_matlab`: 60 cases, cosine > 0.999, amplitude
-  ±2 %. The one loosened case, `simple_tc1e-07` (0.997 / 8 %), measures 0.99798 / 1.066 against
-  EasySpin's default output, which stopped its continued fraction early. Against EasySpin's
-  converged output torchspin agrees at cosine 0.9999966
+  ±2 %, with no loosened case. `simple_tc1e-07` is a strict xfail at 0.99798 / 1.066: its reference,
+  EasySpin's default output, stopped its continued fraction early. Against EasySpin's converged
+  output torchspin agrees at cosine 0.9999966
   (`test_chili_lanczos.py::test_simple_tc1e7_matches_converged_easyspin_fast`).
 - `test_chili_default_basis.py::test_default_basis_matches_easyspin_default_across_tcorr`: cosine
   > 0.9999 at four correlation times, for the default and for the plain basis.
