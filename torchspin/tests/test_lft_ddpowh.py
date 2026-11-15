@@ -5,7 +5,8 @@
    (tolerances from the grid calibration in docs/lft_gap_analysis.md), NQR/NMR closed forms, the w and U
    operators, and gradients (autograd vs central differences; forward mode with dual numbers equals reverse
    mode).  ``torch.func.jacfwd`` does not apply: its vmap cannot run the data-dependent line windows.
-2. Parity with telser-tools (skipped when it is absent): every golden DDPOWH (70) and DDPOWJ (33) input of
+2. Parity with telser-tools (live when it is importable, else its frozen outputs in data/telser/refs, see
+   ``_telser_refs``): every golden DDPOWH (70) and DDPOWJ (33) input of
    telser-tools tests/reference, converted with ``telser2torchspin.ddpowh2sys/ddpowj2sys(target='lft')``,
    matches telser-tools' exact mode to 1e-10 of the spectrum maximum (measured <= 4.5e-11), with the
    single-option switches; and the same inputs with strain off agree with ``pepper`` as the converter's
@@ -17,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import types
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +29,8 @@ import torch.autograd.forward_ad as fwAD
 from torchspin import Experiment, Options, SpinSystem, pepper
 from torchspin.lft import ddpowh, ddpowj
 from torchspin.lft import telser2torchspin as t2t
+from torchspin.tests import _telser_refs as R
+from torchspin.tests.test_lft_telser2torchspin import freeze_constants, freeze_input, thaw_input
 
 F64 = torch.float64
 GOLD = json.loads((Path(__file__).parent / "data" / "telser" / "ddpow_golden_inputs.json").read_text())
@@ -330,13 +334,48 @@ def test_gradients_dimer_exchange_and_strain():
 
 
 # ============================================================================== 2. telser-tools parity
-def _tt(name):
-    return pytest.importorskip(f"telser_tools.{name}")
+# telser-tools values come from oracles: live when telser-tools is importable, else the frozen copy in
+# data/telser/refs/ddpowh.npz (see _telser_refs).  Inputs are rebuilt from stored data as in
+# test_lft_telser2torchspin (freeze_input/thaw_input); constants as a namespace of telser-tools' CODATA 2018.
+def _read(prog, name, **replace):
+    import importlib
+    inp = importlib.import_module(f"telser_tools.{prog}").read_input(GOLD[prog][name])
+    return dataclasses.replace(inp, **replace) if replace else inp
+
+
+def _sim(prog, inp, **kw):
+    """telser-tools' exact-mode spectra as [{x, y}]."""
+    import importlib
+    res = importlib.import_module(f"telser_tools.{prog}").simulate(inp, **kw)
+    return [dict(x=np.asarray(s.x, dtype=float), y=np.asarray(s.y, dtype=float)) for s in res.spectra]
+
+
+_GOLDEN_CASES = [f"ddpowh/{n}" for n in GOLD["ddpowh"]] + [f"ddpowj/{n}" for n in GOLD["ddpowj"]]
+
+
+@R.oracle("ddpowh", cases=_GOLDEN_CASES)
+def _telser_golden(case):
+    """A golden input (as data) and its telser-tools exact-mode spectra."""
+    prog, name = case.split("/")
+    inp = _read(prog, name)
+    return dict(inp=freeze_input(inp), spectra=_sim(prog, inp))
+
+
+def _golden(prog, name):
+    ref = R.ref(_telser_golden, f"{prog}/{name}")
+    return thaw_input(ref["inp"]), ref["spectra"]
+
+
+@R.oracle("ddpowh")
+def _telser_constants():
+    from telser_tools.spin import CODATA2018
+    return freeze_constants(CODATA2018)
 
 
 @pytest.fixture(scope="module")
 def C():
-    return pytest.importorskip("telser_tools.spin").CODATA2018
+    """telser-tools' CODATA 2018 constants (spin.CODATA2018) as a namespace."""
+    return types.SimpleNamespace(**R.ref(_telser_constants))
 
 
 def _scale_for(sp):
@@ -347,13 +386,13 @@ def _scale_for(sp):
 def _assert_parity(ref_spectra, conv, out, rtol=1e-10):
     assert len(ref_spectra) == len(out)
     for a, b, sp in zip(ref_spectra, out, conv.extras["spectra"]):
-        np.testing.assert_allclose(np.asarray(sp["x"]), np.asarray(a.x), rtol=1e-14, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(sp["x"]), a["x"], rtol=1e-14, atol=1e-12)
         y = b.spectrum.detach().numpy() * _scale_for(sp)
-        sc = np.abs(a.y).max()
+        sc = np.abs(a["y"]).max()
         if sc < 1e-20:                                   # an exactly vanishing spectrum (parallel mode, iso g)
             assert np.abs(y).max() < 1e-25
             continue
-        assert np.abs(a.y - y).max() <= rtol * sc, np.abs(a.y - y).max() / sc
+        assert np.abs(a["y"] - y).max() <= rtol * sc, np.abs(a["y"] - y).max() / sc
 
 
 _SLOW = {"s52_aFb_rot"}
@@ -362,109 +401,139 @@ _SLOW = {"s52_aFb_rot"}
 @pytest.mark.parametrize("name", [pytest.param(n, marks=pytest.mark.slow) if n in _SLOW else n
                                   for n in GOLD["ddpowh"]])
 def test_ddpowh_golden_inputs_match_telser_tools(name, C):
-    nd = _tt("ddpowh")
-    inp = nd.read_input(GOLD["ddpowh"][name])
+    inp, ref = _golden("ddpowh", name)
     conv = t2t.ddpowh2sys(inp, constants=C, target="lft")
     assert conv.extras["dropped"] == []
     with torch.no_grad():
         out = ddpowh.simulate(conv)
-    _assert_parity(nd.simulate(inp).spectra, conv, out)
+    _assert_parity(ref, conv, out)
 
 
 @pytest.mark.parametrize("name", list(GOLD["ddpowj"]))
 def test_ddpowj_golden_inputs_match_telser_tools(name, C):
-    nj = _tt("ddpowj")
-    inp = nj.read_input(GOLD["ddpowj"][name])
+    inp, ref = _golden("ddpowj", name)
     conv = t2t.ddpowj2sys(inp, constants=C, target="lft")
     with torch.no_grad():
         out = ddpowj.simulate(conv)
-    _assert_parity(nj.simulate(inp).spectra, conv, out)
+    _assert_parity(ref, conv, out)
 
 
-@pytest.mark.parametrize("telser,lft", [
-    (dict(frequency_factor=False), dict(frequency_factor=False)),
-    (dict(normalized_populations=False), dict(normalized_populations=False)),
-    (dict(exact_cutoff=False), dict(exact_cutoff=False)),
-    (dict(field_derivative=False), dict(field_derivative=False)),
-    (dict(grid="fortran"), dict(grid="fortran")),
-])
-def test_ddpowh_option_switches(telser, lft, C):
-    nd = _tt("ddpowh")
-    for name in ("s32_pop_deriv", "rhombic_s12_lorentz_deriv", "s32_strain"):
-        inp = nd.read_input(GOLD["ddpowh"][name])
+_OPTION_SWITCHES = {
+    "frequency_factor": (dict(frequency_factor=False), dict(frequency_factor=False)),
+    "normalized_populations": (dict(normalized_populations=False), dict(normalized_populations=False)),
+    "exact_cutoff": (dict(exact_cutoff=False), dict(exact_cutoff=False)),
+    "field_derivative": (dict(field_derivative=False), dict(field_derivative=False)),
+    "grid": (dict(grid="fortran"), dict(grid="fortran")),
+}
+_OPTION_INPUTS = ("s32_pop_deriv", "rhombic_s12_lorentz_deriv", "s32_strain")
+
+
+@R.oracle("ddpowh", cases=list(_OPTION_SWITCHES))
+def _telser_option_switch(case):
+    return {name: _sim("ddpowh", _read("ddpowh", name), **_OPTION_SWITCHES[case][0]) for name in _OPTION_INPUTS}
+
+
+@pytest.mark.parametrize("case", list(_OPTION_SWITCHES))
+def test_ddpowh_option_switches(case, C):
+    lft = _OPTION_SWITCHES[case][1]
+    refs = R.ref(_telser_option_switch, case)
+    for name in _OPTION_INPUTS:
+        inp, _ = _golden("ddpowh", name)
         conv = t2t.ddpowh2sys(inp, constants=C, target="lft")
         with torch.no_grad():
             out = ddpowh.simulate(conv, **lft)
-        ref = nd.simulate(inp, **telser).spectra
         if lft.get("field_derivative") is False and inp.epr_deriv:   # d/dnu: no per-gauss factor
             out = tuple(r._replace(spectrum=r.spectrum * 10.0) for r in out)
-        _assert_parity(ref, conv, out)
+        _assert_parity(refs[name], conv, out)
+
+
+_ENDOR_SWITCHES = (("endor_flag_LG", dict(endor_shape_flag="epr"), dict(intensity_shape="epr")),
+                   ("endor_s32_pop_strain", dict(endor_field_strain=False), dict(field_strain=False)))
+
+
+@R.oracle("ddpowh")
+def _telser_endor_option_switches():
+    return {name: _sim("ddpowh", _read("ddpowh", name), **telser) for name, telser, _ in _ENDOR_SWITCHES}
 
 
 def test_ddpowh_endor_option_switches(C):
-    nd = _tt("ddpowh")
-    for name, telser, lft in (("endor_flag_LG", dict(endor_shape_flag="epr"), dict(intensity_shape="epr")),
-                              ("endor_s32_pop_strain", dict(endor_field_strain=False), dict(field_strain=False))):
-        inp = nd.read_input(GOLD["ddpowh"][name])
+    refs = R.ref(_telser_endor_option_switches)
+    for name, _, lft in _ENDOR_SWITCHES:
+        inp, _ = _golden("ddpowh", name)
         conv = t2t.ddpowh2sys(inp, constants=C, target="lft")
         with torch.no_grad():
             out = ddpowh.simulate(conv, **lft)
-        _assert_parity(nd.simulate(inp, **telser).spectra, conv, out)
+        _assert_parity(refs[name], conv, out)
 
 
-@pytest.mark.parametrize("sigma", [(5.0, 5.0, 5.0), (2.0, 4.0, 9.0)])
-def test_nmr_shielding_matches_telser_tools(sigma, C):
+_SIGMAS = [(5.0, 5.0, 5.0), (2.0, 4.0, 9.0)]
+
+
+@R.oracle("ddpowh", cases=range(len(_SIGMAS)))
+def _telser_nmr_shielding(k):
+    return _sim("ddpowh", _read("ddpowh", "nmr_h1_shield", sigma_khz=_SIGMAS[k]))
+
+
+@pytest.mark.parametrize("k", range(len(_SIGMAS)), ids=[str(s) for s in _SIGMAS])
+def test_nmr_shielding_matches_telser_tools(k, C):
     """The golden shielding input (nmr_h1_shield) shifts the line out of its +-10 kHz window in both programs;
     with shieldings of a few kHz the anisotropic shielded powder line is inside it (measured 9e-12)."""
-    nd = _tt("ddpowh")
-    inp = dataclasses.replace(nd.read_input(GOLD["ddpowh"]["nmr_h1_shield"]), sigma_khz=sigma)
+    inp = dataclasses.replace(_golden("ddpowh", "nmr_h1_shield")[0], sigma_khz=_SIGMAS[k])
     conv = t2t.ddpowh2sys(inp, constants=C, target="lft")
     assert conv.extras["spectra"][0]["func"] == "nmr"
     with torch.no_grad():
         out = ddpowh.simulate(conv)
-    ref = nd.simulate(inp).spectra
-    assert np.abs(ref[0].y).max() > 0
+    ref = R.ref(_telser_nmr_shielding, k)
+    assert np.abs(ref[0]["y"]).max() > 0
     _assert_parity(ref, conv, out)
 
 
-@pytest.mark.parametrize("name", ["cu2_strain", "s1_s12_strain"])
+_S12_NAMES = ["cu2_strain", "s1_s12_strain"]
+
+
+@R.oracle("ddpowh", cases=_S12_NAMES)
+def _telser_s12_strain_weight(name):
+    inp = _read("ddpowj", name)
+    return dict(spectra=_sim("ddpowj", inp, s12_strain_weight=1.0),
+                y0=_sim("ddpowj", inp)[0]["y"] if inp.strain else None)
+
+
+@pytest.mark.parametrize("name", _S12_NAMES)
 def test_ddpowj_fortran_s12_strain_weight(name, C):
     """DDPOWJ-10: s12_strain_weight=1.0 reproduces telser-tools' option of the same name (the Fortran's WMS = 1)."""
-    nj = _tt("ddpowj")
-    inp = nj.read_input(GOLD["ddpowj"][name])
+    inp, _ = _golden("ddpowj", name)
     conv = t2t.ddpowj2sys(inp, constants=C, target="lft", s12_strain_weight=1.0)
     with torch.no_grad():
         out = ddpowj.simulate(conv)
-    ref = nj.simulate(inp, s12_strain_weight=1.0).spectra
+    r = R.ref(_telser_s12_strain_weight, name)
+    ref = r["spectra"]
     _assert_parity(ref, conv, out)
     if inp.strain:
-        y0 = nj.simulate(inp).spectra[0].y
-        assert np.abs(ref[0].y - y0).max() > 1e-3 * np.abs(y0).max()     # the option matters here
+        y0 = r["y0"]
+        assert np.abs(ref[0]["y"] - y0).max() > 1e-3 * np.abs(y0).max()     # the option matters here
 
 
-def test_converter_lft_target_maps_what_pepper_cannot(C):
+def test_converter_lft_target_maps_what_pepper_cannot():
     """Every input the pepper path refuses (strain, mixed H1, S = 0) converts with target='lft'.  (Lorentzian
     lines map to pepper's HStrainL since 0.7.7; target='lft' maps them too.)"""
-    nd = _tt("ddpowh")
-    conv = t2t.ddpowh2sys(nd.read_input(GOLD["ddpowh"]["rhombic_s12_lorentz"]), target="lft")
+    conv = t2t.ddpowh2sys(_golden("ddpowh", "rhombic_s12_lorentz")[0], target="lft")
     assert conv.extras["target"] == "lft" and conv.extras["dropped"] == []
     for name in ("s32_strain", "mode_1_nrho8", "nqr_n14"):
-        inp = nd.read_input(GOLD["ddpowh"][name])
+        inp, _ = _golden("ddpowh", name)
         with pytest.raises(NotImplementedError):
             t2t.ddpowh2sys(inp)
         conv = t2t.ddpowh2sys(inp, target="lft")
         assert conv.extras["target"] == "lft" and conv.extras["dropped"] == []
     with pytest.raises(ValueError):
-        t2t.ddpowh2sys(nd.read_input(GOLD["ddpowh"]["rhombic_s12"]), target="easyspin")
+        t2t.ddpowh2sys(_golden("ddpowh", "rhombic_s12")[0], target="easyspin")
     with pytest.raises(ValueError):
-        ddpowh.simulate(t2t.ddpowh2sys(nd.read_input(GOLD["ddpowh"]["rhombic_s12"])))
+        ddpowh.simulate(t2t.ddpowh2sys(_golden("ddpowh", "rhombic_s12")[0]))
 
 
-def test_default_constants_codata_2022(C):
+def test_default_constants_codata_2022():
     """Without constants= the lft run uses torchspin's CODATA 2022 mu_B: 1e-9-level shifts, not 1e-12."""
-    nd = _tt("ddpowh")
-    inp = nd.read_input(GOLD["ddpowh"]["cu_axial"])
-    ref = nd.simulate(inp).spectra[0].y
+    inp, spectra = _golden("ddpowh", "cu_axial")
+    ref = spectra[0]["y"]
     with torch.no_grad():
         y = ddpowh.simulate(t2t.ddpowh2sys(inp, target="lft"))[0].spectrum.numpy()
     d = np.abs(ref - y).max() / np.abs(ref).max()
@@ -485,8 +554,7 @@ def _w(w):
     ("j", "cu2_halffield", dict(igloo=40), 5e-3),
 ])
 def test_lft_on_telser_inputs_matches_pepper(prog, name, replace, tol):
-    mod = _tt("ddpowh" if prog == "h" else "ddpowj")
-    inp = dataclasses.replace(mod.read_input(GOLD[f"ddpow{prog}"][name]), **replace)
+    inp = dataclasses.replace(_golden(f"ddpow{prog}", name)[0], **replace)
     f = t2t.ddpowh2sys if prog == "h" else t2t.ddpowj2sys
     lm = ddpowh if prog == "h" else ddpowj
     with torch.no_grad():
