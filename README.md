@@ -62,6 +62,42 @@ existing PyTorch, uv projects, the extras, and what package metadata can and can
 
 ---
 
+## Documentation
+
+**https://follmerlab.github.io/torchspin/** has a user guide, the tutorials
+below, and an API reference for every public function and class with the
+parameters it accepts. Its sources are in [docs/](docs/index.md); CI builds it
+on every change and publishes it from `main`. To build it locally:
+
+```bash
+pip install -e ".[docs]"
+make -C docs html          # then open docs/_build/html/index.html
+```
+
+---
+
+## Tutorials
+
+Start with `01_torchspin_quickstart.ipynb`, then branch to autograd or fitting
+depending on what you need. Full index: [docs/index.md](docs/index.md).
+
+| Notebook | What it covers |
+|---|---|
+| `01_torchspin_quickstart` | Core API: spin systems, Hamiltonians, powder and solution spectra |
+| `02_gpu_and_autograd` | GPU execution and differentiable spectra |
+| `03_spectral_fitting` | Parameter recovery with `esfit` |
+| `04_benchmarks` | Timings against MATLAB/EasySpin |
+| `05_fitting_real_world` | Bad starting guesses, loss landscapes, global vs local search |
+| `06_blue_copper_fitting` | End-to-end Cu(II) case study |
+| `07_easyspin_parity` | Overlays against stored EasySpin references |
+| `08_pepper_playground` | Simulate, add noise, fit with every `esfit` method |
+| `09_fit_gui` | Interactive fitting panel: sliders, live fit, RMSD trace |
+
+They live in `examples/notebooks/`, with scripted equivalents of EasySpin's
+example collection in `examples/{solidstate,liquids,slowmotion,endor,fitting,magnetometry}`.
+
+---
+
 ## Quick start
 
 ### CW powder spectrum (`pepper`)
@@ -200,42 +236,6 @@ These match EasySpin, so parameters transfer directly:
 | Machine learning | `torchspin.ml` — parameter packing, batched simulation, datasets, differentiable losses |
 | Data I/O | `eprload` (14 vendor formats), `eprsave` (BES3T), `orca2torchspin` |
 | Batch / GPU | `batch_pepper`, `batch_simulate`; `Options(device='cuda')` |
-
----
-
-## Documentation
-
-**https://follmerlab.github.io/torchspin/** has a user guide, the tutorials
-below, and an API reference for every public function and class with the
-parameters it accepts. Its sources are in [docs/](docs/index.md); CI builds it
-on every change and publishes it from `main`. To build it locally:
-
-```bash
-pip install -e ".[docs]"
-make -C docs html          # then open docs/_build/html/index.html
-```
-
----
-
-## Tutorials
-
-Start with `01_torchspin_quickstart.ipynb`, then branch to autograd or fitting
-depending on what you need. Full index: [docs/index.md](docs/index.md).
-
-| Notebook | What it covers |
-|---|---|
-| `01_torchspin_quickstart` | Core API: spin systems, Hamiltonians, powder and solution spectra |
-| `02_gpu_and_autograd` | GPU execution and differentiable spectra |
-| `03_spectral_fitting` | Parameter recovery with `esfit` |
-| `04_benchmarks` | Timings against MATLAB/EasySpin |
-| `05_fitting_real_world` | Bad starting guesses, loss landscapes, global vs local search |
-| `06_blue_copper_fitting` | End-to-end Cu(II) case study |
-| `07_easyspin_parity` | Overlays against stored EasySpin references |
-| `08_pepper_playground` | Simulate, add noise, fit with every `esfit` method |
-| `09_fit_gui` | Interactive fitting panel: sliders, live fit, RMSD trace |
-
-They live in `examples/notebooks/`, with scripted equivalents of EasySpin's
-example collection in `examples/{solidstate,liquids,slowmotion,endor,fitting,magnetometry}`.
 
 ---
 
