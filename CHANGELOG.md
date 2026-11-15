@@ -14,6 +14,35 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.34] — 2026-11-14
+
+### Fixed
+
+- **DCD trajectories with a CHARMM unit-cell record are read correctly (B97).** `_read_dcd`
+  took the unit-cell flag from bit 0 of the int32 at file offset 84, which is the CHARMM
+  VERSION (24 in NAMD files, so the flag was always off). Every frame's 56-byte unit-cell record
+  was then read as coordinates, and both bundled trajectories came out shifted: the first x value
+  of `A10R1_polyAla.dcd` was 0.0 instead of -14.474 (max error 60.5 Å over the EasySpin atom
+  subset), `A10TOAC_polyAla.dcd` gave values up to 1.8e34. The frame count (20 and 4) was right
+  only because the leftover bytes were too short for another frame. The reader now follows
+  `md_readdcd.m`: VERSION > 0 means CHARMM, the int32 at offset 48 == 1 marks the unit-cell
+  record and the one at offset 52 == 1 a fourth coordinate record; VERSION == 0 means X-PLOR, with
+  no extra records and DELTA read as a float64 (it was read as a float32). Deviation from
+  EasySpin: `md_readdcd.m` treats the 4-dims flag as a unit-cell flag (skipping 56 bytes before
+  x); torchspin skips the fourth coordinate record after z instead. Coordinates of both
+  bundled files now equal EasySpin's `md_readdcd` exactly, and `mdload`'s `FrameTraj`,
+  `FrameTrajwrtProt` and `RProtDiff` match EasySpin's `mdload_files_R1/TOAC.mat` to 4e-16
+  (errors up to 1.95 before). `mdhmm` and the cardamom MD tests use the pre-processed
+  `MTSSL_polyAla_traj.mat` and are unaffected.
+
+### Tests
+
+- New `ref_md_readdcd.mat` (`tests/data/generate_md_readdcd_refs.m`, EasySpin `md_readdcd`).
+  `test_mdload.py` checks the bundled DCD coordinates against it, that the reader consumes the
+  files exactly to EOF with one unit-cell record per frame, that the fixed protein atoms equal
+  the PDB coordinates in every frame, the `mdload` label frames against EasySpin's
+  `mdload_files_*.mat`, and synthetic CHARMM files with and without the unit-cell and 4-dims
+  records plus an X-PLOR file. 12 of the 13 new tests fail before the fix.
 ## [0.9.33] — 2026-11-14
 
 ### Fixed
