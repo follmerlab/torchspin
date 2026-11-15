@@ -1,11 +1,39 @@
-# torchspin documentation
+# torchspin
 
-torchspin is a differentiable PyTorch port of EasySpin. The API mirrors EasySpin's (`SpinSystem`,
-`Experiment`, `Options`, `pepper`, `garlic`, `chili`, `salt`, `saffron`, `cardamom`, `esfit`, …), so the
-[EasySpin documentation](https://easyspin.org/easyspin/documentation/) is the reference for the physics
-and the meaning of parameters; this page collects torchspin's own material.
+**Simulate and fit EPR spectra in Python.** torchspin is a PyTorch
+reimplementation of [EasySpin](https://easyspin.org)'s simulators: powder and
+single-crystal CW EPR (`pepper`), solution and slow-motion spectra (`garlic`,
+`chili`), ENDOR (`salt`), pulse EPR (`saffron`), magnetometry (`curry`) and
+least-squares fitting (`esfit`), with EasySpin's parameter names, units and
+conventions.  Because it is built on PyTorch, spectra are differentiable with
+respect to the spin Hamiltonian parameters and can run on a GPU.
 
-## Tutorials (executed notebooks, `examples/notebooks/`)
+## Start here
+
+- **Install**: `pip install torchspin` (details and extras in
+  [Getting started](getting_started.md#installation)).
+- **Simulate a first spectrum**: [Solid-state (powder) spectra](guide/powder.md),
+  or the [quickstart tutorial](../examples/notebooks/01_torchspin_quickstart.ipynb).
+- **Fit a measured spectrum**: [Fitting spectra](guide/fitting.md).
+- **Use gradients or a GPU**: [Gradients and differentiable simulation](guide/gradients.md).
+
+```python
+from torchspin import SpinSystem, Experiment, pepper
+
+cu = SpinSystem(S=0.5, g=[2.05, 2.05, 2.25], Nucs='63Cu', A=[50, 50, 520], HStrain=[60, 60, 90])
+B, spc = pepper(cu, Experiment(mwFreq=9.5, Range=[260, 360]))   # field in mT, derivative spectrum
+```
+
+## What is here
+
+- [User guide](guide/index.md): short task pages (powder, solution and slow-motion, ENDOR and
+  pulse, fitting, gradients, orientation grids, ligand-field tools) with runnable examples.
+- [Tutorials](tutorials/index.md): executed notebooks, from the quickstart to real-world fitting.
+- [API reference](api/index.rst): every public function and class with the parameters it accepts.
+- [Troubleshooting and reference](reference.md): pitfalls, known limitations per simulator, and the
+  change log.
+
+## Tutorials
 
 | Notebook | What it shows |
 |---|---|
@@ -19,43 +47,6 @@ and the meaning of parameters; this page collects torchspin's own material.
 | [08 pepper playground](../examples/notebooks/08_pepper_playground.ipynb) | Simulate, add noise, fit with every `esfit` method with live progress; compare recovery, residual and time |
 | [09 fit GUI](../examples/notebooks/09_fit_gui.ipynb) | Interactive panel (`torchspin.fitgui`): sliders, fix boxes, Start/Stop, live fit/residual/RMSD trace |
 
-Scripts with the same coverage as EasySpin's example collection live in `examples/{solidstate,liquids,
-slowmotion,endor,fitting,magnetometry}` (`examples/tests/compare_with_matlab_refs.py` checks them
-against MATLAB references). `examples/fitting/fit_bruker_cw.py` loads a Bruker file with `eprload`,
-reads the acquisition parameters and fits it.
-
-## Machine learning
-
-`torchspin.ml` packages the plumbing for training and inference on top of the
-differentiable simulators: `ParamSpec` (which spin-system fields are free,
-their ranges and transforms, with `pack`/`unpack` to and from a flat tensor),
-`simulate`/`simulate_batch`, `SpectrumDataset` (an `IterableDataset` that
-samples parameters, simulates, normalizes, resamples and adds noise
-deterministically for a given seed) and the differentiable losses
-`cosine_loss` / `rmsd`.
-
-## Ligand-field tools (`torchspin.lft`)
-
-Joshua Telser's ligand-field programs (DDN, DDNFIT, DDNSUS, DDNMAG, DDNLOOP, DDNPOW, DPN, DPNFIT,
-DSOXF, Tanabe–Sugano, DLSD5, DIPOLE, DTD), differentiable, with joint fits of one ligand-field model to
-band energies, magnetometry, g values and EPR spectra, plots in cm⁻¹, and converters for Telser's
-spin-Hamiltonian programs: [lft.md](lft.md), [lft_gap_analysis.md](lft_gap_analysis.md).
-
-## Reference material in the repository
-
-- [README](../README.md) — installation, quick start, feature list, validation status.
-- [KNOWN_LIMITATIONS](../KNOWN_LIMITATIONS.md) — what is and is not ported, per simulator, with the evidence.
-- [Pitfalls](pitfalls.md) — valid settings that quietly degrade a result: perturbation theory at large A/ν,
-  binned garlic spectra in fits, the lsq autoscale sign, satellite-assignment minima, threads that slow
-  a fit down, spidyan step and frame limits.
-- [CHANGELOG](../CHANGELOG.md) — what changed when, including the parity and performance rounds.
-- [Benchmark report](../benchmarks/results/BENCHMARK_REPORT.md) — MATLAB/EasySpin vs torchspin on nine
-  workloads, before and after the 2026-09 optimizations, with profiles and the measurement procedure.
-- [Verified matched-host campaign](https://github.com/follmerlab/torchspin/blob/main/benchmarks/results/workstation_20260904_verified/BENCHMARK_VERIFICATION.md)
-  — the authoritative performance measurement: five replicates per point, medians with IQRs, and a
-  per-workload device audit showing which runs actually used CUDA. Supersedes the benchmark report
-  wherever the two disagree.
-
 ## Running on a workstation
 
 - CPU: torchspin uses all cores through thread pools inside the simulators (`torch.set_num_threads(n)`
@@ -68,7 +59,22 @@ spin-Hamiltonian programs: [lft.md](lft.md), [lft_gap_analysis.md](lft_gap_analy
 - Progress and early stop: `FitOptions(progress='text', max_time=…)`; a kernel interrupt returns the best
   fit so far.
 
-## Tests
+## Benchmarks and tests
 
-`python -m pytest` runs the full suite (about 2800 tests, including the MATLAB-validation modules that
-compare against the stored references in `tests/data`; no MATLAB installation needed).
+- [Benchmark report](../benchmarks/results/BENCHMARK_REPORT.md): MATLAB/EasySpin vs torchspin on nine
+  workloads, before and after the 2026-09 optimizations.  The
+  [verified matched-host campaign](https://github.com/follmerlab/torchspin/blob/main/benchmarks/results/workstation_20260904_verified/BENCHMARK_VERIFICATION.md)
+  (five replicates per point, with a per-workload device audit) supersedes it wherever the two disagree.
+- `python -m pytest` runs the test suite (about 5800 tests, including comparisons against stored
+  EasySpin/MATLAB references in `tests/data`; no MATLAB installation needed).
+
+```{toctree}
+:hidden:
+:maxdepth: 2
+
+getting_started
+guide/index
+tutorials/index
+api/index
+reference
+```
