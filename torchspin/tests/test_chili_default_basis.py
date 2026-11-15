@@ -36,9 +36,9 @@ def test_default_basis_matches_easyspin_default_across_tcorr():
     y_gen = y_gen.numpy()
     assert _cos(y_gen, ref['y_all'][0]) > 0.9999, f'plain basis: cosine {_cos(y_gen, ref["y_all"][0]):.7f}'
     # ... and its Lanczos stops where the spectrum is converged: compare with the exact
-    # solution (eigenvalue solver on the symmetry basis at half amplitude, equal to the
-    # plain basis solved directly to ~1e-8).
+    # solution (eigenvalue solver on the symmetry basis, equal to the plain basis solved
+    # directly to roundoff, see test_chili_mpsymm.py).
     _, y_exact = chili(sys, exp, ChiliOptions(MpSymm=True, Solver='E'))
-    y_exact = y_exact.numpy() / 2
+    y_exact = y_exact.numpy()
     relmax = float(np.max(np.abs(y_gen - y_exact)) / np.max(np.abs(y_exact)))
     assert relmax < PLAIN_LANCZOS_RELMAX, f'plain-basis Lanczos vs exact: relmax {relmax:.2e}'

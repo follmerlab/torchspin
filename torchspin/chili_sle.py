@@ -1062,24 +1062,22 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
     if np.all(F['F1'] == 0) and np.all(F['F2'] == 0):
         raise ValueError("This is an isotropic spin system. chili cannot calculate a slow-motion spectrum.")
 
-    # EasySpin selects its compiled 'fast' Liouvillian builder for one S=1/2 electron
-    # with <= 2 nuclei and no potential; that builder uses the M-pS-pI (Meirovitch)
-    # symmetry basis, which the general method only applies with Opt.MpSymm=true.
-    # Reproducing EasySpin's default output therefore means MpSymm on for those
-    # systems (verified in MATLAB: general+MpSymm vs fast, cosine 0.99999 at
-    # tcorr = 100 ns where the plain general basis gives 0.937).
-    mp_symm = opt.MpSymm
-    if mp_symm is None:
-        # Empirical rule verified against EasySpin (MATLAB, 2026-09-02): with the
-        # rhombic basis (Mmax > 0 and Kmax > 0) fast == general+MpSymm at half
-        # amplitude for every stored case; with an axial basis (Mmax = 0 or
-        # Kmax = 0) fast == plain general.  The fast builder itself is not ported.
-        Mmax, Kmax = int(opt.LLMK[2]), int(opt.LLMK[3])
-        mp_symm = (sys.nElectrons == 1 and float(sys.S[0]) == 0.5 and sys.nNuclei <= 2 and not use_potential
-                   and Mmax > 0 and Kmax > 0)
+    # M-pS-pI (Meirovitch) symmetry, J. Chem. Phys. 77, 3915 (1982), Eq. (A47): without
+    # director tilt, and with a potential that has only M = 0 terms, the Liouvillian
+    # conserves pS + pI - M.  The Sx starting vector then splits into two decoupled
+    # halves, pS + pI - M = +1 and -1 (with highField, pSmin = +1, only the +1 half).
+    # Pruning keeps the +1 block (about 6x fewer functions) and adds the -1 block's
+    # response exactly from the +1 block (mirror term, see the starting vector below),
+    # so MpSymm = None/True/False give the same spectrum.  None prunes whenever the
+    # symmetry holds; True raises where it does not.  EasySpin's general method prunes
+    # without the -1 half (2x amplitude) and without a tilt check; its fast builder
+    # skips the pruning under tilt.  The decision needs the orientation grid (director
+    # tilt), so it is made below.
+    mp_symm_opt = opt.MpSymm
+    pot_M_zero = (not use_potential) or bool(np.all(potential['M'] == 0))
     basis = Basis(LLMK=list(opt.LLMK), jKmin=opt.jKmin, evenK=opt.evenK, pSmin=+1 if opt.highField else -1,
                   pImax=None if opt.pImax is None else np.asarray(opt.pImax, dtype=float),
-                  pImaxall=opt.pImaxall, MpSymm=mp_symm)
+                  pImaxall=opt.pImaxall, MpSymm=False)
     basis = processbasis(basis, int(np.max(potential['K'])) if use_potential else None, list(sys.I), symmetry)
 
     if sys.fullg:
@@ -1118,6 +1116,18 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
         weights = np.array([4 * math.pi])
     weights = 4 * math.pi * weights / weights.sum()
     basis.DirTilt = bool(np.any(theta != 0))
+    mp_symm_valid = (not basis.DirTilt) and pot_M_zero
+    if mp_symm_opt is None:
+        mp_symm = mp_symm_valid
+    elif mp_symm_opt and not mp_symm_valid:
+        why = ("the director is tilted (powder grid with an orienting potential, or a tilted "
+               "Exp.SampleFrame)" if basis.DirTilt else "Sys.Potential has terms with M != 0")
+        raise ValueError(f"Opt.MpSymm=True: the M-pS-pI symmetry does not hold because {why}; "
+                         "the pruned basis would give a wrong spectrum. Use MpSymm=None (automatic) "
+                         "or MpSymm=False.")
+    else:
+        mp_symm = bool(mp_symm_opt)
+    basis.MpSymm = mp_symm
 
     # ---- orientational basis and spin-basis pruning -----------------------------
     basis = generateoribasis(basis)
@@ -1134,6 +1144,7 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
         keep &= np.abs(pI) <= basis.pImax[n]
     keep &= np.abs(pIsum) <= basis.pImaxall
     keep_full = np.tile(keep, nOri)
+    keep_nomp = keep_full.copy()
     if mp_symm:
         psum = pq[:, 0::2].sum(axis=1)
         keep_full &= (psum[None, :] - basis.M[:, None] == 1).reshape(-1)
@@ -1151,7 +1162,20 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
     sqrtPeq = chili_eqpopvec(basis, potential, opt.useStartvecSelectionRules, opt.PeqTol)
     sdet_vec = Sdet.toarray().flatten(order='F')
     sdet_vec = sdet_vec / np.linalg.norm(sdet_vec)
-    start = np.kron(sqrtPeq, sdet_vec)[keep_full]
+    start_all = np.kron(sqrtPeq, sdet_vec)
+    start = start_all[keep_full]
+    # With MpSymm the dropped pS + pI - M = -1 block (present when pSmin = -1) is the
+    # complex-conjugate mirror of the kept +1 block: transposing the spin coherences
+    # (p -> -p) and M -> -M maps one onto the other and conjugates the Liouvillian, and
+    # each block holds half of the (real) starting vector.  Its response at z = -i*omega
+    # is conj(I+(conj z)), so the plain-basis spectrum is recovered exactly as
+    #   I(z) = 1/2 [I+(z) + conj(I+(conj z))],
+    # i.e. by also evaluating the pruned block at omega' = -conj(omega).
+    mirror = mp_symm and basis.pSmin == -1
+    if mp_symm:
+        w_kept = float(np.vdot(start, start).real / np.vdot(start_all[keep_nomp], start_all[keep_nomp]).real)
+        if abs(w_kept - (0.5 if mirror else 1.0)) > 1e-10:
+            raise RuntimeError(f"chili: MpSymm starting-vector weight {w_kept!r} is inconsistent with the symmetry.")
     norm_peq = float(np.linalg.norm(sqrtPeq) ** 2)
     if use_potential and norm_peq < 0.99 and verbose:
         print(f"chili: norm of equilibrium population vector {norm_peq:.3g} (<1: basis may be too small)")
@@ -1185,9 +1209,10 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
             else:
                 scale = 1.0
                 omega = omega0
+            omega_eval = np.concatenate([omega, -np.conj(omega)]) if mirror else omega
             use_direct = solver == '\\'
             if solver == 'L':
-                s_, converged, steps = chili_lanczos(Lm, start, -1j * omega, opt.Threshold)
+                s_, converged, steps = chili_lanczos(Lm, start, -1j * omega_eval, opt.Threshold)
                 if converged:
                     if verbose:
                         print(f"chili: Lanczos converged after {steps} steps (basis {basis_size})")
@@ -1204,31 +1229,27 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
                 I = sp.identity(basis_size, format='csc')
                 Lc = Lm.tocsc()
                 if explicit:
-                    u = spla.spsolve(Lc - 1j * omega[iB] * I, start)
-                    thisspec[iB] = np.vdot(start, u)
+                    om = [omega[iB], -np.conj(omega[iB])] if mirror else [omega[iB]]
+                    r = [np.vdot(start, spla.spsolve(Lc - 1j * o * I, start)) for o in om]
+                    thisspec[iB] = 0.5 * (r[0] + np.conj(r[1])) if mirror else r[0]
                     continue
-                thisspec_i = np.empty(nPoints, dtype=complex)
-                for k in range(nPoints):
-                    u = spla.spsolve(Lc - 1j * omega[k] * I, start)
+                thisspec_i = np.empty(omega_eval.size, dtype=complex)
+                for k in range(omega_eval.size):
+                    u = spla.spsolve(Lc - 1j * omega_eval[k] * I, start)
                     thisspec_i[k] = np.vdot(start, u)
             elif solver == 'E':
                 Ld = Lm.toarray()
                 Lam, U = np.linalg.eig(Ld)
                 amp = (np.conj(start) @ U) * np.linalg.solve(U, start)
-                thisspec_i = np.sum(amp[:, None] / (Lam[:, None] - 1j * omega[None, :]), axis=0)
+                thisspec_i = np.sum(amp[:, None] / (Lam[:, None] - 1j * omega_eval[None, :]), axis=0)
             elif solver != 'L':
                 raise ValueError(f"Unknown Opt.Solver '{solver}'. Use 'L', '\\\\' or 'E'.")
             if not explicit:
-                thisspec = thisspec_i
+                thisspec = 0.5 * (thisspec_i[:nPoints] + np.conj(thisspec_i[nPoints:])) if mirror else thisspec_i
         spec = spec + thisspec * weights[iOri]
 
     # ---- output scaling (chili.m) -------------------------------------------------
     spec = spec / scale * 1e10 / 2
-    if mp_symm and opt.MpSymm is None:
-        # EasySpin's fast builder (its default for these systems) yields exactly half
-        # the amplitude of general+MpSymm (MATLAB: ratio 2.0000 for 1 nucleus, 2.0024
-        # for 2); the automatic selection reproduces the default (fast) output.
-        spec = spec / 2
     if opt.highField:
         spec = spec / 2
     if not field_sweep:
