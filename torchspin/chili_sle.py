@@ -48,7 +48,7 @@ class ChiliSLEOptions:
     highField: bool = False              # pSmin = +1
     pImax: Optional[list] = None
     pImaxall: Optional[int] = None
-    MpSymm: Optional[bool] = None        # None = auto (EasySpin's effective default, see chili_sle)
+    MpSymm: Optional[bool] = None        # None = prune whenever the M-pS-pI symmetry holds
     Solver: str = ''                     # 'L' (Lanczos), '\\' (direct), 'E' (eigen); '' = auto
     FieldSweepMethod: str = ''           # 'approxlin' (default), 'approxinv', 'explicit'
     GridSize: int = 19                   # powder grid (only with an orienting potential)

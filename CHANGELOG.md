@@ -6,6 +6,46 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **chili: the M–pS–pI symmetry basis is derived, exact, and no longer halves `highField`
+  spectra (B114, B115).** Without director tilt, and with a potential that has only M = 0
+  terms, the Liouvillian conserves pS + pI − M. The S_x starting vector then splits into
+  +1 and −1 blocks, and the −1 block is the complex-conjugate mirror of the +1 block:
+  I(z) = ½[I₊(z) + conj(I₊(conj z))]. `MpSymm` now keeps the +1 block and adds the mirror
+  term, so `MpSymm=None`, `True` and `False` return the plain-basis spectrum. Measured against
+  the plain basis solved directly: 5e-16 for a nitroxide, 6e-16 for ⁶³Cu, 5e-11 for S = 1
+  with D = 100 MHz, 2e-8 with D = 500 MHz.
+  - The default (`MpSymm=None`) now prunes every untilted system. Before, an empirical rule
+    applied only to one S = 1/2 electron with ≤ 2 nuclei, no potential and a rhombic LLMK.
+    Pruning shrinks the basis about 6×.
+  - `highField=True` with the default returned 0.5× the plain-basis spectrum (B114). The
+    factor is now 1, as in EasySpin (fast vs general direct: ratio 1.00000).
+  - An explicit `MpSymm=True` raises `ValueError` under director tilt (powder grid with a
+    potential, tilted `Exp.SampleFrame`) or with M ≠ 0 potential terms, where the symmetry
+    does not hold (B115). Before, it returned a wrong spectrum (cosine 0.67, 6.9× amplitude
+    for a nitroxide with `Potential=[2 0 0 1]`, `GridSize=5`), as EasySpin's general method
+    still does.
+  - An explicit `MpSymm=True` no longer returns twice the plain-basis amplitude. EasySpin's
+    general method still does; see KNOWN_LIMITATIONS § Chili.
+- **chili: the Lanczos no longer stops at a near-breakdown (B116).** EasySpin's rule accepts
+  the first check step whose Lentz change is below `Opt.Threshold`. In the pseudo-norm
+  recursion a near-breakdown can pass that test while the continued fraction is far from
+  converged. For the ¹⁴N nitroxide at τc = 100 ns (default LLMK, plain basis) it stopped at
+  step 40, with cosine 0.9648 against the direct solve.
+  - A passing check is now accepted only if the spectrum then moves by less than
+    100 × `Threshold` over the next interval. The accepted spectrum is the same one, so
+    converged results are unchanged.
+  - A full-length tridiagonalization counts as converged.
+  - A Lanczos that does not converge warns once and falls back to the direct solver. Before,
+    it silently returned `ones(nPoints)`, as EasySpin does.
+  - EasySpin's own default (`fast`) output has the same early stop for this nitroxide at
+    256 points (cosine 0.9647 against its general method solved directly). It also explains
+    the loosened ext case `simple_tc1e-07`: with `Opt.Threshold=1e-10`, EasySpin's output
+    matches torchspin to cosine 0.9999966.
+  - Default outputs on the stored EasySpin cases change by at most 0.06 % in amplitude
+    (`simplepotential_grid19`, plain basis on a powder grid). No tolerance was loosened.
+
 ### Tests
 
 - **EasySpin reference for frequency sweeps with field-quadratic `Sys.Ham2xx` terms.** EasySpin's
