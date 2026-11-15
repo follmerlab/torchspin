@@ -13,6 +13,9 @@ resolves them for those platforms.
 
 ## Quick reference
 
+The pip commands assume a virtual environment you have created and activated. The `uv pip` commands assume
+one created with `uv venv`. See [Environments: who creates them](#environments-who-creates-them).
+
 | You want | Commands |
 |---|---|
 | CPU only, any OS (pip) | `pip install torch --index-url https://download.pytorch.org/whl/cpu` then `pip install torchspin` |
@@ -28,10 +31,9 @@ resolves them for those platforms.
 
 - Python 3.10 or newer. Current PyTorch releases need Python 3.11 or newer, so on Python 3.10 pip and uv
   install the newest PyTorch that still supports 3.10 (2.14.1 in November 2026).
-- PyTorch 2.2 or newer, and PyTorch 2.3 or newer together with NumPy 2. The package metadata declares
-  `torch>=2.0,<3`, but PyTorch 2.0 and 2.1 fail in `pepper`, and PyTorch 2.2 cannot use NumPy 2 (see the
-  validation record). A fresh install always gets a recent PyTorch. This matters only if you keep an
-  older one (with PyTorch 2.2, add `"numpy<2"` to the install command).
+- PyTorch 2.3 or newer (`torch>=2.3,<3`). PyTorch 2.0 and 2.1 fail in `pepper`, and PyTorch 2.2 does not
+  work with NumPy 2 (see the validation record). A fresh install always gets a recent PyTorch, so this
+  matters only if you keep an existing one.
 - NumPy 1.23 or newer, SciPy 1.10 or newer (installed automatically).
 
 The version on PyPI can lag the repository. Check `pip index versions torchspin` or
@@ -41,15 +43,42 @@ The version on PyPI can lag the repository. Check `pip index versions torchspin`
 pip install "torchspin @ git+https://github.com/follmerlab/torchspin"
 ```
 
-Use a virtual environment for everything below. With pip:
+## Environments: who creates them
+
+Each route below starts with an **Environment:** line that says whether you create the environment or
+the tool creates it for you.
+
+| Route | Environment |
+|---|---|
+| `pip install ...` | **You create and activate it** (commands below). Otherwise pip installs into whichever Python `pip` belongs to |
+| `uv pip install ...` | **You create it** with `uv venv`. You do not have to activate it: uv uses an activated environment, else a `.venv` in the current or a parent directory. If there is none, it stops with `No virtual environment found; run uv venv to create an environment` |
+| `uv add` / `uv sync` / `uv run` in a uv project | **Created for you**: uv makes and maintains the project's `.venv` |
+| conda / mamba | **Your conda environment**: create and activate it with conda, then use pip inside it |
+
+Creating and activating a virtual environment for pip:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+# Linux and macOS (bash/zsh)
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
-With uv, `uv venv` creates `.venv` and every later `uv pip` command in that directory uses it.
+```powershell
+# Windows (PowerShell)
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+(Windows `cmd.exe`: `.venv\Scripts\activate.bat`.) `deactivate` leaves the environment. All `pip`
+commands on this page assume the environment is active.
+
+With uv:
+
+```bash
+uv venv          # creates .venv in the current directory (uv can download a Python if none is found)
+```
 
 ## Choosing the PyTorch build
 
@@ -61,7 +90,7 @@ because PyTorch publishes different wheels on PyPI for each platform:
 | Linux x86_64 and aarch64 | CUDA build. It pulls in the CUDA runtime as separate packages (NVIDIA libraries, several GB) | It still runs on machines without a GPU. Use the CPU index to avoid the download |
 | Windows x86_64 | CPU-only build | For CUDA, install PyTorch from the PyTorch index first |
 | macOS, Apple silicon | The only macOS build (CPU and MPS) | torchspin does not run on MPS, see [macOS](#macos) |
-| macOS, Intel | None for current PyTorch. The last x86_64 macOS wheels are PyTorch 2.2.2 | Untested, see [macOS](#macos) |
+| macOS, Intel | None. The last x86_64 macOS wheels are PyTorch 2.2.2 | **Not supported** (torchspin needs PyTorch 2.3), see [macOS](#macos) |
 
 To get a different build, install PyTorch **first** from the PyTorch package index. Then install
 torchspin, which keeps that PyTorch (see [Keeping an existing PyTorch](#keeping-an-existing-pytorch)).
@@ -72,6 +101,8 @@ selector at <https://pytorch.org/get-started/locally/> shows which ones the curr
 ## pip
 
 ### CPU only
+
+**Environment:** you create and activate it ([commands above](#environments-who-creates-them)).
 
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -96,6 +127,8 @@ Use **`--index-url` for the PyTorch line only**, as a separate command. Avoid
 
 ### NVIDIA GPU (Linux and Windows)
 
+**Environment:** you create and activate it ([commands above](#environments-who-creates-them)).
+
 Linux: `pip install torchspin` installs PyPI's PyTorch, which is a CUDA build. To pin a CUDA version
 that matches your driver, or on Windows (where PyPI's wheel is CPU-only):
 
@@ -115,6 +148,8 @@ the CPU. AMD (ROCm) and Intel (XPU) PyTorch builds have not been tried with torc
 
 ### Keeping an existing PyTorch
 
+**Environment:** the one that already holds your PyTorch. Activate it and install torchspin there.
+
 pip's default upgrade strategy is `only-if-needed`: dependencies that already satisfy the requirement are
 left alone ([pip docs: `--upgrade-strategy`](https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-upgrade-strategy)).
 So if a compatible PyTorch is already installed, `pip install torchspin` and `pip install --upgrade torchspin`
@@ -123,7 +158,7 @@ keep it, whichever index it came from. This was validated with a PyTorch 2.5.1 C
 PyTorch is replaced when:
 
 - you ask for it (`pip install --upgrade torchspin torch`, or `--upgrade-strategy eager`), or
-- the installed version does not satisfy `torch>=2.0,<3`.
+- the installed version does not satisfy `torch>=2.3,<3`.
 
 In both cases the replacement comes from the indexes in that command, normally PyPI, which may be a
 different build. On Linux, a CPU build gets replaced by a CUDA one. On Windows, a CUDA build gets
@@ -137,8 +172,18 @@ pip install --upgrade -c torch-constraint.txt torchspin
 
 (On Windows PowerShell: `pip freeze | Select-String "^torch==" > torch-constraint.txt`.)
 
-With conda, install PyTorch, NumPy and SciPy with conda, then run `pip install torchspin` inside the same
-environment. This has not been tested here. If pip proposes to replace conda's PyTorch, cancel and use
+### conda / mamba
+
+**Environment:** your conda environment. Create and activate it with conda, not `venv`:
+
+```bash
+conda create -n torchspin python=3.12
+conda activate torchspin
+conda install pytorch numpy scipy -c conda-forge   # or your preferred channel and build
+pip install torchspin
+```
+
+This has not been tested here. If pip proposes to replace conda's PyTorch, cancel and use
 `pip install --no-deps torchspin` instead.
 
 ## uv
@@ -146,6 +191,9 @@ environment. This has not been tested here. If pip proposes to replace conda's P
 uv has two interfaces, and they choose PyTorch in different ways.
 
 ### `uv pip` (drop-in for pip, works in any virtual environment)
+
+**Environment:** you create it with `uv venv`. Activation is optional, see
+[Environments](#environments-who-creates-them).
 
 ```bash
 uv venv
@@ -173,6 +221,9 @@ uv pip install --upgrade-package torchspin torchspin
 or pass the constraints file from the pip section with `-c torch-constraint.txt`. Both were validated.
 
 ### uv projects (`uv add torchspin` in your own project)
+
+**Environment:** created for you. `uv add`, `uv sync` and `uv run` create and update the project's
+`.venv`. You do not activate it: `uv run python ...` runs inside it.
 
 `uv add torchspin` resolves PyTorch from PyPI, with the per-platform builds in the table above.
 Nothing in torchspin's published metadata can change that. To choose the build, configure **your**
@@ -203,7 +254,11 @@ These settings live in `[tool.uv.*]` tables, which only uv reads
 They take effect where uv resolves that `pyproject.toml` itself: `uv sync`, `uv run`, `uv lock`, and
 `uv pip install` run on the checkout. They are not part of the published wheel, so they never affect
 `pip install torchspin` or `uv add torchspin` in someone else's project. torchspin's repository has no
-uv configuration at present, so in a clone use `--torch-backend`:
+uv configuration at present, so in a clone use `--torch-backend`.
+
+**Environment:** you create it with `uv venv` (below). With pip, follow CONTRIBUTING.md, where you create
+and activate a venv yourself.
+
 
 ```bash
 git clone https://github.com/follmerlab/torchspin.git
@@ -222,10 +277,9 @@ you are on Linux and do not need CUDA.
 - **Apple silicon:** `pip install torchspin` is all you need. **torchspin does not run on the Apple GPU
   (MPS).** It computes in float64, which MPS does not support, so `Options(device='mps')` fails with
   `TypeError: Cannot convert a MPS Tensor to float64 dtype ...`. Use the CPU (the default).
-- **Intel Macs:** PyTorch no longer publishes macOS x86_64 wheels. The last were PyTorch 2.2.2 (Python
-  3.12 at most), so pip falls back to 2.2.2. That version needs NumPy < 2, so ask for it in the same
-  command and let pip pick a matching SciPy: `pip install torchspin "numpy<2"`. The PyTorch 2.2.2 +
-  NumPy 1.26 combination was validated on Apple silicon. Untested on an Intel Mac.
+- **Intel Macs are not supported.** PyTorch's last macOS x86_64 wheels are version 2.2.2, and torchspin
+  requires PyTorch 2.3 or newer, so pip finds no PyTorch that satisfies torchspin. Use a Linux machine
+  or a Linux container instead.
 - In zsh (the default macOS shell) quote anything with square brackets: `pip install "torchspin[notebooks]"`.
 
 ### Linux
@@ -262,7 +316,9 @@ is the same with or without extras.
 ## Notebooks
 
 The tutorials live in [`examples/notebooks/`](../examples/notebooks/) and are not part of the installed
-package. To run them:
+package.
+
+**Environment:** you create and activate it (here with `venv`; conda or `uv venv` work as well).
 
 ```bash
 git clone https://github.com/follmerlab/torchspin.git
@@ -287,9 +343,9 @@ notebook cells). It also installs Jupyter itself.
 - If you already use Jupyter from another environment (JupyterHub, VS Code), install
   `"torchspin[gui]" ipykernel` in the torchspin environment instead and register it as a kernel:
   `python -m ipykernel install --user --name torchspin`.
-- The `notebooks` extra is new after 0.9.31. A release that predates it prints
-  `WARNING: torchspin ... does not provide the extra 'notebooks'` and installs only the core package. In
-  that case use `pip install "torchspin[gui]" jupyter`.
+- The `notebooks` extra is new after 0.9.31. Releases that predate it (PyPI had 0.8.0 when this page was
+  written) print `WARNING: torchspin ... does not provide the extra 'notebooks'` and install only the
+  core package. In that case use `pip install "torchspin[gui]" jupyter`.
 
 ## Check the installation
 
@@ -309,7 +365,7 @@ print(torchspin.__version__, torch.__version__, torch.version.cuda, spc.shape)
 
 A wheel on PyPI states its dependencies as `Requires-Dist` entries: a package name, version bounds,
 optional environment markers (Python version, OS, machine) and extras. For torchspin that is
-`torch>=2.0,<3`, `numpy>=1.23,<3` and `scipy>=1.10`.
+`torch>=2.3,<3`, `numpy>=1.23,<3` and `scipy>=1.10`.
 
 - **It can** require a PyTorch version range, and could vary it by OS, machine or Python version
   through markers.

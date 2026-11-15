@@ -53,7 +53,9 @@ uv pip install torchspin --torch-backend=cpu      # or auto, or cu130
 ```
 
 On Linux, plain `pip install torchspin` already installs a CUDA build of PyTorch. On macOS torchspin runs
-on the CPU (MPS lacks float64). Requires Python 3.10+, PyTorch 2.2+, NumPy 1.23+, SciPy 1.10+.
+on the CPU (MPS lacks float64). Intel Macs are not supported, because the last PyTorch for them is 2.2.
+Requires Python 3.10+, PyTorch 2.3+, NumPy 1.23+, SciPy 1.10+. Run the pip commands in a virtual environment
+you have created and activated (`python -m venv .venv`). `uv pip` needs one made with `uv venv`.
 
 **[docs/installation.md](docs/installation.md)** covers the details: per-platform notes, keeping an
 existing PyTorch, uv projects, the extras, and what package metadata can and cannot enforce.
