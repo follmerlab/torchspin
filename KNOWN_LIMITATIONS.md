@@ -842,9 +842,11 @@ saffron_thyme, orisel, nucfrq2d and the broadband autograd model, treats every s
 more tensor in its own frame, because the strain widths depend on the field direction (B82):
 
 - `HStrain` / `HStrainL`: `diag(HStrain²)` in the molecular frame.
-- `gStrain`: per electron `G∘G` with `G = R_g2M diag(gStrain/g) R_g2M'` (the element-wise
-  square the width formula uses, so a tilted g frame can give a lower group than g itself).
-- `AStrain` (single electron, first nucleus): `A∘A` and `G∘A`, A frame.
+- `gStrain`: per electron `G·G` with `G = R_g2M diag(gStrain/g) R_g2M'` (the matrix square
+  the width formula uses since 0.9.33, so strain collinear with g has the symmetry of g, in
+  the g frame; before, the element-wise square `G∘G` gave Ci for any tilted g frame, B84).
+- `AStrain` (single electron, first nucleus): `A·A` and `G·A + A·G`, A frame (`A∘A` and
+  `G∘A` before 0.9.33).
 - `DStrain`: Dinfh about the D-frame z axis without E strain, otherwise D2h in the D frame
   (also with `DStrainCorr`).
 
@@ -965,7 +967,9 @@ symmetry-frame grid; these cases match MATLAB to cosine 0.99996–1.0
 
 Strain widths are validated per transition and orientation against EasySpin
 `resfields` (≤1.3e-3 relative; the residual is EasySpin's linear eigenvector
-interpolation between field knots). Powder spectra with H/g/A/D strain,
+interpolation between field knots), except g/A strain with a tilted g or A frame,
+where torchspin deviates deliberately since 0.9.33 (§ Field sweeps — gStrain/AStrain
+widths with tilted frames). Powder spectra with H/g/A/D strain,
 including several electron spins, tilted D frames and correlated D/E strain,
 match EasySpin to cosine ≥0.999 and amplitude within 3 % on 24 MATLAB cases
 (`test_strain_*_matlab_validation.py`, `test_pepper_dstrain_matlab_validation.py`).
@@ -1516,8 +1520,10 @@ from earlier development snapshots should pass `seed=` explicitly.
 ## AStrain — EasySpin's effective-mI model, followed deliberately (0.9.25)
 
 - **Convention.** The AStrain width of a transition (u, v) is
-  `dBdE * sqrt(zL' (G + gAStrainCorr * mI_uv * AStrainMatrix).^2 zL)` with
-  `mI_uv = (mI_u + mI_v)/2`, as in EasySpin `resfields.m` 766-788 and 1297-1306. Each
+  `dBdE * |(G + gAStrainCorr * mI_uv * AStrainMatrix) zL|` with
+  `mI_uv = (mI_u + mI_v)/2`, as in EasySpin `resfields.m` 766-788 and 1297-1306 except
+  that EasySpin squares the matrix element-wise (`zL' (...).^2 zL`; the same for
+  untilted frames, see § Field sweeps — gStrain/AStrain widths with tilted frames). Each
   level's mI (`<Iz>` of the first nucleus) is computed **once per call**, from the
   eigenvectors of `H0 - centerB*muz` with the field along the **molecular z axis** and
   `centerB = mean(Exp.Range)`, and is attached to the **level index** (levels sorted by
@@ -1542,10 +1548,46 @@ from earlier development snapshots should pass `seed=` explicitly.
   either labels the levels at its `B0`. Frequency sweeps do not use mI, like EasySpin's
   `resfreqs_matrix.m`: they evaluate the operator derivatives dnu/dA_k per orientation,
   along the `AFrame` axes (§ Frequency sweeps — AStrain along the AFrame axes).
+- **Not rotation covariant.** The labels are taken along the molecular z axis, so with
+  anisotropic A (or anisotropic g with a tilted g frame) the same physical system
+  described in a tilted frame gets other mI labels and other widths (B96, open; EasySpin
+  behaves the same). With isotropic g and A the widths are covariant (0.9.33).
 - Validated: per-orientation widths against EasySpin `resfields` to 1e-5 relative (incl.
-  θ = 90° and a tilted AFrame) and pepper/pepper_autograd spectra to cosine ≥ 0.999996
+  θ = 90°; with a tilted AFrame up to 0.9.32 only, see § Field sweeps — gStrain/AStrain
+  widths with tilted frames) and pepper/pepper_autograd spectra to cosine ≥ 0.999996
   (`test_astrain_mi_model.py`). A 63Cu system with a tilted `AFrame` has a separate,
   strain-independent spectrum difference from EasySpin (strict xfail there).
+
+## Field sweeps — gStrain/AStrain widths with tilted frames: deliberate deviation from EasySpin (0.9.33)
+
+The g-strain model is a Gaussian distribution of the principal g values in the g frame. For a
+field direction z (molecular frame) its width² is `Σ_i (R z)_i² (gStrain_i/g_i · mwFreq)²`
+(R = erot(gFrame)), which is `z' G G z = |G z|²` with `G = R' diag(gStrain/g · mwFreq) R`.
+torchspin evaluates exactly that, and `|(G + gAStrainCorr·mI·A) z|²` with AStrain
+(`A = R_A' diag(AStrain) R_A`), for one and several electron spins (`strainwidth.py`), and
+`hamsymm` uses the matching quadratic forms (`G·G`, `A·A`, `G·A + A·G`).
+
+- **EasySpin** (resfields.m 787/792/1309, resfields_perturb.m 523/532, resfreqs_perturb.m 504)
+  squares the rotated matrix element-wise, `z' (G.^2) z`. That equals the model only when G is
+  diagonal (frame 0, or axes swapped); with a tilted frame the widths depend on how the same
+  physical system is described. S = 1/2, g = [2.0 2.0 2.2] (rhombic: [2.0 2.1 2.3]), gStrain =
+  [0.01 0.01 0.05] ([0.01 0.03 0.06]), 9.5 GHz: gFrame = [0.4 0.9 -0.3] against the untilted
+  system at the rotated field direction, per-orientation widths up to ~100 % apart,
+  powder spectra 9-27 % of the peak. torchspin before 0.9.33 did the same (B84).
+- **Now:** the tilted and the untilted description agree to 1e-14 (widths) and 3e-14 (pepper
+  powder spectra, with the strain symmetry now Dinfh/D2h in the g frame instead of Ci);
+  `gFrame = 0` and diagonal strain matrices are unchanged bit for bit. The torchspin field-sweep
+  paths with strain all use the matrix path; the perturbation-theory paths compute no strain
+  widths. Frequency sweeps use the linear form `z' G z` and were already covariant.
+- **Consequence:** EasySpin reference cases with a tilted g or A frame and g/A strain are strict
+  xfails: `test_strain_validation.py` tilted_frame (RMS 0.0996, peak ratio 1.25; before 0.0874,
+  0.944), `test_strain_widths_matlab_validation.py` two_spinhalf_gstrain_both (widths up to
+  17 % apart; before 3.4e-4) and the two Cu63_AFrame width tests in `test_astrain_mi_model.py`
+  (up to 45 %; before 9.2e-6). Each has an objective replacement: the tilted system against the
+  untilted one (or EasySpin's untilted reference), a global rotation of a two-electron system,
+  and the width model written out (`test_gstrain_covariance.py` and the files above).
+- AStrain with anisotropic A is still not fully covariant because of the mI labels (§ AStrain,
+  B96).
 
 ## Frequency sweeps — AStrain along the AFrame axes: deliberate deviation from EasySpin (0.9.31)
 
