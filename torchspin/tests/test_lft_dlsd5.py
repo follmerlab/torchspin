@@ -79,8 +79,8 @@ def _same(a, b):
     assert type(a).__name__ == type(b).__name__
     for f in a.__dataclass_fields__:
         x, y = getattr(a, f), getattr(b, f)
-        if isinstance(x, float) and isinstance(y, float) and math.isnan(x):
-            assert math.isnan(y), f
+        if isinstance(x, float) and isinstance(y, float):
+            R.same_bits(x, y, f)                # NaN == NaN; exact live, round-off when frozen
         else:
             assert x == y, (f, x, y)
 

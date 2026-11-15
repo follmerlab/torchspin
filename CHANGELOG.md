@@ -23,6 +23,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     - Bit-for-bit checks of BLAS-order-dependent products, such as `L2 = Re(Σ L_i L_i)`, are
       evaluated from the stored factors in the test's own process.
     - Term projectors, stored factored, are compared at `1e-12 - 1e-13`.
+    - The engine-copy identity checks (dsoxf `zero_field`/`spin_spin`, the dlsd5 tetragonal
+      solutions, the ddnpow igloo grids) stay exact against live telser-tools. Against a frozen
+      copy, made on another platform, they allow 4 ulp of the largest entry: Linux and Windows
+      libm/BLAS round some of these values 1 ulp (1.1e-16) differently from macOS.
   - Exception (`d1_skipdeg_field`): g(obs) at its 1 mG field (level splitting ~1.8e-9 cm⁻¹)
     is ill-conditioned: it moved by up to 2e-3 between torch 2.10 and 2.15, even against live
     telser-tools. It is compared at rtol 2e-2 (10× that), instead of 1e-9.

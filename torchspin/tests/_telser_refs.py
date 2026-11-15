@@ -74,6 +74,30 @@ def live() -> bool:
     return telser_importable()
 
 
+# Bit-identity of torchspin's copied engines with telser-tools holds within one process (same libm,
+# same BLAS). A frozen copy was computed on another platform, whose libm/BLAS may round a
+# transcendental or a summation differently by an ulp; the comparison then allows that round-off.
+FROZEN_ULPS = 4
+
+
+def same_bits(got, want, what: str = "") -> None:
+    """Assert ``got == want`` exactly when the oracle ran live; when it is a frozen copy, within
+    ``FROZEN_ULPS`` units in the last place of the largest |want| (cross-platform round-off only)."""
+    g = np.asarray(got, dtype=float) if not isinstance(got, np.ndarray) else got
+    w = np.asarray(want, dtype=float) if not isinstance(want, np.ndarray) else want
+    assert g.shape == w.shape, (what, g.shape, w.shape)
+    floats = g.dtype.kind in "fc" and w.dtype.kind in "fc"
+    if live() or not floats:
+        assert np.array_equal(g, w, equal_nan=floats), what
+        return
+    nan = np.isnan(w)
+    assert np.array_equal(np.isnan(g), nan), what
+    scale = float(np.abs(w[~nan]).max()) if (~nan).any() else 0.0
+    bound = FROZEN_ULPS * float(np.spacing(max(scale, np.finfo(float).tiny)))
+    d = float(np.abs(g[~nan] - w[~nan]).max()) if (~nan).any() else 0.0
+    assert d <= bound, f"{what}: frozen copy differs by {d:.3g} (> {FROZEN_ULPS} ulp of {scale:.3g} = {bound:.3g})"
+
+
 # ------------------------------------------------------------------------------ registry
 def oracle(group: str, cases=(None,), drift: dict | None = None):
     """Register ``fn(case) -> plain data`` (or ``fn()`` when ``cases`` is ``(None,)``) under ``group``.

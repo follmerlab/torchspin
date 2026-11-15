@@ -479,7 +479,7 @@ def test_grid_engine_parity_with_telser_tools():
     ref = R.ref(_telser_grids)
     for args, want in zip(_GRID_ARGS, ref["grids"]):
         for ours, kind in ((igloo.exact_grid(*args), "exact"), (igloo.fortran_grid(*args), "fortran")):
-            np.testing.assert_array_equal(ours.directions, want[kind]["directions"])
-            np.testing.assert_array_equal(ours.weight, want[kind]["weight"])
-    assert igloo.DL2 == ref["DL2"]
-    assert igloo.area_fraction("G", 8, True) == ref["area_fraction_G8"]
+            R.same_bits(ours.directions, want[kind]["directions"], f"{kind}{args} directions")
+            R.same_bits(ours.weight, want[kind]["weight"], f"{kind}{args} weight")
+    R.same_bits(igloo.DL2, ref["DL2"], "DL2")
+    R.same_bits(igloo.area_fraction("G", 8, True), ref["area_fraction_G8"], "area_fraction")

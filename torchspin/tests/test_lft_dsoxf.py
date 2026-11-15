@@ -316,8 +316,8 @@ def test_engine_copy_is_bit_identical(shell, code):
     vals = _engine_values(shell, code)
     for st, b in zip(_SETTINGS, ref["settings"], strict=True):
         a = eng.DsoxfModel(shell=shell, code=code, lam=-210.0, rho=0.7, **st, **vals)
-        assert np.array_equal(a.zero_field, arr[b["zero_field"]])
-        assert np.array_equal(a.spin_spin, arr[b["spin_spin"]])
+        R.same_bits(a.zero_field, arr[b["zero_field"]], "zero_field")
+        R.same_bits(a.spin_spin, arr[b["spin_spin"]], "spin_spin")
         assert (a.spin_orbit, a.orbital_zeeman_sign) == (b["spin_orbit"], b["orbital_zeeman_sign"])
         if shell == "d":                     # d_signs is d-shell only (it raises KeyError for f terms with L = 3)
             assert list(a.d_signs) == b["d_signs"]
