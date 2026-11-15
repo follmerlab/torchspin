@@ -83,12 +83,13 @@ def test_highfield_amplitude_matches_plain_basis_default_solver():
 # Mirror term: the dropped pS + pI - M = -1 block is the conjugate mirror of the kept one,
 # I(z) = 1/2 [I+(z) + conj(I+(conj z))].  Without it (1/2 I+ only) the error grows with the
 # non-secular couplings: S = 1, D = 500 MHz at X band 1.0e-4 (measured).
-# label, SpinSystem kwargs, Experiment kwargs, LLMK, bound.  Measured (direct / eigen solver):
-# nitroxide 5e-16 / 2.9e-12, 63Cu 5.9e-16 / 2.7e-13, S = 1 D 100 MHz 4.8e-11, D 500 MHz 2.1e-8.
+# label, SpinSystem kwargs, Experiment kwargs, LLMK, bound.  Measured (direct / Lanczos at
+# Threshold 1e-12): nitroxide 5e-16 / 4.9e-12 (3.8e-11 with torch 2.15), 63Cu 5.9e-16 / 7.8e-14,
+# S = 1 D 100 MHz 4.8e-11, D 500 MHz 2.1e-8 (both solvers).
 MIRROR_CASES = [
-    ('nitroxide', NX, EXP_NX, [6, 3, 4, 2], 1e-11),
+    ('nitroxide', NX, EXP_NX, [6, 3, 4, 2], 1e-13),
     ('63Cu, A_z 600 MHz', dict(S=[0.5], g=[[2.05, 2.05, 2.25]], Nucs=['63Cu'], A=[[60, 60, 600]], tcorr=1e-8, lw=[0, 0.5]),
-     dict(mwFreq=9.5, Range=[270, 350], nPoints=64, Harmonic=0), [6, 0, 2, 2], 1e-11),
+     dict(mwFreq=9.5, Range=[270, 350], nPoints=64, Harmonic=0), [6, 0, 2, 2], 1e-13),
     ('S = 1, D 100 MHz', dict(S=[1.0], g=[[2.01, 2.005, 2.002]], D=[[100.0, 20.0]], tcorr=1e-8, lw=[0, 0.1]),
      dict(mwFreq=9.5, Range=[331, 346], nPoints=64, Harmonic=0), [6, 0, 2, 2], 2e-10),
     ('S = 1, D 500 MHz', dict(S=[1.0], g=[[2.01, 2.005, 2.002]], D=[[500.0, 0.0]], tcorr=1e-8, lw=[0, 0.1]),
@@ -99,9 +100,10 @@ MIRROR_CASES = [
 @pytest.mark.parametrize('label,skw,ekw,llmk,bound', MIRROR_CASES, ids=[c[0] for c in MIRROR_CASES])
 def test_mirror_term_equals_plain_basis(label, skw, ekw, llmk, bound):
     plain = _sim(skw, ekw, LLMK=llmk, MpSymm=False, Solver='\\')
-    for solver in ('\\', 'E'):
-        pruned = _sim(skw, ekw, LLMK=llmk, MpSymm=True, Solver=solver)
-        assert _relmax(pruned, plain) < bound, f'{label}, Solver {solver}: {_relmax(pruned, plain):.2e}'
+    # Lanczos at Threshold 1e-12: measured <= 3.8e-11 for S = 1/2 (torch 2.15 env), bound 1e-9
+    for solver, thr, tol in (('\\', 1e-6, bound), ('L', 1e-12, max(bound, 1e-9))):
+        pruned = _sim(skw, ekw, LLMK=llmk, MpSymm=True, Solver=solver, Threshold=thr)
+        assert _relmax(pruned, plain) < tol, f'{label}, Solver {solver}: {_relmax(pruned, plain):.2e}'
 
 
 def test_mirror_term_is_needed(monkeypatch):
