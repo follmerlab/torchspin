@@ -60,7 +60,8 @@ def astrain_level_mI(
     ``centerB = mean(Exp.Range)``, levels sorted by energy, and
     ``mI_k = <k|Iz|k>`` of nucleus 1.  A transition (u, v) then uses
     ``(mI_u + mI_v)/2`` at every orientation, and the AStrain matrix enters the
-    width as ``(G + gAStrainCorr * mI * AStrainMatrix).^2``.  The level index,
+    width as ``|(G + gAStrainCorr * mI * AStrainMatrix) z|^2`` (matrix square;
+    EasySpin squares element-wise, B84).  The level index,
     not the state, carries mI, so an orientation where the energy order of the
     levels differs from the molecular-z order gets the mI of another state
     (see KNOWN_LIMITATIONS).
@@ -277,8 +278,11 @@ def compute_strain_widths_batch(
     multi_g = sys.gStrain is not None and sys.nElectrons > 1
     _check_multi_electron_strain(sys)   # AStrain with > 1 electron, with or without gStrain (B89)
 
-    # lw2_g[m] = z_m^T * (G^2) * z_m   — vectorised over M (single-electron case)
-    gStrainMatrix2 = gStrainMatrix ** 2                 # element-wise square
+    # lw2_g[m] = z_m^T (G G) z_m = |G z_m|^2 = sum_i (R z_m)_i^2 (gStrain_i/g_i mwFreq)^2
+    # with R = erot(gFrame) (g-frame model), vectorised over M (single electron).  The
+    # matrix square, not EasySpin's element-wise square G.^2, which is not
+    # rotation covariant for a tilted gFrame (B84; equal when G is diagonal)
+    gStrainMatrix2 = gStrainMatrix @ gStrainMatrix
     tmp_g  = zLab_M @ gStrainMatrix2                    # (M, 3)
     lw2_g_vec = (tmp_g * zLab_M).sum(dim=1)             # (M,)
 
@@ -288,7 +292,7 @@ def compute_strain_widths_batch(
     kSzL_diag_e: list = []
     if multi_g:
         for e in range(sys.nElectrons):
-            tmp_e = zLab_M @ (gmats[e] ** 2)
+            tmp_e = zLab_M @ (gmats[e] @ gmats[e])           # matrix square (B84)
             gterm_e.append((tmp_e * zLab_M).sum(dim=1))                     # (M,)
             Sx, Sy, Sz = _electron_spin_ops(sys, e, device, V_b.dtype)
             zc = zLab_M.to(dtype=V_b.dtype)
@@ -356,12 +360,14 @@ def compute_strain_widths_batch(
     elif sys.gStrain is not None and AStrainMatrix is None:
         lw2 += lw2_g_vec[m_of]
     elif AStrainMatrix is not None:
-        # SM = G (if gStrain) + corr * mI_avg * A, lw2 += z^T (SM ∘ SM) z per transition
+        # SM = G (if gStrain) + corr * mI_avg * A, lw2 += z^T SM SM z = |SM z|^2 per
+        # transition (SM symmetric; matrix square, not EasySpin's SM.^2: B84; for a
+        # diagonal SM, SM @ SM == SM ** 2 exactly, so untilted frames are unchanged)
         mI_avg = 0.5 * (mI_levels[u_idx] + mI_levels[v_idx])                            # (K,)
         G = gStrainMatrix if sys.gStrain is not None else torch.zeros_like(AStrainMatrix)
         SM = G.unsqueeze(0) + (corr * mI_avg).view(-1, 1, 1) * AStrainMatrix.unsqueeze(0)  # (K, 3, 3)
         z = zLab_M[m_of]                                                                   # (K, 3)
-        lw2 += torch.einsum('ki,kij,kj->k', z, SM ** 2, z)
+        lw2 += torch.einsum('ki,kij,kj->k', z, SM @ SM, z)
 
     # DStrain (sum over electrons)
     for dD_diag, dE_diag in dstrain_diags:

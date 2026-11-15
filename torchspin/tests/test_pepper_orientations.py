@@ -16,12 +16,11 @@ Checks
   summed over two sample rotations about B0, an exact chi average);
 * error cases.
 
-Note on comparing with the powder: pepper's powder spectrum comes from the SOPHE
-projection, which (like EasySpin's projectzones/projecttriangles) assigns bin k
-the field interval [x_k, x_k + dx), while the stick/template paths (crystal, O3
-and Orientations; EasySpin lisum1i) centre bin k on x_k.  The powder references
-below are therefore computed on the axis shifted by -dx/2, which puts their bin
-centres on the same fields.
+Note on comparing with the powder: since 0.9.35 (B85) pepper's SOPHE projection
+centres axis point k on x_k (hat-weighted bins), like the stick/template paths
+(crystal, O3 and Orientations; EasySpin lisum1i).  Before, it assigned bin k the
+field interval [x_k, x_k + dx) (EasySpin projectzones/projecttriangles), and the
+powder references here were computed on the axis shifted by -dx/2.
 """
 from pathlib import Path
 
@@ -54,11 +53,9 @@ def _relmax(a, b):
 
 
 def _halfbin_powder(sys, expk, opt=None, key='Range'):
-    """Powder spectrum with bin centres on the fields of Experiment(**expk)."""
-    r = expk[key]
-    dx = (r[1] - r[0]) / (expk['nPoints'] - 1)
-    e = Experiment(**{**expk, key: [r[0] - dx / 2, r[1] - dx / 2]})
-    return pepper(sys, e, opt or Options(GridSize=[61, 8]))[1]
+    """Powder spectrum on the fields of Experiment(**expk) (centered bins since 0.9.35, B85;
+    before, it was computed on the axis shifted by -dx/2)."""
+    return pepper(sys, Experiment(**expk), opt or Options(GridSize=[61, 8]))[1]
 
 
 NITRO = dict(S=[0.5], g=[[2.0, 2.05, 2.2]], gFrame=[[0.2, 0.4, 0.1]], Nucs=['14N'], A=[[20, 30, 90]])
@@ -145,7 +142,7 @@ def test_fibonacci_sphere_reproduces_powder_field(harmonic):
     expk = dict(mwFreq=9.5, Range=[290, 350], nPoints=1024, Harmonic=harmonic)
     ref = _halfbin_powder(sys, expk)
     _, s = pepper(sys, Experiment(**expk, Orientations=fibonacci(20000)))
-    # measured: 1.0e-4 (absorption), 2.1e-3 (first harmonic)
+    # measured: 5.9e-5 (absorption), 1.5e-3 (first harmonic); 0.9.34 on the -dx/2 axis: 1.0e-4, 2.1e-3
     assert _relmax(s, ref) < (3e-4 if harmonic == 0 else 3e-3)
     if harmonic == 0:
         assert abs(float(s.sum() / ref.sum()) - 1) < 1e-5
@@ -157,7 +154,7 @@ def test_fibonacci_sphere_reproduces_powder_freqsweep():
     ref = _halfbin_powder(sys, expk, key='mwRange')
     x, s = pepper(sys, Experiment(**expk, Orientations=fibonacci(20000)))
     assert float(x[0]) == 9.0 and float(x[-1]) == 10.5
-    assert _relmax(s, ref) < 3e-4                     # measured 1.1e-4
+    assert _relmax(s, ref) < 3e-4                     # measured 1.9e-4 (0.9.34, -dx/2 axis: 1.1e-4)
 
 
 def test_fibonacci_sphere_strain_close_to_powder():
@@ -358,13 +355,13 @@ def test_orientations_at_zero_field_match_the_powder(eps):
     """Exp.Orientations with Options.ZeroField (0.7.4): a 4000-point Fibonacci sphere reproduces the zero-field
     powder (S = 1, D, E; 300 MHz Lorentzian).
 
-    At zero field every orientation puts a line at one frequency, so the powder projection (EasySpin's
-    convention: bin k covers [x_k, x_k + dx)) drops it into the one bin that contains it, while the orientation
-    templates center it at its exact frequency.  The powder is therefore compared on the axis shifted by dx/2
-    (KNOWN_LIMITATIONS) and the residual is the within-bin position, up to dx/2.  The lines must not sit on a
+    At zero field every orientation puts a line at one frequency, so the powder projection splits it linearly
+    between the two nearest axis points (centered hat bins since 0.9.35, B85; before, EasySpin's box
+    [x_k, x_k + dx) dropped it into one bin and the powder was compared on the axis shifted by dx/2), while the
+    orientation templates center it at its exact frequency.  The lines must not sit on a
     bin edge: the earlier D = [-700, -1300, 2000] put all three (0.6, 2.7, 3.3 GHz) exactly on edges, where
     the last bit of the eigenvalues picks the bin, and the test failed by 4 % on some CI runners.  Here every
-    line is 1/3 bin from an edge; measured 0.74 % (0.97 % with D moved by 0.3 MHz)."""
+    line is 1/3 bin from an edge; measured 0.074 % (0.9.34, on the dx/2-shifted axis: 0.74 %)."""
     n = 4000
     i = np.arange(n) + 0.5
     ori = np.stack([(np.pi * (1 + 5 ** 0.5) * i) % (2 * np.pi), np.arccos(1 - 2 * i / n)], 1)
@@ -372,5 +369,4 @@ def test_orientations_at_zero_field_match_the_powder(eps):
     x, a = pepper(sy, Experiment(Field=0.0, mwRange=[0, 5], nPoints=501), Options(ZeroField=True, GridSize=20))
     b = pepper(sy, Experiment(Field=0.0, mwRange=[0, 5], nPoints=501, Orientations=ori), Options(ZeroField=True))[1]
     x, a, b = x.numpy(), a.numpy(), b.numpy()
-    a_c = np.interp(x, x + 0.5 * (x[1] - x[0]), a)
-    assert float(np.abs(a_c - b).max() / np.abs(a).max()) < 1.5e-2
+    assert float(np.abs(a - b).max() / np.abs(a).max()) < 1.5e-2

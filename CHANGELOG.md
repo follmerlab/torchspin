@@ -41,6 +41,156 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.35] — 2026-11-14
+
+### Fixed
+
+- **Projected powder spectra sat half an increment low, and sub-bin facets had no position
+  derivative (pepper, pepper_autograd, salt; B85).** The SOPHE projection (EasySpin
+  `projecttriangles.c`/`projectzones.c` convention) integrated each facet over [x_k, x_k + dx)
+  and reported it at x_k, and dropped facets narrower than one bin into one bin by truncation.
+  Every projected spectrum was shifted by -dx/2 (best-fit shift +0.49 dx against a converged
+  reference), while the template paths (isotropic, crystal, `Exp.Orientations`) are centered;
+  and for an isotropic g on a D2h grid (the automatic grid for three g leaves on the graph) the
+  gradient along g = s[1 1 1] was +999.7 (equal to central differences of that spectrum)
+  against the true -13770. The projection is now `torchspin._projection`, shared by the numpy
+  (pepper) and torch (pepper_autograd, salt) paths: axis point k carries the facet density
+  integrated against the hat of half-width dx centered on x_k (a zero-width facet is split
+  linearly between the two nearest points). The result is continuous in every vertex position
+  for any facet width; the hat-weighted integral of each linear piece is exact (Simpson on each
+  half-hat, from overlaps and relative positions only), facets inside one axis interval are
+  deposited exactly as a point mass at their centroid, and uncovered bins stay exactly 0 (B47).
+  Numbers: rhombic S = 1/2, 512 points over 40 mT, lw 1 mT, max error against a converged
+  reference 9.4 % -> 0.65 % (lw 0.3 mT: 31 % -> 3.8 %); isotropic on a forced D2h grid vs the O3
+  template 2.8-5.5 % -> 2.3-5.2e-4 (4096 points) and 4.7-34 % -> 2.0-3.2 % (512 points);
+  isotropic-direction gradient -11452 at 512 points (O3 -13770; dx/sigma = 0.28) and within
+  3.2 % of the O3 gradient at 4096 points, equal to central differences to 1e-10; integrated
+  intensity conserved to 2.4e-14 (2.9e-12 before); pepper vs pepper_autograd 1.5e-12 as before;
+  `Exp.Orientations` (20000-point Fibonacci sphere) vs the powder 5.9e-5 without the former
+  -dx/2 axis shift, zero-field 0.077 % (0.74 %).
+- **Deliberate deviation from EasySpin** (KNOWN_LIMITATIONS.md § Centered projection bins):
+  every projected pepper/salt spectrum moves by dx/2 and is smoothed by the hat (variance dx²/6
+  against the box's dx²/12). pepper's unreachable stick-accumulation branches now split
+  linearly too; `int(frac)` there truncated toward zero for lines just below the range.
+
+### Tests
+
+- `test_projection_centered.py`: best-fit shift < 0.1 dx (0.9.34: +0.49), forced-D2h isotropic
+  vs O3, isotropic-direction gradient vs converged central differences and the O3 gradient,
+  zero-width triangle/zone linear split and gradient, continuity in width, intensity
+  conservation, numpy == torch, pepper vs pepper_autograd. 21 of its 24 tests fail on 0.9.34.
+- 168 EasySpin comparisons moved by the centered bins are strict xfail with their measured
+  numbers (`_b85.MOVED`, applied in conftest); `test_b85_easyspin_centered.py` re-runs them
+  against EasySpin mapped onto centered bins: 73 pass with their original tolerances, 95 (box-
+  binning-calibrated tolerances, stick spectra) are strict xfail there with both numbers.
+- `ref_missing_knots.npz` regenerated with the centered bins. The sixteen coarse- vs
+  converged-grid checks the centered bins moved (case3/d4h_d2hgrid_wide/s52_b4_D2h_h1,
+  s52_b4_C2h_h1, s52_rhombic_h1, b50_h1, b50_stick_wide, oh_auto; pepper and pepper_autograd) now
+  compare with `ref_converged_b85.npz` (`generate_converged_b85_refs.py`: field axis 16-32x finer,
+  GridSize [181 1], point values at x_k), bounds = measured x 1.05; 0.9.34 fails all of them
+  (e.g. case3 max deviation 0.337 vs bound 3.70e-2). The lw central-difference step in
+  `test_missing_knots.py` is 2.5e-5 (was 1e-4): case1's d/dlw is small (6.16) with the centered bins,
+  and the h^2 truncation error at 1e-4 was 1.07e-7 relative (7.7e-9 at 2.5e-5); bound 4e-8 unchanged.
+- `test_projection_accuracy.py`: rhombic lw 0.3 mT, 512 points vs a converged reference (max
+  error 3.73e-2, 0.9.34 0.321), d/dlw and d/dg_y vs converged values (1.1e-3 and 3.3e-5;
+  0.9.34 5.2e-2 and 3.3e-3), isotropic-direction gradient at 4096 points vs converged O3
+  (3.2e-2; 0.9.34 wrong sign). All four fail on 0.9.34.
+- Kernel choice: a centered box with a linear split below one bin (branch `dev/b85-box`, not
+  merged) was compared against converged references: 5-30 % lower forward error for narrow
+  lines, but d/dg_y 2.0e-3 (hat 3.3e-5) and a gradient kink at facet width dx; the hat was kept
+  (KNOWN_LIMITATIONS.md).
+- Rewritten for the new kernel: `test_projecttriangles_edge_bins.py` (exact rational hat
+  reference), the B47 helper tests of `test_pepper_exactzero.py` (the `_ramp_bins` source
+  patches are gone; uncovered bins exactly 0 vs the loop reference), the reference loops
+  `_projecttriangles_loop`/`_projectzones_loop` (two-point Gauss-Legendre per piece). The
+  -dx/2 compensations in `test_pepper_orientations.py`, `test_endor_enhancement.py` and
+  `test_lft_telser2torchspin.py` are removed (same tolerances).
+
+## [0.9.34] — 2026-11-14
+
+### Fixed
+
+- **DCD trajectories with a CHARMM unit-cell record are read correctly (B97).** `_read_dcd`
+  took the unit-cell flag from bit 0 of the int32 at file offset 84, which is the CHARMM
+  VERSION (24 in NAMD files, so the flag was always off). Every frame's 56-byte unit-cell record
+  was then read as coordinates, and both bundled trajectories came out shifted: the first x value
+  of `A10R1_polyAla.dcd` was 0.0 instead of -14.474 (max error 60.5 Å over the EasySpin atom
+  subset), `A10TOAC_polyAla.dcd` gave values up to 1.8e34. The frame count (20 and 4) was right
+  only because the leftover bytes were too short for another frame. The reader now follows
+  `md_readdcd.m`: VERSION > 0 means CHARMM, the int32 at offset 48 == 1 marks the unit-cell
+  record and the one at offset 52 == 1 a fourth coordinate record; VERSION == 0 means X-PLOR, with
+  no extra records and DELTA read as a float64 (it was read as a float32). Deviation from
+  EasySpin: `md_readdcd.m` treats the 4-dims flag as a unit-cell flag (skipping 56 bytes before
+  x); torchspin skips the fourth coordinate record after z instead. Coordinates of both
+  bundled files now equal EasySpin's `md_readdcd` exactly, and `mdload`'s `FrameTraj`,
+  `FrameTrajwrtProt` and `RProtDiff` match EasySpin's `mdload_files_R1/TOAC.mat` to 4e-16
+  (errors up to 1.95 before). `mdhmm` and the cardamom MD tests use the pre-processed
+  `MTSSL_polyAla_traj.mat` and are unaffected.
+
+### Tests
+
+- New `ref_md_readdcd.mat` (`tests/data/generate_md_readdcd_refs.m`, EasySpin `md_readdcd`).
+  `test_mdload.py` checks the bundled DCD coordinates against it, that the reader consumes the
+  files exactly to EOF with one unit-cell record per frame, that the fixed protein atoms equal
+  the PDB coordinates in every frame, the `mdload` label frames against EasySpin's
+  `mdload_files_*.mat`, and synthetic CHARMM files with and without the unit-cell and 4-dims
+  records plus an X-PLOR file. 12 of the 13 new tests fail before the fix.
+## [0.9.33] — 2026-11-14
+
+### Fixed
+
+- **Field-sweep gStrain/AStrain widths are rotation covariant (B84).** The g-strain model is a
+  distribution of the principal g values in the g frame, width² = Σ_i (R z)_i² (gStrain_i/g_i ·
+  mwFreq)² = z' G G z with G = R' diag(gStrain/g · mwFreq) R. `compute_strain_widths_batch`
+  used the element-wise square z' (G∘G) z (one electron, each electron of a multi-electron
+  system, and |(G + c·mI·A) z|² with AStrain), which equals the model only for a diagonal G.
+  It now uses the matrix square G @ G (and SM @ SM). `hamsymm`'s strain-symmetry tensors (B82)
+  follow: G·G, A·A and G·A + A·G instead of G∘G, A∘A and G∘A, so strain collinear with a tilted
+  g frame now has the symmetry of g in that frame (Dinfh/D2h) instead of Ci. Numbers (S = 1/2,
+  9.5 GHz, gFrame = [0.4 0.9 -0.3] against the untilted system at the rotated field direction):
+  per-orientation widths for g = [2.0 2.0 2.2] / [2.0 2.1 2.3] with gStrain = [0.01 0.01 0.05] /
+  [0.01 0.03 0.06] differed by up to 104 % / 108 % and now agree to 1e-15; two electrons with
+  the same tilt 82 % -> 7e-15; g+A strain and AStrain alone (isotropic g and A, AFrame tilted
+  with g) 92 % -> 2e-15; pepper powder spectra ([19 4] grid) 27 % / 9.2 % of the peak -> 2.5e-14 / 8.3e-15 (same grid now).
+  Gradients: `pepper_autograd` at user orientations gives the same d/dgStrain for the tilted
+  and the untilted description (before: 1.26 relative apart); gStrain and gFrame gradients on
+  a fixed Ci grid match converged central differences (1.2e-8 and 1.2e-6 relative at h = 1e-6).
+  Untilted frames (diagonal G) give bit-identical widths and spectra. Frequency sweeps (linear
+  z' G z) were already covariant and are unchanged; the perturbation-theory paths compute no
+  strain widths.
+- **Deliberate deviation from EasySpin.** EasySpin has the same element-wise square
+  (resfields.m 787/792/1309, resfields_perturb.m 523/532, resfreqs_perturb.m 504), so its
+  widths with a tilted g or A frame and g/A strain depend on the frame description. Four
+  EasySpin comparisons are now strict xfails, each with an objective replacement test:
+  `test_strain_validation.py` tilted_frame (RMS 0.0874 -> 0.0996, peak ratio 0.944 -> 1.252;
+  replacement: the tilted system equals the untilted one to 1e-10 and passes against EasySpin's
+  untilted reference), `test_strain_widths_matlab_validation.py` two_spinhalf_gstrain_both
+  (max relative width deviation 3.4e-4 -> 0.17; replacement: a global rotation of the
+  two-electron system leaves every width unchanged, 0.54 -> 2.3e-15) and the two Cu63_AFrame
+  width tests in `test_astrain_mi_model.py` (9.2e-6 -> 0.45; replacement: both width functions
+  equal the explicitly written model with the matrix square to 4e-16, and the same model with
+  EasySpin's element-wise square reproduces EasySpin's widths). See KNOWN_LIMITATIONS.md.
+- Not covered: the AStrain mI labels (EasySpin's model, taken along the molecular z axis) are
+  not rotation covariant with anisotropic A or with anisotropic g in a tilted frame (B96, open).
+
+### Tests
+
+- New `torchspin/tests/test_gstrain_covariance.py` (13 tests; 12 fail before this change):
+  per-orientation widths of tilted vs untilted systems (axial, rhombic, two electrons, g+A
+  strain and AStrain with isotropic g and A) at 1e-12; pepper powder spectra at 1e-10;
+  `hamsymm` Dinfh/D2h for tilted collinear strain; `pepper_autograd` spectrum and d/dgStrain
+  covariance at user orientations; gStrain/gFrame gradients against converged central
+  differences on a fixed Ci grid (step-size table in the test; passes before the fix too).
+- New objective tests in `test_strain_validation.py`, `test_strain_widths_matlab_validation.py`
+  and `test_astrain_mi_model.py` (see above).
+- `test_ham_handling.py::test_pepper_gstrain_ham_gframe_converged_reference` (Ham110/Ham112 +
+  gStrain with a gFrame): the default grid is now D2h [19 4] in the g frame instead of Ci, and
+  its 1 - cos against the C1 [91 1] reference is 9.5e-7 (as for the untilted system) instead
+  of 1.07e-7. The bound 1.2e-7 is kept on a D2h [31 4] grid (8.8e-8); the default spectrum is
+  now checked against the untilted system (1e-13) and EasySpin's untilted spectrum (cosine
+  0.9999999966, max deviation 9.2e-5, the 'diag' case tolerances). Before the fix the tilted
+  default differed from the untilted one by 0.25 of the maximum.
+
 ## [0.9.32] — 2026-11-14
 
 ### Fixed
