@@ -211,7 +211,11 @@ TIGHT_TOL = {
         },
         id='combined',
     ),
-    # Test 6: Tilted g-frame with gStrain — xfail: shape discrepancy with tilted frame
+    # Test 6: Tilted g-frame with gStrain — strict xfail since 0.9.33 (B84): EasySpin
+    # squares the rotated strain matrix element-wise (resfields.m 787/792), which is
+    # not rotation covariant; torchspin uses the matrix square (the g-frame model).
+    # Before: RMS 0.0874, peak ratio 0.9441; after: RMS 0.0996, peak ratio 1.2519.
+    # Objective check: test_tilted_frame_equals_untilted_system below.
     pytest.param(
         'strain_ref_tilted_frame.mat',
         {
@@ -228,6 +232,10 @@ TIGHT_TOL = {
             'Harmonic': 1,
         },
         id='tilted_frame',
+        marks=pytest.mark.xfail(strict=True, reason=(
+            "B84 deliberate deviation: EasySpin's element-wise square of the rotated g-strain "
+            "matrix is not rotation covariant (torchspin 0.9.33 uses the matrix square); RMS "
+            "0.0996, peak ratio 1.2519 vs EasySpin (0.0874 / 0.9441 before)")),
     ),
 ])
 def test_strain_vs_matlab(filename, sys_params, exp_params):
@@ -272,6 +280,29 @@ def test_strain_vs_matlab(filename, sys_params, exp_params):
         f"  Peak height ratio: {metrics['peak_height_ratio']:.4f} (target: 0.80–1.20)\n"
         f"  Metrics: {metrics}"
     )
+
+
+def test_tilted_frame_equals_untilted_system():
+    """Objective reference for the tilted_frame case (B84, 0.9.33).
+
+    The tilted system is the gstrain system with gFrame = [pi/6 pi/4 pi/3]:
+    the same physical system, so its powder spectrum must equal the untilted
+    one.  torchspin: equal to 1e-10 (the strain symmetry D2h now follows the g
+    frame); against EasySpin's untilted reference (strain_ref_gstrain.mat,
+    whose g-frame widths are exact) with the gstrain tolerances: RMS 0.0589,
+    peak ratio 1.0005.  Before the fix the tilted spectrum differed from the
+    untilted one.
+    """
+    kw = dict(S=[1/2], g=[[2.00, 2.05, 2.15]], gStrain=[[0.01, 0.02, 0.03]], lw=[0.0, 0.0])
+    exp = Experiment(mwFreq=9.5, Range=[320.0, 380.0], nPoints=1024, Harmonic=1)
+    opt = Options(GridSize=31, GridSymmetry='auto', Verbosity=0)
+    B_py, y_tilt = pepper(SpinSystem(**kw, gFrame=[np.pi/6, np.pi/4, np.pi/3]), exp, opt)
+    _, y_ref = pepper(SpinSystem(**kw), exp, opt)
+    assert float((y_tilt - y_ref).abs().max() / y_ref.abs().max()) < 1e-10
+
+    spc_mat, B_mat = load_matlab_ref('strain_ref_gstrain.mat')
+    passes, rms_diff, metrics = compare_spectra(y_tilt, spc_mat, B_py, B_mat)
+    assert passes, (rms_diff, metrics)
 
 
 def test_no_strain_backward_compatibility():

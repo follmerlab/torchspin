@@ -223,6 +223,7 @@ centered bins moved (B85).
 
 **MD analysis:**
 `mdhmm_*.mat` (4 files), `mdload_files_*.mat` (2 files) — Python
+`ref_md_readdcd.mat` — MATLAB-gen (`generate_md_readdcd_refs.m`, EasySpin main, R2024b, 2026-11-14): EasySpin `md_readdcd` on `tests/mdfiles/A10R1_polyAla.dcd` and `A10TOAC_polyAla.dcd` (B97, 0.9.34): all frames for a fixed atom subset (`idx`, 1-based), the first frame for all atoms, `nAtoms`, `nFrames`, `dt`. Used by `test_mdload.py`. That file also compares `mdload` label frames (`FrameTraj`, `FrameTrajwrtProt`, `RProtDiff`) with `mdload_files_R1.mat`/`mdload_files_TOAC.mat`, which are byte-identical to EasySpin's own `tests/data` regression files (EasySpin `mdload_files_R1.m`, `mdload_files_TOAC.m`) and are therefore MATLAB references despite the tag above.
 
 ---
 

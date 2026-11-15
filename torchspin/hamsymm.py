@@ -822,11 +822,12 @@ def _strain_tensors(sys: SpinSystem) -> list:
     ``(sym_code, R_S2M, W_mol)`` (sym codes as :func:`_tensor_symmetry`):
 
     * ``HStrain`` / ``HStrainL``: ``diag(HStrain**2)`` in the molecular frame.
-    * ``gStrain``: per electron ``G∘G`` (element-wise square, as in the width
-      formula) with ``G = R_g2M diag(gStrain/g) R_g2M'``, i.e. the g frame.
-    * ``AStrain`` (single electron, first nucleus): ``A∘A`` and ``G∘A`` with
-      ``A = R_A2M diag(AStrain) R_A2M'`` (``AFrame``); together with ``G∘G``
-      these keep ``(G + c·mI·A)∘(G + c·mI·A)`` invariant for every ``mI``.
+    * ``gStrain``: per electron ``G·G`` (matrix square, as in the width
+      formula; B84) with ``G = R_g2M diag(gStrain/g) R_g2M'``, i.e. the g frame.
+    * ``AStrain`` (single electron, first nucleus): ``A·A`` and ``G·A + A·G``
+      with ``A = R_A2M diag(AStrain) R_A2M'`` (``AFrame``); together with
+      ``G·G`` these keep ``(G + c·mI·A)·(G + c·mI·A)`` invariant for every
+      ``mI``.
     * ``DStrain``: dH/dD (axial) and dH/dE (rhombic) operators in the D frame:
       ``Dinfh`` about the D-frame z axis without E strain, else ``D2h`` in the
       D frame (also with ``DStrainCorr``).
@@ -874,7 +875,7 @@ def _strain_tensors(sys: SpinSystem) -> list:
                 R = erot(gFrame[e].tolist()).to(torch.float64)
                 M = R.T @ M @ R
             G[e] = M
-            out.append(_strain_from_matrix(M * M))
+            out.append(_strain_from_matrix(M @ M))
 
     AS = getattr(sys, 'AStrain', None)
     if _nz(AS) and sys.nNuclei > 0 and nE == 1:
@@ -885,9 +886,9 @@ def _strain_tensors(sys: SpinSystem) -> list:
             if bool(torch.any(a0 != 0)):
                 R = erot(a0.tolist()).to(torch.float64)
                 A = R.T @ A @ R
-        out.append(_strain_from_matrix(A * A))
+        out.append(_strain_from_matrix(A @ A))
         if G[0] is not None:
-            out.append(_strain_from_matrix(G[0] * A))
+            out.append(_strain_from_matrix(G[0] @ A + A @ G[0]))
 
     DS = getattr(sys, 'DStrain', None)
     if _nz(DS):

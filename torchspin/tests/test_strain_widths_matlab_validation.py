@@ -114,7 +114,14 @@ def _iter_orientations(c):
 
 
 @pytest.mark.parametrize("name", [
-    'two_spinhalf_gstrain_both', 'two_spinhalf_gstrain_second',
+    # strict xfail since 0.9.33 (B84): electron 2 has a tilted gFrame; EasySpin squares
+    # the rotated g-strain matrix element-wise (resfields.m 787/792), torchspin uses the
+    # matrix square.  Objective check: test_gstrain_widths_rotation_covariant below.
+    pytest.param('two_spinhalf_gstrain_both', marks=pytest.mark.xfail(strict=True, reason=(
+        "B84 deliberate deviation: EasySpin's element-wise square of the rotated g-strain "
+        "matrix is not rotation covariant; max relative deviation 3.4e-4 -> 0.17 "
+        "(tolerance 3e-3)"))),
+    'two_spinhalf_gstrain_second',
     'triplet_dstrain_tilted', 'two_triplets_dstrain_corr', 'triplet_dstrain_corr',
 ])
 def test_strain_widths_vs_easyspin(cases, name):
@@ -141,6 +148,43 @@ def test_strain_widths_vs_easyspin(cases, name):
                 f"{name} dir={o.dir} trans={u+1},{v+1}: torchspin {float(w[0]):.8f} vs EasySpin {wid[k]:.8f} mT"
             n_checked += 1
     assert n_checked > 0
+
+
+def test_gstrain_widths_rotation_covariant(cases):
+    """Objective reference for two_spinhalf_gstrain_both (B84, 0.9.33).
+
+    Rotating the whole system (both g frames, R_e -> R_e Q') and the field
+    direction (n -> Q n) describes the same physics, so every width must stay
+    the same; with g frames [0 0 0] and [pi/6 pi/4 pi/3] and Q = erot(0.4, 0.9,
+    -0.3)' both electrons end up tilted differently.  Checked at the EasySpin
+    directions, level pairs and fields.  Max relative difference: 0.54 before
+    the fix, 2.3e-15 after.
+    """
+    from torchspin.rotutils import eulang
+    c = cases['two_spinhalf_gstrain_both']
+    sys = sys_from_mat(c.Sys)
+    H0, mux, muy, muz = ham(sys)
+    Q = erot([0.4, 0.9, -0.3]).to(torch.float64).T
+    frames = [eulang((erot(f.tolist()).to(torch.float64) @ Q.T).numpy()).tolist() for f in sys.gFrame]
+    S = c.Sys
+    sys_rot = SpinSystem(S=[0.5, 0.5], g=np.asarray(S.g, float).tolist(), gFrame=frames,
+                         gStrain=np.asarray(S.gStrain, float).tolist(), ee=[float(S.ee)], lw=[0.0, 0.0])
+    H0r, muxr, muyr, muzr = ham(sys_rot)
+    n_checked = 0
+    for o, pos, wid, trans in _iter_orientations(c):
+        n = _field_direction(c, o, H0, mux, muy, muz, pos, trans)
+        phi, theta = _angles(n)
+        phir, thetar = _angles((Q @ torch.as_tensor(n / np.linalg.norm(n), dtype=torch.float64)).numpy())
+        pr = torch.tensor([[int(trans[k, 0]) - 1, int(trans[k, 1]) - 1] for k in range(len(pos))])
+        for k in range(len(pos)):
+            w = compute_strain_widths(sys=sys, H0=H0, mux=mux, muy=muy, muz=muz, phi=phi, theta=theta,
+                                      transitions=pr[k:k + 1], mwFreq=MWFREQ, B0=float(pos[k]))
+            wr = compute_strain_widths(sys=sys_rot, H0=H0r, mux=muxr, muy=muyr, muz=muzr, phi=phir,
+                                       theta=thetar, transitions=pr[k:k + 1], mwFreq=MWFREQ,
+                                       B0=float(pos[k]))
+            torch.testing.assert_close(wr, w, rtol=1e-12, atol=0.0)
+            n_checked += 1
+    assert n_checked == 24
 
 
 @pytest.mark.parametrize("name", ['two_spinhalf_gstrain_both', 'two_triplets_dstrain_corr'])
