@@ -297,6 +297,10 @@ so the cross-validation suite only runs from a checkout.
 - [EasySpin](https://easyspin.org) — the MATLAB reference implementation
 - [PyTorch](https://pytorch.org) — the autograd engine
 
+## Acknowledgments
+
+torchspin was developed with help from Claude (Anthropic).
+
 ## License
 
 MIT — see [LICENSE.md](LICENSE.md). torchspin is derived from EasySpin, which is
