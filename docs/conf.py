@@ -74,6 +74,8 @@ exclude_patterns = [
     # developer-facing (coverage gaps, manuscript-era claims): in the repo, not on the site
     "physics/coverage_gaps.md",
     "physics/manuscript_claims.md",
+    # install-route validation record (docs/install-notebooks): in the repo, not on the site
+    "installation_validation.md",
     "_build",
     "_ext",
     "_templates",
