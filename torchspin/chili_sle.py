@@ -15,6 +15,7 @@ Public entry point: :func:`chili_sle` (called by :func:`torchspin.chili.chili`).
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -865,19 +866,46 @@ def pqorder(spins):
 # Lanczos tridiagonalisation with Lentz continued fraction (chili_lanczos.m)
 # =============================================================================
 
-def chili_lanczos(A, b, z, threshold: float, max_steps: Optional[int] = None):
-    """Spectrum s(z) = <b|(A + z)^-1|b> for a complex-symmetric A (pseudo-norm Lanczos)."""
+# A Lentz-converged candidate is accepted when the spectrum then moves by less than
+# LANCZOS_VERIFY_FACTOR * Threshold (relative to its maximum) over the next interval.
+LANCZOS_VERIFY_FACTOR = 100.0
+
+def chili_lanczos(A, b, z, threshold: float, max_steps: Optional[int] = None,
+                  verify_factor: float = LANCZOS_VERIFY_FACTOR):
+    """Spectrum s(z) = <b|(A + z)^-1|b> for a complex-symmetric A (pseudo-norm Lanczos).
+
+    Lanczos tridiagonalization with the modified Lentz evaluation of the continued fraction
+    (EasySpin chili_lanczos.m).  Returns ``(spec, converged, steps)``.
+
+    Stopping rule.  EasySpin stops at the first check step (every ``interval`` steps) whose
+    Lentz change max|Delta - 1| is below ``threshold``.  In the pseudo-norm recursion a
+    near-breakdown (|beta_k| much smaller than the Euclidean norm of the residual) makes
+    that one-step change small while the continued fraction is still far from converged:
+    for the 14N nitroxide at tcorr = 100 ns, default LLMK, plain basis, it stopped at step
+    40 with cosine 0.965 against the direct solve (B116).  Here a passing check only makes
+    the spectrum a candidate; the candidate is accepted when, one interval later, the
+    spectrum has moved by less than ``verify_factor * threshold`` (relative to its
+    maximum), and it is the candidate that is returned, so a converged result is the same
+    as with EasySpin's rule.  Otherwise iteration continues.
+
+    A full-length tridiagonalization (N steps: the Krylov space is the whole space) or an
+    exact breakdown (beta = 0) terminates the continued fraction, which is then exact in
+    exact arithmetic; both count as converged (EasySpin reports them as not converged and
+    returns ones).  ``converged`` is False only if ``max_steps < N`` stops the iteration.
+    """
     N = b.size
     if max_steps is None:
         max_steps = N
+    max_steps = min(int(max_steps), N)
     interval = min(10, int(math.ceil(N / 20)))
+    verify_tol = verify_factor * threshold
     tiny = 1e-30
     spec = np.full(z.shape, tiny, dtype=complex)
     C = spec.copy(); D = np.zeros_like(spec)
     q = b / np.sqrt(b @ b)
     bq = 0.0
     alpha = np.zeros(max_steps, dtype=complex); beta = np.zeros(max_steps, dtype=complex)
-    converged = False
+    candidate = None                      # (spectrum, step) that passed the Lentz test
     k_done = 0
     for k in range(max_steps):
         y = A @ q
@@ -892,15 +920,20 @@ def chili_lanczos(A, b, z, threshold: float, max_steps: Optional[int] = None):
         Delta = C * D
         spec = spec * Delta
         if (k + 1) % interval == 0:
-            change = np.max(np.abs(Delta - 1))
-            converged = change < threshold
-            if converged:
-                break
+            if candidate is not None:
+                moved = np.max(np.abs(spec - candidate[0])) / np.max(np.abs(candidate[0]))
+                if moved < verify_tol:
+                    return candidate[0], True, candidate[1]
+                candidate = None
+            if np.max(np.abs(Delta - 1)) < threshold:
+                candidate = (spec.copy(), k_done)
         if beta[k] == 0:
-            break
+            return spec, True, k_done
         bq = beta[k] * q
         q = y / beta[k]
-    return spec, converged, k_done
+    if k_done == N:
+        return spec, True, k_done
+    return spec, False, k_done
 
 
 # =============================================================================
@@ -1127,6 +1160,7 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
 
     # ---- orientation loop --------------------------------------------------------
     spec = np.zeros(nPoints, dtype=complex)
+    warned_fallback = False
     for iOri in range(phi.size):
         Q0B, Q1B, Q2B, Q0G, Q1G, Q2G = rbos(T, F, [phi[iOri], theta[iOri], 0.0], fielddep)
         if explicit:
@@ -1151,16 +1185,22 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
             else:
                 scale = 1.0
                 omega = omega0
+            use_direct = solver == '\\'
             if solver == 'L':
                 s_, converged, steps = chili_lanczos(Lm, start, -1j * omega, opt.Threshold)
-                if not converged:
+                if converged:
                     if verbose:
-                        print(f"chili: Lanczos did not converge (basis {basis_size}, LLMK {opt.LLMK}); increase the basis.")
-                    s_ = np.ones(nPoints, dtype=complex)
-                elif verbose:
-                    print(f"chili: Lanczos converged after {steps} steps (basis {basis_size})")
-                thisspec_i = s_
-            elif solver == '\\':
+                        print(f"chili: Lanczos converged after {steps} steps (basis {basis_size})")
+                    thisspec_i = s_
+                else:
+                    # EasySpin returns ones(nPoints) here; solve directly instead.
+                    if not warned_fallback:
+                        warnings.warn(f"chili: Lanczos did not converge to Opt.Threshold={opt.Threshold:g} "
+                                      f"after {steps} steps (basis {basis_size}); using the direct solver.",
+                                      RuntimeWarning, stacklevel=3)
+                        warned_fallback = True
+                    use_direct = True
+            if use_direct:
                 I = sp.identity(basis_size, format='csc')
                 Lc = Lm.tocsc()
                 if explicit:
@@ -1176,7 +1216,7 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
                 Lam, U = np.linalg.eig(Ld)
                 amp = (np.conj(start) @ U) * np.linalg.solve(U, start)
                 thisspec_i = np.sum(amp[:, None] / (Lam[:, None] - 1j * omega[None, :]), axis=0)
-            else:
+            elif solver != 'L':
                 raise ValueError(f"Unknown Opt.Solver '{solver}'. Use 'L', '\\\\' or 'E'.")
             if not explicit:
                 thisspec = thisspec_i
