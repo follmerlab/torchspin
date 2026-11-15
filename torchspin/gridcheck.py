@@ -29,20 +29,41 @@ __all__ = ['GridConvergence', 'grid_convergence']
 
 @dataclass
 class GridConvergence:
-    """Result of comparing a spectrum against a more finely sampled one.
+    """Result of :func:`grid_convergence`: a spectrum compared with a refined one.
 
-    Attributes
+    Returned by :func:`grid_convergence`; not normally constructed by hand.
+    ``str(result)`` gives a one-line summary and :meth:`report` a sentence with
+    a recommendation.
+
+    Parameters
     ----------
-    cosine:
-        Cosine similarity between the two spectra, 1.0 when converged.
-    amplitude_ratio:
-        Peak amplitude of the requested grid over that of the refined grid.
-        The quantity that moves first, because the derivative extremum at a
-        turning point is the most grid-sensitive number in a powder spectrum.
-    converged:
-        ``cosine >= cosine_tol`` and ``|amplitude_ratio - 1| <= amplitude_tol``.
-    grid_size, refined_grid_size:
-        What was compared.
+    cosine : float
+        Cosine similarity ``a.b / (|a| |b|)`` between the spectrum on the
+        requested grid (``a``) and on the refined grid (``b``), both flattened
+        (all rows when pepper returns a 2-D array).  1.0 means identical shape;
+        1.0 is also returned when either spectrum is all zero.
+    amplitude_ratio : float
+        ``max|a| / max|b|``: peak amplitude on the requested grid over that on
+        the refined grid (1.0 when the refined spectrum is all zero).  This is
+        usually the first quantity to move, because the derivative extremum at
+        a turning point is the most grid-sensitive number in a powder
+        spectrum.
+    converged : bool
+        ``cosine >= cosine_tol and abs(amplitude_ratio - 1) <= amplitude_tol``.
+    grid_size : list of int
+        The ``Options.GridSize`` under test as a list: ``[N]`` for an integer
+        ``GridSize`` or ``[N_coarse, N_interp]``.
+    refined_grid_size : list of int
+        The reference grid: ``[refine * N]`` or ``[refine * N_coarse,
+        N_interp]`` (the interpolation factor is kept).
+    cosine_tol : float
+        Cosine threshold used for ``converged``.
+    amplitude_tol : float
+        Relative amplitude threshold used for ``converged``.
+
+    See Also
+    --------
+    grid_convergence : Produces this result.
     """
 
     cosine: float
@@ -59,7 +80,15 @@ class GridConvergence:
                 f'(cosine {self.cosine:.5f}, amplitude ratio {self.amplitude_ratio:.4f})')
 
     def report(self) -> str:
-        """A sentence to print, with what to do about it."""
+        """Return a sentence describing the result and what to do about it.
+
+        Returns
+        -------
+        str
+            For a converged grid, the size of the change on refinement; for an
+            unconverged one, the change and the recommendation to use
+            ``refined_grid_size`` (or finer) and re-check.
+        """
         if self.converged:
             return (f'GridSize={self.grid_size} looks converged: refining to '
                     f'{self.refined_grid_size} changes the spectrum by cosine '
@@ -75,32 +104,86 @@ class GridConvergence:
 def grid_convergence(sys, exp: Experiment, opt: Optional[Options] = None,
                      refine: int = 4, cosine_tol: float = 0.9999,
                      amplitude_tol: float = 0.01) -> GridConvergence:
-    """Simulate twice, once on a finer orientation grid, and compare.
+    """Check whether ``Options.GridSize`` is fine enough for a pepper simulation.
+
+    Runs :func:`torchspin.pepper` twice, once with the ``GridSize`` of ``opt``
+    and once with the coarse knot count multiplied by ``refine``, and compares
+    the two spectra (shape by cosine similarity, height by peak-amplitude
+    ratio).  Only ``Options.GridSize`` is changed between the two runs; every
+    other option (``GridSymmetry``, ``Method``, ``separate``, ...) is passed
+    through unchanged.
 
     Parameters
     ----------
-    sys, exp, opt:
-        Exactly what you would pass to :func:`torchspin.pepper`; ``opt`` supplies
-        the ``GridSize`` under test (default ``Options()``).
-    refine:
-        Factor by which to multiply the coarse knot count for the reference.
-        The cost of the check is dominated by that second simulation.
-    cosine_tol, amplitude_tol:
-        What counts as converged.  The defaults are a tenth of the repository's
-        parity tolerances, so that grid error stays well below the level the
+    sys : SpinSystem or list of SpinSystem
+        Spin system(s), exactly as for :func:`torchspin.pepper`.  Tensors must
+        not require grad (see Raises).
+    exp : Experiment
+        Experiment, exactly as for :func:`torchspin.pepper` (field or
+        frequency sweep).
+    opt : Options, optional
+        Options; its ``GridSize`` (int ``N`` or ``[N_coarse, N_interp]``) is the
+        grid under test.  Default ``None`` = ``Options()``, i.e. ``GridSize =
+        [19, 4]``.
+    refine : int, default 4
+        Factor applied to the coarse knot count for the reference run:
+        ``N -> refine * N`` or ``[N, k] -> [refine * N, k]``.  Must be at least
+        2.  The cost of the check is dominated by the refined simulation, whose
+        orientation count grows roughly as ``refine**2`` for 2-D grids.
+    cosine_tol : float, default 0.9999
+        Minimum cosine similarity for ``converged``.
+    amplitude_tol : float, default 0.01
+        Maximum relative change of the peak amplitude for ``converged``
+        (0.01 = 1 %).  Both defaults are a tenth of the repository's parity
+        tolerances, so that grid error stays well below the level the
         simulators are validated at.
 
     Returns
     -------
     GridConvergence
+        Cosine similarity, amplitude ratio, the verdict, both grid sizes and
+        the tolerances used.
+
+    Raises
+    ------
+    ValueError
+        If ``refine < 2``, and anything :func:`torchspin.pepper` raises for
+        these inputs.
+    RuntimeError
+        If an input tensor requires grad: pepper then returns a spectrum on
+        the autograd graph, which cannot be converted to NumPy here.  Pass
+        detached values.
+
+    See Also
+    --------
+    GridConvergence : The result object.
+    torchspin.pepper : The simulator being checked.
+    torchspin.Options : ``GridSize`` and ``GridSymmetry``.
+
+    Notes
+    -----
+    A single spectrum does not reveal grid error, and a heuristic on the field
+    step between knots is not a reliable substitute (see the module
+    docstring); comparing with a refined grid is.  The check is meaningful
+    only when pepper uses a powder grid: with ``Experiment.Orientations`` the
+    grid size is ignored by pepper and the two spectra are identical.
 
     Examples
     --------
+    A Cu(II) powder spectrum with a narrow line is not converged at the
+    default ``GridSize = [19, 4]``:
+
     >>> from torchspin import SpinSystem, Experiment, Options, grid_convergence
-    >>> c = grid_convergence(sys, exp, Options(GridSize=[19, 4]))   # doctest: +SKIP
-    >>> print(c.report())                                           # doctest: +SKIP
-    GridSize=[19, 4] is NOT converged: refining to [76, 4] changes the amplitude
-    by 23 % and the shape by cosine 0.03. Use [76, 4] (or finer) ...
+    >>> cu = SpinSystem(S=0.5, g=[2.05, 2.05, 2.25], Nucs='63Cu',
+    ...                 A=[50, 50, 500], lw=0.54)
+    >>> exp = Experiment(mwFreq=9.5, Range=[260, 360], nPoints=1024)
+    >>> c = grid_convergence(cu, exp, Options(GridSize=[19, 4]))
+    >>> c.converged, c.refined_grid_size
+    (False, [76, 4])
+    >>> round(c.amplitude_ratio, 2)
+    1.02
+    >>> print(c.report())  # doctest: +ELLIPSIS
+    GridSize=[19, 4] is NOT converged: refining to [76, 4] changes the amplitude by 1.7 % ...
     """
     from torchspin.pepper import pepper
     if refine < 2:

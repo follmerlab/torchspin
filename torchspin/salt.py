@@ -111,7 +111,7 @@ def _fixed_field_transitions(
     (hyperfine enhancement, EasySpin ``Opt.Enhancement``).
 
     Matrix paths: the level pairs are selected once, as in EasySpin endorfrq
-    (:func:`torchspin.endorfrq._endor_tps_select`: nuclear-moment rates summed
+    (``torchspin.endorfrq._endor_tps_select``: nuclear-moment rates summed
     over the coarse ``tps = (TPSGridSymm, TPSGridSize)`` grid, electronic pairs
     removed, rate ``> threshold * max``), independent of the orientation grid
     (0.9.14).  ``user_pairs`` (0-based, from ``Options.Transitions``) replaces
@@ -388,7 +388,7 @@ def salt(
         Frequency axis in MHz, shape ``(n_points,)``.
     spec:
         ENDOR spectrum, shape ``(n_points,)``.  Line intensities are
-        |<i|mu_perp|j>|^2 in (MHz/mT)^2 on every path (first-order perturbation
+        ``abs(<i|mu_perp|j>)**2`` in (MHz/mT)^2 on every path (first-order perturbation
         theory for one electron without Q, matrix diagonalization otherwise).
         In fixed-field mode this is the per-bin, orientation-averaged amplitude,
         EasySpin's ``salt`` output times ``dx / (8 pi^2)`` (``dx`` = bin width, MHz).

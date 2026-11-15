@@ -4,9 +4,10 @@ Self-contained checks (one-electron and 10Dq closed forms, the strong-field bloc
 full determinant spectrum of lft.ddn for every n and both geometries, units, the diagram's
 reduced and absolute axes), gradients against central differences (block energies in forward
 and reverse mode, the degenerate determinant spectrum, the diagram in C/B, gradcheck with
-forward AD), and parity with telser-tools when it is installed: the copied block tables are
-bit-identical, and every Dq- and B-loop run of the DTANSUG reference, all_levels, the
-determinant spectrum and the diagrams match.
+forward AD), and parity with telser-tools (live when it is importable, else its frozen outputs in
+data/telser/refs, see ``_telser_refs``): the copied block tables are bit-identical, and every Dq-
+and B-loop run of the DTANSUG reference, all_levels, the determinant spectrum and the diagrams
+match.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ import torch
 from torchspin.lft import tanabe_sugano as ts
 from torchspin.lft._engines import tanabe_sugano as eng
 from torchspin.lft.units import energy_factor
+from torchspin.tests import _telser_refs as R
 
 F64 = torch.float64
 CM_TO_MHZ = energy_factor("cm^-1", "MHz")
@@ -207,41 +209,37 @@ def test_gradcheck_forward_ad():
 
 
 # ------------------------------------------------------------------------------ parity with telser-tools
-def _telser():
-    return pytest.importorskip("telser_tools.tanabe_sugano")
+def _engine_inputs(n):
+    rng = np.random.default_rng(n)
+    return [(geo, blk.label, *(rng.normal(size=3) * [900.0, 3500.0, 1500.0]).tolist())
+            for geo in eng.GEOMETRIES for blk in eng.blocks_for(n)]
+
+
+@R.oracle("tanabe_sugano", cases=range(1, 10))
+def _telser_engine(n):
+    """telser-tools' block table and block matrices (scalar arithmetic only: bit-reproducible)."""
+    from telser_tools.tanabe_sugano import blocks as tb
+    return dict(blocks=[[b.nh, b.first, b.label, list(b.configs)] for b in tb.blocks_for(n)],
+                H=[tb.hamiltonian(n, label, B, C, Dq, geo) for geo, label, B, C, Dq in _engine_inputs(n)])
 
 
 @pytest.mark.parametrize("n", range(1, 10))
 def test_engine_copy_is_bit_identical(n):
-    tts = _telser()
-    from telser_tools.tanabe_sugano import blocks as tb
-    assert [(b.nh, b.first, b.label, b.configs) for b in eng.blocks_for(n)] == \
-        [(b.nh, b.first, b.label, b.configs) for b in tb.blocks_for(n)]
-    rng = np.random.default_rng(n)
-    for geo in eng.GEOMETRIES:
-        for blk in eng.blocks_for(n):
-            B, C, Dq = (rng.normal(size=3) * [900.0, 3500.0, 1500.0]).tolist()
-            assert np.array_equal(eng.hamiltonian(n, blk.label, B, C, Dq, geo),
-                                  tts.hamiltonian(n, blk.label, B, C, Dq, geo))
-
-
-def _cases(runs):
-    from telser_tools.tanabe_sugano import blocks
-    for run in runs:
-        for nfig in run["nfigs"]:
-            yield run, blocks.block_for_nfig(run["n"], nfig).label
-
-
-def _id(c):
-    run, label = c
-    return f"d{run['n']}-{run['geometry']}-{label}"
+    ref = R.ref(_telser_engine, n)
+    assert [[b.nh, b.first, b.label, list(b.configs)] for b in eng.blocks_for(n)] == ref["blocks"]
+    for (geo, label, B, C, Dq), want in zip(_engine_inputs(n), ref["H"], strict=True):
+        assert np.array_equal(eng.hamiltonian(n, label, B, C, Dq, geo), want)
 
 
 def _parity_cases(key):
-    try:
-        return list(_cases(RUNS[key]))
-    except ImportError:
-        return []
+    """(run index, NFIG, block label) for every run of the DTANSUG reference; the label (used for the
+    test id and the torchspin call) is torchspin's copy of the block table, checked against telser-tools'."""
+    return [(i, nfig, eng.block_for_nfig(run["n"], nfig).label)
+            for i, run in enumerate(RUNS[key]) for nfig in run["nfigs"]]
+
+
+def _id(key):
+    return lambda c: f"d{RUNS[key][c[0]]['n']}-{RUNS[key][c[0]]['geometry']}-{c[2]}"
 
 
 def _nondegenerate(e, tol):
@@ -249,61 +247,123 @@ def _nondegenerate(e, tol):
     return gaps.min(axis=1) > tol
 
 
+def _scan_ok(e):
+    """States whose weights the test compares (the others' are basis-dependent inside a degenerate level)."""
+    return _nondegenerate(e, 1e-3 * max(np.ptp(e), 1.0))
+
+
+def _plain_scan(sc):
+    weights = np.array(sc.weights, dtype=float)
+    for k, e in enumerate(sc.energies):
+        weights[k][~_scan_ok(e)] = np.nan                  # not compared; NaN keeps the drift check meaningful
+    return dict(energies=sc.energies, zeroth_order=sc.zeroth_order, weights=weights)
+
+
 def _check_scan(a, b):
-    np.testing.assert_allclose(a.energies.numpy(), b.energies, rtol=1e-12, atol=1e-9)
-    np.testing.assert_allclose(a.zeroth_order.numpy(), b.zeroth_order, rtol=1e-12, atol=1e-9)
-    for k in range(len(b.energies)):
-        ok = _nondegenerate(b.energies[k], 1e-3 * max(np.ptp(b.energies[k]), 1.0))
-        np.testing.assert_allclose(a.weights[k].numpy()[ok], b.weights[k][ok], atol=1e-10)
+    np.testing.assert_allclose(a.energies.numpy(), b["energies"], rtol=1e-12, atol=1e-9)
+    np.testing.assert_allclose(a.zeroth_order.numpy(), b["zeroth_order"], rtol=1e-12, atol=1e-9)
+    for k in range(len(b["energies"])):
+        ok = _scan_ok(b["energies"][k])
+        np.testing.assert_allclose(a.weights[k].numpy()[ok], b["weights"][k][ok], atol=1e-10)
 
 
-@pytest.mark.parametrize("case", _parity_cases("dq_runs"), ids=_id)
-def test_dq_loops_match_telser_tools(case):
-    tts = _telser()
-    run, label = case
+def _case_key(c):
+    return f"{c[0]}-{c[1]}"
+
+
+@R.oracle("tanabe_sugano", cases=[_case_key(c) for c in _parity_cases("dq_runs")])
+def _telser_dq_loop(case):
+    import telser_tools.tanabe_sugano as tts
+    i, nfig = map(int, case.split("-"))
+    run = RUNS["dq_runs"][i]
     n, geo = run["n"], run["geometry"]
+    label = tts.blocks.block_for_nfig(n, nfig).label
     grid = tts.fortran_grid(*run["dq"])
-    _check_scan(ts.scan_dq(n, label, run["B"], run["C"], torch.tensor(grid), geo, units="cm^-1"),
-                tts.scan_dq(n, label, run["B"], run["C"], grid, geo))
+    return dict(label=label, grid=grid, scan=_plain_scan(tts.scan_dq(n, label, run["B"], run["C"], grid, geo)),
+                H0=tts.hamiltonian(n, label, run["B"], run["C"], grid[0], geo))
+
+
+@pytest.mark.parametrize("case", _parity_cases("dq_runs"), ids=_id("dq_runs"))
+def test_dq_loops_match_telser_tools(case):
+    ref = R.ref(_telser_dq_loop, _case_key(case))
+    run, label = RUNS["dq_runs"][case[0]], case[2]
+    assert ref["label"] == label
+    n, geo, grid = run["n"], run["geometry"], ref["grid"]
+    _check_scan(ts.scan_dq(n, label, run["B"], run["C"], torch.tensor(grid), geo, units="cm^-1"), ref["scan"])
     np.testing.assert_allclose(ts.block_hamiltonian(n, label, run["B"], run["C"], grid[0], geo, units="cm^-1").numpy(),
-                               tts.hamiltonian(n, label, run["B"], run["C"], grid[0], geo), rtol=1e-14, atol=1e-10)
+                               ref["H0"], rtol=1e-14, atol=1e-10)
 
 
-@pytest.mark.parametrize("case", _parity_cases("b_runs"), ids=_id)
-def test_b_loops_match_telser_tools(case):
-    tts = _telser()
-    run, label = case
+@R.oracle("tanabe_sugano", cases=[_case_key(c) for c in _parity_cases("b_runs")])
+def _telser_b_loop(case):
+    import telser_tools.tanabe_sugano as tts
+    i, nfig = map(int, case.split("-"))
+    run = RUNS["b_runs"][i]
     n, geo = run["n"], run["geometry"]
+    label = tts.blocks.block_for_nfig(n, nfig).label
     b = tts.fortran_grid(*run["b"])
     dq = tts.blocks.cubic_sign(n, geo) * run["dq"]
-    _check_scan(ts.scan_b(n, label, dq, torch.tensor(b), run["c_over_b"], geo, units="cm^-1"),
-                tts.scan_b(n, label, dq, b, run["c_over_b"], geo))
+    return dict(label=label, b=b, dq=dq, scan=_plain_scan(tts.scan_b(n, label, dq, b, run["c_over_b"], geo)))
+
+
+@pytest.mark.parametrize("case", _parity_cases("b_runs"), ids=_id("b_runs"))
+def test_b_loops_match_telser_tools(case):
+    ref = R.ref(_telser_b_loop, _case_key(case))
+    run, label = RUNS["b_runs"][case[0]], case[2]
+    assert ref["label"] == label
+    n, geo = run["n"], run["geometry"]
+    _check_scan(ts.scan_b(n, label, ref["dq"], torch.tensor(ref["b"]), run["c_over_b"], geo, units="cm^-1"),
+                ref["scan"])
 
 
 def test_parity_cases_were_collected():
-    _telser()
     assert len(_parity_cases("dq_runs")) == 141 and len(_parity_cases("b_runs")) == 58
+
+
+_LEVELS_BCDQ = (870.0, 3600.0, 1150.0)
+
+
+@R.oracle("tanabe_sugano", cases=[f"{n}-{geo}" for n in range(1, 10) for geo in ("Oh", "Td")])
+def _telser_all_levels(case):
+    import telser_tools.tanabe_sugano as tts
+    from telser_tools.tanabe_sugano import determinants
+    n, geo = int(case.split("-")[0]), case.split("-")[1]
+    B, C, Dq = _LEVELS_BCDQ
+    b = tts.all_levels(n, B, C, Dq, geo)
+    return dict(keys=sorted([x.label, x.root, x.degeneracy] for x in b), energies=np.array([x.energy for x in b]),
+                spectrum=determinants.spectrum(n, B, C, Dq, geo, A=50.0))
 
 
 @pytest.mark.parametrize("n", range(1, 10))
 @pytest.mark.parametrize("geo", ["Oh", "Td"])
 def test_all_levels_and_spectrum_match_telser_tools(n, geo):
-    tts = _telser()
-    from telser_tools.tanabe_sugano import determinants
-    B, C, Dq = 870.0, 3600.0, 1150.0
-    a, b = ts.all_levels(n, B, C, Dq, geo, units="cm^-1"), tts.all_levels(n, B, C, Dq, geo)
-    assert sorted((x.label, x.root, x.degeneracy) for x in a) == sorted((x.label, x.root, x.degeneracy) for x in b)
-    np.testing.assert_allclose([float(x.energy) for x in a], [x.energy for x in b], atol=1e-9)
+    ref = R.ref(_telser_all_levels, f"{n}-{geo}")
+    B, C, Dq = _LEVELS_BCDQ
+    a = ts.all_levels(n, B, C, Dq, geo, units="cm^-1")
+    assert sorted([x.label, x.root, x.degeneracy] for x in a) == ref["keys"]
+    np.testing.assert_allclose([float(x.energy) for x in a], ref["energies"], atol=1e-9)
     np.testing.assert_allclose(ts.spectrum(n, B, C, Dq, geo, A=50.0, units="cm^-1").numpy(),
-                               determinants.spectrum(n, B, C, Dq, geo, A=50.0), rtol=1e-12, atol=1e-9)
+                               ref["spectrum"], rtol=1e-12, atol=1e-9)
 
 
-@pytest.mark.parametrize("n,c,geo", [(3, 4.5, "Oh"), (6, 4.8, "Oh"), (8, 4.5, "Oh"), (5, 4.5, "Td")])
+_DIAGRAMS = [(3, 4.5, "Oh"), (6, 4.8, "Oh"), (8, 4.5, "Oh"), (5, 4.5, "Td")]
+
+
+@R.oracle("tanabe_sugano", cases=[f"{n}-{c}-{geo}" for n, c, geo in _DIAGRAMS])
+def _telser_diagram(case):
+    import telser_tools.tanabe_sugano as tts
+    n, c, geo = case.split("-")
+    b = tts.tanabe_sugano(int(n), float(c), np.linspace(0, 4, 41), geo)
+    return dict(ground=list(b.ground), labels=[[cv.label, cv.root] for cv in b.curves],
+                e_over_b=np.array([cv.e_over_b for cv in b.curves]), crossover=b.crossover())
+
+
+@pytest.mark.parametrize("n,c,geo", _DIAGRAMS)
 def test_diagram_matches_telser_tools(n, c, geo):
-    tts = _telser()
+    ref = R.ref(_telser_diagram, f"{n}-{c}-{geo}")
     x = np.linspace(0, 4, 41)
-    a, b = ts.tanabe_sugano(n, c, torch.tensor(x), geo), tts.tanabe_sugano(n, c, x, geo)
-    assert a.ground == b.ground
-    assert list(a.labels) == [(cv.label, cv.root) for cv in b.curves]
-    np.testing.assert_allclose(a.e_over_b.numpy(), np.array([cv.e_over_b for cv in b.curves]), atol=1e-11)
-    np.testing.assert_allclose(a.crossover(), b.crossover(), rtol=1e-12, atol=1e-12)
+    a = ts.tanabe_sugano(n, c, torch.tensor(x), geo)
+    assert list(a.ground) == ref["ground"]
+    assert [list(lab) for lab in a.labels] == ref["labels"]
+    np.testing.assert_allclose(a.e_over_b.numpy(), ref["e_over_b"], atol=1e-11)
+    np.testing.assert_allclose(a.crossover(), ref["crossover"], rtol=1e-12, atol=1e-12)

@@ -78,154 +78,347 @@ def _nuclear_gn(isotope: str) -> float:
 
 @dataclass
 class SpinSystem:
-    """Spin system specification, analogous to EasySpin's ``Sys`` struct.
+    """Spin system: spins, interactions and broadenings (EasySpin ``Sys``).
+
+    A ``SpinSystem`` holds everything the Hamiltonian builders and simulators
+    need: electron spins ``S``, nuclei ``Nucs`` (and optional orbital angular
+    momenta ``L``), interaction tensors with their frames, line widths and
+    strains, and simulator-specific fields (dynamics, relaxation, component
+    weight).  Only ``S`` is required.
+
+    Inputs may be scalars, nested lists, NumPy arrays or torch tensors; the
+    constructor normalizes the tensor fields to ``torch.float64`` tensors of
+    a canonical shape (listed below as "stored as"), converting EasySpin
+    shorthands such as axial ``[g_perp, g_par]`` or ``[D, E]``.  Tensors are
+    converted without copying or detaching, so a field that requires grad
+    stays on the autograd graph (``pepper_autograd``, ``esfit``).  Assigning
+    a field after construction (``sys.g = ...``) normalizes it the same way.
+
+    Conventions: energies, couplings and strains in MHz; magnetic fields and
+    field-domain line widths in mT; Euler angles in radians (``[alpha, beta,
+    gamma]``, rotation from the molecular frame to the tensor's principal
+    frame, :func:`torchspin.erot` convention); ``nElectrons = len(S)``,
+    ``nNuclei = len(Nucs)``, ``nPairs = nElectrons*(nElectrons-1)/2`` (pairs
+    ordered (1,2), (1,3), ..., (2,3), ...).  "Full tensors" are 3x3 blocks
+    stacked along axis 0.
 
     Parameters
     ----------
-    S:
-        List of electron spin quantum numbers, e.g. ``[0.5]`` or
-        ``[0.5, 1.0]``.
-    g:
-        Electron g-tensors.  Shape ``(nElectrons, 3)`` for diagonal tensors
-        (principal values) or ``(3*nElectrons, 3)`` for full 3×3 tensors.
-        Shorthands: a scalar (every electron); one value per electron spin in
-        any shape (``[g1, g2]``, ``(nElectrons, 1)``); ``(nElectrons, 2)``
-        axial ``[g_perp, g_par]`` rows, and for one electron spin
-        ``[g_perp, g_par]``; ``[gx, gy, gz]`` (every electron).  A 1-D list is
-        read as a MATLAB row.  Any other shape raises ``ValueError``.
-        Defaults to ``gfree`` for all electrons if not given.
-    gFrame:
-        Euler angles (alpha, beta, gamma) in radians rotating the molecular
-        frame to the g-tensor principal frame.  Shape ``(nElectrons, 3)``;
-        ``[a, b, c]`` for one electron spin.  Empty or ``None``: zero (no
-        rotation).  Any other shape raises ``ValueError``.
-    D:
-        Zero-field splitting tensors (MHz).  Shape ``(nElectrons, 3)`` for
-        diagonal (Dxx, Dyy, Dzz) or ``(3*nElectrons, 3)`` for full tensors.
-        Shorthands: a scalar ``D`` (E = 0, every electron); for one electron
-        spin ``[D]``, ``[D, E]`` or ``[Dxx, Dyy, Dzz]``; ``(nElectrons, 1)`` or
-        ``(nElectrons, 2)`` rows of D or [D, E]; for four or more electron
-        spins a flat list of one D per electron.  For two or more electron
-        spins a flat list of 2 or 3 values is ambiguous (shared [D, E] /
-        principal values, or EasySpin's one D per electron) and raises
-        ``ValueError``: give one row per electron.  Any other shape raises
-        ``ValueError``.
-        Pass ``None`` (default) to omit ZFS entirely.
-    D_:
-        Zero-field splitting as ``[D, E/D]`` per electron spin, shape
-        ``(nElectrons, 2)`` (or the same values as a flat list).  Any other
-        number of values raises ``ValueError``.
-    DFrame:
-        Euler angles for D-tensor frame.  Shape ``(nElectrons, 3)``, as
-        ``gFrame``.
-    B:
-        Stevens ZFS coefficients (MHz) for high-order terms.  List of tensors
-        indexed by rank k starting at 2: ``B[0]`` = rank-2, ``B[1]`` = rank-4, etc.
-        Each ``B[k]`` has shape ``(nElectrons, 2*k_actual+1)`` where the columns
-        correspond to q = k_actual, k_actual-1, ..., -k_actual.
-        If D is present, rank-2 Stevens terms are skipped.
-    BFrame:
-        Euler angles for each B tensor.  Same list structure as B.
-    Nucs:
-        List of nuclear isotope strings, e.g. ``['14N', '1H']``.
-    A:
-        Hyperfine coupling tensors (MHz).  Shape ``(nNuclei, 3*nElectrons)``
-        for diagonal entries (Axx, Ayy, Azz per electron), or
-        ``(3*nNuclei, 3*nElectrons)`` for full tensors.  As in EasySpin also
-        ``(nNuclei, nElectrons)`` isotropic and ``(nNuclei, 2*nElectrons)``
-        axial ``[A_perp, A_par]`` values, and for one electron spin one value
-        per nucleus ``[A1, A2, ...]``; a 1-D list is one row (one nucleus,
-        e.g. ``[A1, A2]`` per electron for two electrons).  torchspin
-        shorthands: a scalar (every nucleus and electron) and, for one
-        electron spin, ``[Ax, Ay, Az]`` (every nucleus).  Any other shape
-        raises ``ValueError``.  Defaults to zero.  Giving ``A``, ``AFrame``,
-        ``Q`` or ``QFrame`` without ``Nucs`` raises ``ValueError``.
-    A_:
-        Spherical hyperfine form per nucleus and electron: ``[aiso]``,
-        ``[aiso, T]`` or ``[aiso, T, rho]`` (EasySpin ``Sys.A_``); a scalar
-        is ``aiso`` of one nucleus.
-    AFrame:
-        Euler angles for each A-tensor.  Shape ``(nNuclei, 3*nElectrons)``;
-        for one electron spin ``[a, b, c]`` applies to every nucleus.  Empty:
-        zero.  Any other shape raises ``ValueError``.
-    ee:
-        Electron-electron coupling tensors (MHz).  Shape ``(nPairs, 3)`` for
-        diagonal or ``(3*nPairs, 3)`` for full.  Shorthands: a scalar, one
-        isotropic value per pair (``[J]`` for one pair, ``(nPairs, 1)``; a
-        flat ``[a, b, c]`` for three pairs is principal values for every
-        pair), ``[Jx, Jy, Jz]`` (every pair).  Any other shape raises
-        ``ValueError``.
-    eeFrame:
-        Euler angles for each ee coupling tensor.  Shape ``(nPairs, 3)``;
-        ``[a, b, c]`` applies to every pair.  Any other shape raises
-        ``ValueError``.
-    gnscale:
-        Per-nucleus scaling of the nuclear g-factor (dimensionless).  Shape
-        ``(nNuclei,)``.  Defaults to 1.0 for each nucleus.
-    sigma:
-        Chemical shielding tensor (dimensionless) per nucleus.  Shape
-        ``(nNuclei, 3)`` for diagonal or ``(3*nNuclei, 3)`` for full.
-        Defaults to identity (no shielding effect).
-    sigmaFrame:
-        Euler angles for chemical shielding frame.  Shape ``(nNuclei, 3)``.
-    Q:
-        Nuclear quadrupole coupling tensors (MHz).  Shape ``(nNuclei, 3)``
-        for diagonal or ``(3*nNuclei, 3)`` for full.  Shorthands (EasySpin):
-        one ``e2qQ/h`` per nucleus, ``[e2qQ/h, eta]`` per nucleus.  Any
-        other shape raises ``ValueError``.  ``None`` means no quadrupole
-        interaction.
-    QFrame:
-        Euler angles for Q-tensor frame.  Shape ``(nNuclei, 3)``; any other
-        shape raises ``ValueError``.
-    nn:
-        Nuclear-nuclear coupling tensors (MHz).  Shape ``(nPairs_nuc, 3)``
-        for diagonal or ``(3*nPairs_nuc, 3)`` for full.
-    nnFrame:
-        Euler angles for nn coupling tensor frame.
-    lw:
-        Linewidth ``[GaussianFWHM, LorentzianFWHM]`` in mT, used by
-        ``pepper``.  A scalar or ``[x]`` is ``[x, 0]``; ``[[G, L]]`` is
-        ``[G, L]``; any other size raises ``ValueError`` (``lwpp`` alike).
-        Defaults to ``[0.0, 0.0]`` (no broadening, as in EasySpin).
-    HStrain:
-        Frequency-domain Gaussian strain FWHM (MHz) along the molecular x, y,
-        z axes, ``[3]``.  As EasySpin: one value is ``[x, x, x]``, two are
-        ``[x, x, y]``, three in any shape are kept, empty is no strain; any
-        other number raises ``ValueError``.  ``AStrain`` (MHz, first nucleus)
-        alike.
-    gStrain:
-        g strain FWHM, one row per electron spin, ``(nElectrons, 3)``.  As
-        EasySpin, a row of 1 or 2 values is expanded to ``[x, x, x]`` /
-        ``[x, x, y]`` (``[x]`` and ``[x, y]`` for one electron spin), and
-        empty is no strain.  torchspin shorthands: a scalar and ``[x, y, z]``
-        for every electron.  Any other shape raises ``ValueError``.
-    DStrain:
+    S : float or list of float
+        Electron spin quantum numbers, one per electron spin, positive
+        multiples of 1/2, e.g. ``0.5`` or ``[0.5, 1.0]``.  Stored as a list of
+        float.
+    g : float or array_like or torch.Tensor, optional
+        Electron g tensors (dimensionless).  Accepted: a scalar (isotropic,
+        every electron); ``[g1, g2, ...]`` or ``(nElectrons, 1)`` (one isotropic
+        value per electron); ``[gx, gy, gz]`` (principal values, every
+        electron); ``(nElectrons, 2)`` axial ``[g_perp, g_par]`` rows (for one
+        electron also the flat ``[g_perp, g_par]``); ``(nElectrons, 3)``
+        principal values; ``(3*nElectrons, 3)`` full tensors.  Stored as
+        ``(nElectrons, 3)`` or ``(3*nElectrons, 3)``.  Default ``None``:
+        isotropic free-electron g (``torchspin.GFREE``) for every electron, or
+        zero when ``Ham`` contains a linear Zeeman term (``'110'``/``'112'``).
+    gFrame : array_like, shape (nElectrons, 3), optional
+        Euler angles (rad) of the g principal frames; ``[a, b, c]`` for one
+        electron spin.  Default ``None`` or empty: zero.
+    D : float or array_like or torch.Tensor, optional
+        Zero-field splitting (MHz), needs S >= 1.  Accepted: a scalar ``D``
+        (E = 0, every electron); for one electron ``[D]``, ``[D, E]`` or
+        ``[Dxx, Dyy, Dzz]``; ``(nElectrons, 1)`` rows of D; ``(nElectrons, 2)``
+        rows of ``[D, E]``; ``(nElectrons, 3)`` principal values;
+        ``(3*nElectrons, 3)`` full tensors; for four or more electrons a flat
+        list of one D per electron.  ``[D, E]`` becomes the principal values
+        ``[-D/3 + E, -D/3 - E, 2D/3]``.  For two or three electrons a flat
+        list of 2 or 3 values is ambiguous and raises.  Stored as
+        ``(nElectrons, 3)`` or ``(3*nElectrons, 3)``.  Default ``None``: no
+        zero-field splitting.
+    D_ : array_like, shape (nElectrons, 2), optional
+        Alternative to ``D``: ``[D, E/D]`` per electron (MHz, dimensionless),
+        or the same values as a flat list.  Converted to ``D``.
+    DFrame : array_like, shape (nElectrons, 3), optional
+        Euler angles (rad) of the D principal frames, as ``gFrame``.
+    B : list of array_like, optional
+        Even-rank Stevens zero-field coefficients (MHz): ``B[0]`` is rank 2,
+        ``B[1]`` rank 4, ``B[2]`` rank 6, each of shape ``(nElectrons, 2k+1)``
+        with columns ``q = k, k-1, ..., -k``; ``None`` entries are skipped.
+        The rank-2 entry is ignored when ``D`` is given (``validate`` rejects
+        nonzero ``D`` together with nonzero ``B[0]``).  Default ``None``.
+    BFrame : list of array_like, optional
+        Euler angles (rad) per entry of ``B``: ``(nElectrons, 3)``, or
+        ``(3,)`` for the first electron.  Default ``None`` (no rotation).
+    Nucs : str or list of str, default []
+        Nuclei: isotopes (``'1H'``, ``'14N'``, ``'63Cu'``), elements in
+        natural abundance (``'Cu'``) or custom mixtures (``'(63,65)Cu'``, with
+        ``Abund``).  A comma-separated string ``'14N,1H'`` is split.  Elements
+        and mixtures are expanded into isotopologues by pepper, garlic and
+        chili (module ``torchspin.isotopologues``, ``Options.IsoCutoff``).
+    n : int or list of int, optional
+        Number of equivalent nuclei per ``Nucs`` entry (same isotope, same
+        isotropic coupling), positive integers.  Supported by garlic and by
+        pepper with ``Method='perturb*'``/``'hybrid'``; pepper's matrix
+        method and chili raise for ``n > 1``.  Default ``None``: 1 each.
+    A : float or array_like or torch.Tensor, optional
+        Hyperfine couplings (MHz).  Accepted: a scalar (isotropic, every
+        nucleus and electron); for one electron ``[A1, A2, ...]`` (one
+        isotropic value per nucleus) or ``[Ax, Ay, Az]`` (every nucleus;
+        with three nuclei a flat triple is one value per nucleus);
+        ``(nNuclei, nElectrons)`` isotropic, ``(nNuclei, 2*nElectrons)`` axial
+        ``[A_perp, A_par]`` and ``(nNuclei, 3*nElectrons)`` principal values
+        (one 3-block per electron); ``(3*nNuclei, 3*nElectrons)`` full
+        tensors.  A flat list is one nucleus (e.g. ``[A_e1, A_e2]`` for two
+        electrons).  Stored as ``(nNuclei, 3*nElectrons)`` or
+        ``(3*nNuclei, 3*nElectrons)``.  Default ``None``: zero (with nuclei).
+        Giving ``A``, ``AFrame``, ``Q`` or ``QFrame`` without ``Nucs`` raises.
+    A_ : array_like, optional
+        Alternative to ``A`` in spherical form per nucleus and electron:
+        ``[aiso]``, ``[aiso, T]`` or ``[aiso, T, rho]`` (MHz), one row per
+        nucleus; principal values ``aiso + T*[-1, -1, 2] + rho*[-1, 1, 0]``.
+        A scalar is ``aiso`` of one nucleus.
+    AFrame : array_like, shape (nNuclei, 3*nElectrons), optional
+        Euler angles (rad) of the hyperfine principal frames, one 3-block per
+        electron; for one electron ``[a, b, c]`` applies to every nucleus.
+        Default ``None`` or empty: zero.
+    ee : float or array_like or torch.Tensor, optional
+        Electron-electron exchange/dipolar couplings (MHz),
+        ``H = S1 . J . S2`` per pair.  Accepted: a scalar (isotropic, every
+        pair); one isotropic value per pair (``[J]`` for one pair,
+        ``(nPairs, 1)``); ``[Jx, Jy, Jz]`` (every pair; for three pairs a
+        flat triple is read this way); ``(nPairs, 3)`` principal values;
+        ``(3*nPairs, 3)`` full tensors.  Default ``None``: zero.
+    ee2 : float or array_like, optional
+        Isotropic biquadratic exchange (MHz), one value per pair, adds
+        ``ee2 * (S1 . S2)**2``.  Default ``None``: zero.
+    eeFrame : array_like, shape (nPairs, 3), optional
+        Euler angles (rad) of the ``ee`` principal frames; ``[a, b, c]``
+        applies to every pair.  Default ``None``: zero.
+    gnscale : float or array_like, shape (nNuclei,), optional
+        Scale factor of each nuclear g factor (dimensionless); a scalar
+        applies to every nucleus.  Default ``None``: 1.
+    sigma : float or array_like, optional
+        Chemical-shielding factor of the nuclear Zeeman term, which is built
+        as ``gn * muN * B . sigma . I``, so ``1`` means no shielding (EasySpin
+        convention, not ``1 - sigma``).  A scalar, one value per nucleus,
+        ``[sx, sy, sz]`` (every nucleus; with three nuclei a flat triple is
+        one value per nucleus), ``(nNuclei, 3)`` principal values or
+        ``(3*nNuclei, 3)`` full tensors.  Default ``None``: ones.
+    sigmaFrame : array_like, shape (nNuclei, 3), optional
+        Euler angles (rad) of the ``sigma`` principal frames.  Default zero.
+    Q : float or array_like or torch.Tensor, optional
+        Nuclear quadrupole couplings (MHz), for nuclei with I >= 1 (zero
+        otherwise).  Accepted: one ``e2qQ/h`` per nucleus (eta = 0);
+        ``(nNuclei, 2)`` rows of ``[e2qQ/h, eta]``; ``(nNuclei, 3)`` principal
+        values; ``(3*nNuclei, 3)`` full tensors.  ``[e2qQ/h, eta]`` becomes
+        ``e2qQ/h / (4I(2I-1)) * [-1 + eta, -1 - eta, 2]``.  Default ``None``:
+        no quadrupole interaction.
+    QFrame : array_like, shape (nNuclei, 3), optional
+        Euler angles (rad) of the Q principal frames.  Default zero.
+    nn : float or array_like, optional
+        Nucleus-nucleus couplings (MHz), per nuclear pair: a scalar, one
+        isotropic value per pair, ``[Jx, Jy, Jz]``, ``(nNucPairs, 3)``
+        principal values or ``(3*nNucPairs, 3)`` full tensors.  Default
+        ``None``: zero.
+    nnFrame : array_like, shape (nNucPairs, 3), optional
+        Euler angles (rad) of the ``nn`` principal frames.  Default zero.
+    lw : float or array_like, optional
+        Line width ``[GaussianFWHM, LorentzianFWHM]``, in mT for field sweeps
+        and in MHz for frequency sweeps.  A scalar or ``[x]`` is ``[x, 0]``;
+        ``[[G, L]]`` is ``[G, L]``; other sizes raise.  A 2-element list or
+        tensor is kept as given (tensors keep their graph).  Default ``None``:
+        ``[0.0, 0.0]`` (no broadening) unless ``lwpp`` is given.
+    lwpp : float or array_like, optional
+        Alternative to ``lw``: peak-to-peak widths of the first-derivative
+        lines ``[Gaussian, Lorentzian]``, same units and shapes.  Converted by
+        :meth:`get_lw` with the factors ``sqrt(2 ln 2)`` (Gaussian) and
+        ``sqrt(3)`` (Lorentzian).  Giving both ``lw`` and ``lwpp`` raises.
+    HStrain : float or array_like, optional
+        Gaussian frequency-domain strain FWHM (MHz) along the molecular x, y,
+        z axes.  One value is ``[x, x, x]``, two are ``[x, x, y]``, three
+        are kept (any shape), empty is no strain; other counts raise.
+        Stored as shape ``(3,)``.  Default ``None``.
+    gStrain : float or array_like, optional
+        g strain FWHM (dimensionless, g units) along the g principal axes,
+        one row per electron: ``(nElectrons, 1|2|3)`` with ``[x]`` -> ``[x, x,
+        x]`` and ``[x, y]`` -> ``[x, x, y]``; a flat list is one electron;
+        a scalar or ``[x, y, z]`` applies to every electron.  Not with full
+        g tensors; for several electrons not in frequency sweeps.  Stored as
+        ``(nElectrons, 3)``.  Default ``None``.
+    AStrain : float or array_like, optional
+        Hyperfine strain FWHM (MHz) of the first nucleus along its AFrame
+        axes, shapes as ``HStrain``.  One electron spin only (raises
+        otherwise).  See KNOWN_LIMITATIONS.md, "AStrain — EasySpin's
+        effective-mI model, followed deliberately (0.9.25)".  Default
+        ``None``.
+    DStrain : float or array_like, optional
         D and E strain FWHM (MHz), one row ``[FWHM_D, FWHM_E]`` per electron
-        spin (1 to 3 columns); one row or a scalar applies to every electron.
-        Empty is no strain.
-    H0Extra:
-        Extra field-independent Hamiltonian terms, a list of ``(coeff, op)``
-        pairs added to H0 as ``sum(coeff * op)`` (MHz) by :func:`torchspin.ham`
-        on both the ``(H0, mu)`` and the ``ham(sys, B0)`` path.  ``coeff`` is a
-        real scalar (float or 0-d tensor, may require grad); ``op`` is an
-        ``(nStates, nStates)`` Hermitian matrix (tensor or array, real or
-        complex) in the full spin-system basis, ordered as :func:`torchspin.sop`
-        builds it (electrons, then nuclei, then OAMs).  Not an EasySpin field.
-        Solvers that build the Hamiltonian without ``ham()`` (perturbation
-        theory, hybrid, garlic, chili, fastmotion, cardamom, saffron's fast
-        algorithm, nucspinrmv/nucspinkeep/nucspinadd) raise when it is set.
-        Default ``None`` (no extra term).
-    HStrainL:
-        Lorentzian counterpart of ``HStrain``: frequency-domain Lorentzian FWHM
-        (MHz) along the molecular x, y, z axes, ``[3]`` (a scalar is expanded).
-        A transition's width is ``sqrt(sum_k (HStrainL_k n_k)^2)`` for a field
-        along ``n``, with the same orientation dependence and dB/dE conversion
-        as ``HStrain``, but every line in ``pepper`` gets a Lorentzian profile
-        instead of a Gaussian one.  Not an EasySpin field (EasySpin's strains are
-        Gaussian).  Cannot be combined with ``HStrain``, ``gStrain``,
-        ``AStrain`` or ``DStrain`` (pepper raises: no Voigt per line).  Used by
-        ``pepper`` and ``pepper_autograd`` only; the other functions ignore it.
-        Default ``None`` (no Lorentzian strain).
+        (1 to 3 columns; one column is ``[FWHM_D, 0]``, a third column is
+        dropped).  One row or a scalar applies to every electron; for four or
+        more electrons a flat list is one FWHM_D per electron.  Empty is no
+        strain.  Stored as ``(nElectrons, 2)``.  Default ``None``.
+    gAStrainCorr : float, default 1.0
+        Correlation of g and A strain: ``+1`` correlated, ``-1``
+        anticorrelated.
+    DStrainCorr : float or list of float, default 0.0
+        Correlation coefficient between the D and E strains, in ``[-1, 1]``,
+        one per electron (a scalar applies to every electron).  Stored as a
+        list.
+    weight : float, default 1.0
+        Relative weight of this component when a list of spin systems is
+        simulated (pepper, garlic, chili, saffron); multiplied by the
+        isotopologue abundances.
+    Abund : list, optional
+        Abundances for the custom isotope mixtures in ``Nucs``: one array (or
+        ``None`` for a non-mixture) per nucleus, or a flat array for a
+        single nucleus.  Default ``None``.
+    initState : tuple or str or array_like, optional
+        Non-equilibrium initial state instead of Boltzmann populations
+        (pepper matrix method, spidyan, saffron): ``(pops, basis)`` or
+        ``(rho, basis)`` with ``basis`` one of ``'zerofield'``, ``'eigen'``,
+        ``'xyz'``, ``'coupled'``, ``'uncoupled'``; a density matrix in the
+        uncoupled product basis; ``'T0'`` or ``'singlet'``.  See
+        ``torchspin.initstate``.  Default ``None``.
+    tdm : str or array_like, optional
+        Transition dipole moment direction in the molecular frame for
+        photoselection (``Experiment.lightBeam``, pepper): a string such as
+        ``'x'``, ``'xz'``, ``'-y'``, a 3-vector or ``[phi, theta]`` (rad).
+        Default ``None``.
+    tcorr : float, optional
+        Rotational correlation time in s (chili, cardamom, and garlic's
+        fast-motion regime).  chili's slow-motion solver also accepts 2 or 3
+        values (axial or rhombic).  Default ``None``.
+    logtcorr : float, optional
+        ``log10(tcorr / s)``, alternative to ``tcorr``.  Default ``None``.
+    Diff : float or array_like, optional
+        Rotational diffusion rate in s^-1, alternative to ``tcorr``
+        (``tcorr = 1/(6 Diff)``); chili and cardamom only (garlic ignores
+        it).  Default ``None``.
+    logDiff : float or array_like, optional
+        ``log10(Diff / s^-1)``.  Default ``None``.
+    T1, T2 : float, optional
+        Longitudinal and transverse relaxation times in microseconds (pulse
+        simulators saffron, spidyan).  Default ``None`` (no relaxation).
+    lwEndor : float, optional
+        ENDOR line width FWHM in MHz (saffron; required for Mims ENDOR).
+        Default ``None``.
+    Potential : array_like, optional
+        Orienting potential: rows ``[L, M, K, lambda]`` (chili, cardamom), or
+        a 3-D grid (cardamom).  Default ``None``.
+    DiffGlobal : float or array_like, optional
+        Global rotational diffusion rate in s^-1 (cardamom).  Default
+        ``None``.
+    TransRates, TransProb : array_like, shape (nStates, nStates), optional
+        Jump-model transition rate matrix (s^-1) or transition probability
+        matrix (cardamom).  Default ``None``.
+    Orientations : array_like, optional
+        Euler angles (rad) of each jump-model state, ``(nStates, 3)`` or
+        ``(3, nStates)`` (cardamom).  Default ``None``.
+    L : float or list of float, optional
+        Orbital angular momentum quantum numbers, one per OAM; OAM ``i``
+        couples to electron ``i`` through ``soc``.  Default ``None``.
+    gL : float or list of float, optional
+        Orbital g factors, one per OAM.  Default ``None``: 1.0 each.
+    soc : array_like, shape (nElectrons, nOrders), optional
+        Spin-orbit coupling (MHz); row ``i`` couples electron ``i`` and OAM
+        ``i`` as ``soc[i,0] (S.L) + soc[i,1] (S.L)**2 + ...``.  A flat list
+        is one row.  Default ``None``.
+    CF1, ..., CF12 : array_like, shape (nL, 2k+1), optional
+        Crystal-field Stevens coefficients of rank k (MHz) per OAM, columns
+        ``q = k, ..., -k``; rank must not exceed ``2L`` (``validate``).
+        Default ``None``.
+    Ham : dict, optional
+        Higher-order Zeeman terms (McGavin-Tennant-Weil), keys ``'{lB}{lS}{l}'``
+        (orders in field and spin and coupling rank, e.g. ``'112'``), values
+        ``(nElectrons, 2l+1)`` coefficient arrays.  A linear term
+        (``'110'``/``'112'``) replaces ``g`` (giving both raises).  Field
+        orders 2 and 3 enter the resonance search only with
+        ``Options(QuadraticZeeman=True)``; perturbation methods raise.  See
+        KNOWN_LIMITATIONS.md, "Higher-order Zeeman terms (``Sys.Ham*``):
+        deliberate deviation from EasySpin (0.6.7, 0.9.8, 0.9.13)".  Default
+        ``None``.
+    H0Extra : list of tuple, optional
+        Extra field-independent Hamiltonian terms ``[(coeff, op), ...]``,
+        added as ``sum(coeff * op)`` (MHz) by :func:`torchspin.ham`.
+        ``coeff`` is a real scalar (float or 0-d tensor, may require grad);
+        ``op`` an ``(nStates, nStates)`` Hermitian matrix in the full basis in
+        :func:`torchspin.sop` order (electrons, nuclei, OAMs).  Not an
+        EasySpin field.  Not with isotope mixtures or ``n > 1``; solvers that
+        do not use ``ham()`` (perturbation theory, hybrid, garlic, chili,
+        fastmotion, cardamom, saffron's fast algorithm, nucspinrmv/keep/add)
+        raise.  See KNOWN_LIMITATIONS.md, "Simulator — extra
+        field-independent operators (``Sys.H0Extra``) (0.7.2)".  Default
+        ``None``.
+    HStrainL : float or array_like, shape (3,), optional
+        Lorentzian counterpart of ``HStrain`` (MHz FWHM along the molecular
+        axes, a scalar is expanded, non-negative): the width of a line is
+        ``sqrt(sum_k (HStrainL_k n_k)**2)`` for a field along ``n``, drawn as
+        a Lorentzian.  pepper and pepper_autograd only; cannot be combined
+        with the Gaussian strains.  Not an EasySpin field.  See
+        KNOWN_LIMITATIONS.md, "Simulator — Lorentzian strain,
+        ``SpinSystem.HStrainL`` (0.7.7)".  Default ``None``.
+
+    Attributes
+    ----------
+    nElectrons, nNuclei, nL : int
+        Number of electron spins, nuclei and orbital angular momenta.
+    I, gn : list of float
+        Nuclear spins and nuclear g factors from ``Nucs``.
+    Spins : list of float
+        All spin quantum numbers: electrons, nuclei, OAMs.
+    nStates : int
+        Hilbert-space dimension ``prod(2s + 1)``.
+    fullg, fullD, fullA, fullee, fullsigma, fullQ, fullnn : bool
+        Whether the field is stored as full 3x3 tensors.
+
+    Raises
+    ------
+    ValueError
+        On construction, for a tensor field whose shape matches none of the
+        accepted forms (``g``, ``D``, ``D_``, ``A``, ``A_``, ``AFrame``,
+        ``gFrame``, ``DFrame``, ``ee``, ``ee2``, ``eeFrame``, ``Q``,
+        ``QFrame``, ``lw``, ``lwpp``, ``HStrain``, ``AStrain``, ``gStrain``,
+        ``DStrain``, ``DStrainCorr``, ``n``), for alternative fields given together (``D`` and
+        ``D_``, ``A`` and ``A_``, ``lw`` and ``lwpp``, ``g`` and a linear
+        ``Ham`` term), for ``A``/``Q`` data without ``Nucs``, for negative
+        ``HStrainL``, and for an invalid ``H0Extra`` term.
+    TypeError
+        If ``H0Extra`` is not a list of ``(coeff, op)`` pairs.
+
+    See Also
+    --------
+    Experiment, Options, torchspin.ham, torchspin.pepper, torchspin.garlic
+
+    Notes
+    -----
+    The constructor checks shapes only.  :meth:`validate` performs further
+    physical checks (spin values, S >= 1 for D, I >= 1 for Q, signs of
+    widths, CF ranks); the simulators do not call it.  Which fields a
+    simulator reads, ignores or rejects is listed in that simulator's
+    docstring.  See KNOWN_LIMITATIONS.md, "``SpinSystem`` input shapes follow
+    EasySpin (0.9.15)" and "``SpinSystem`` field assignment normalizes
+    (0.8.7)".
+
+    Examples
+    --------
+    A nitroxide; axial ``A`` given as ``[A_perp, A_par]``:
+
+    >>> from torchspin import SpinSystem
+    >>> sys = SpinSystem(S=0.5, g=[2.0088, 2.0061, 2.0027],
+    ...                  Nucs='14N', A=[[20.0, 95.0]], lw=0.5)
+    >>> sys.g.shape, sys.A.tolist(), sys.lw
+    (torch.Size([1, 3]), [[20.0, 20.0, 95.0]], [0.5, 0.0])
+    >>> sys.nStates
+    6
+
+    A triplet with ``[D, E]`` in MHz, stored as principal values:
+
+    >>> trip = SpinSystem(S=1, D=[300.0, 30.0])
+    >>> [round(v, 1) for v in trip.D[0].tolist()]
+    [-70.0, -130.0, 200.0]
+
+    Assigning a field normalizes it:
+
+    >>> trip.HStrain = 10.0
+    >>> trip.HStrain.tolist()
+    [10.0, 10.0, 10.0]
     """
 
     S: list[float]
@@ -782,7 +975,7 @@ class SpinSystem:
         # --- lw and lwpp ---
         # Handle linewidth: lw (FWHM) and lwpp (peak-to-peak) are mutually exclusive
         # Keep both fields to track which one the user specified (important for fitting)
-        # Conversion: lw = lwpp * sqrt(3) for both Gaussian and Lorentzian
+        # Conversion (get_lw): Gaussian lw = lwpp * sqrt(2 ln 2), Lorentzian lw = lwpp * sqrt(3)
         if self.lw is not None and self.lwpp is not None:
             raise ValueError("Specify either lw or lwpp, not both.")
         
@@ -918,10 +1111,12 @@ class SpinSystem:
 
     @property
     def nElectrons(self) -> int:
+        """Number of electron spins, ``len(S)``."""
         return len(self.S)
 
     @property
     def nNuclei(self) -> int:
+        """Number of nuclei, ``len(Nucs)`` (an element or mixture counts once)."""
         return len(self.Nucs)
 
     @property
@@ -1004,18 +1199,26 @@ class SpinSystem:
         return n_pairs > 0 and self.nn.shape[0] == 3 * n_pairs
 
     def get_lw(self) -> list[float]:
-        """Get effective linewidth as [Gaussian_FWHM, Lorentzian_FWHM] in mT.
-        
-        If lwpp is specified, converts to lw using:
-        - Gaussian: lw = lwpp * sqrt(2*ln(2)) ≈ 1.177 * lwpp
-        - Lorentzian: lw = lwpp * sqrt(3) ≈ 1.732 * lwpp
-        
-        This matches MATLAB EasySpin convention (see validatespinsys.m).
-        
+        """Return the line width as ``[GaussianFWHM, LorentzianFWHM]``.
+
+        ``lw`` as stored if it is set; otherwise ``lwpp`` converted from
+        peak-to-peak to FWHM (as EasySpin's validatespinsys.m):
+
+        * Gaussian: ``lw = lwpp * sqrt(2 ln 2)``, about ``1.177 * lwpp``;
+        * Lorentzian: ``lw = lwpp * sqrt(3)``, about ``1.732 * lwpp``.
+
         Returns
         -------
-        list[float]
-            [Gaussian_FWHM, Lorentzian_FWHM] in mT
+        list
+            ``[GaussianFWHM, LorentzianFWHM]`` in the units of ``lw``/``lwpp``
+            (mT for field sweeps, MHz for frequency sweeps).  The entries are
+            floats or 0-d tensors (tensors keep their autograd graph).
+
+        Examples
+        --------
+        >>> from torchspin import SpinSystem
+        >>> [round(v, 3) for v in SpinSystem(S=0.5, lwpp=[1.0, 1.0]).get_lw()]
+        [1.177, 1.732]
         """
         import math
         
@@ -1033,13 +1236,33 @@ class SpinSystem:
             return [0.0, 0.0]
 
     def validate(self) -> None:
-        """Comprehensive spin system validation.
+        """Check the spin system for physical consistency.
 
-        Checks quantum numbers, tensor shapes, frame angles, interaction
-        consistency, and physical plausibility.  Raises ``ValueError`` on
-        the first problem found.
+        Checks the quantum numbers (S positive multiples of 1/2, L
+        non-negative), tensor and frame shapes, S >= 1 for a nonzero ``D``,
+        I >= 1 for a nonzero ``Q``, known isotopes, non-negative line widths
+        and strains, ``DStrainCorr`` in ``[-1, 1]``, ``gAStrainCorr`` = +-1,
+        positive ``tcorr``/``Diff``/``T1``/``T2``, exclusive pairs
+        (``tcorr``/``logtcorr``, ``Diff``/``logDiff``, nonzero ``D`` and
+        ``B[0]``), symmetric full ``Q`` blocks and crystal-field ranks
+        ``k <= 2L``.  Partial port of EasySpin's ``validatespinsys.m``.
 
-        Port of EasySpin's ``private/validatespinsys.m``.
+        The constructor checks only shapes; the simulators do not call this
+        method, so call it explicitly to catch physically invalid input.
+
+        Raises
+        ------
+        ValueError
+            On the first problem found.
+
+        Examples
+        --------
+        >>> from torchspin import SpinSystem
+        >>> SpinSystem(S=1.0, D=[300.0, 30.0]).validate()
+        >>> SpinSystem(S=0.5, D=300.0).validate()
+        Traceback (most recent call last):
+            ...
+        ValueError: D tensor is nonzero for electron 0 with S=0.5, but ZFS requires S >= 1.
         """
         from itertools import combinations
 
@@ -1332,7 +1555,10 @@ def nucspinkeep(sys: 'SpinSystem', idx) -> 'SpinSystem':
 
     Examples
     --------
+    >>> sys = SpinSystem(S=0.5, Nucs=['14N', '1H', '1H'], A=[40.0, 10.0, 5.0])
     >>> sys2 = nucspinkeep(sys, [0, 2])   # keep nuclei 0 and 2
+    >>> sys2.Nucs
+    ['14N', '1H']
     """
     _reject_h0extra(sys, 'nucspinkeep')
     keep = _nucleus_indices(sys, idx)
@@ -1371,7 +1597,10 @@ def nucspinrmv(sys: 'SpinSystem', idx) -> 'SpinSystem':
 
     Examples
     --------
+    >>> sys = SpinSystem(S=0.5, Nucs=['14N', '1H'], A=[40.0, 10.0])
     >>> sys2 = nucspinrmv(sys, 1)   # remove nucleus 1
+    >>> sys2.Nucs
+    ['14N']
     """
     _reject_h0extra(sys, 'nucspinrmv')
     rmv = _nucleus_indices(sys, idx)
@@ -1418,7 +1647,10 @@ def nucspinadd(sys: 'SpinSystem', nuc: str, A=None, Q=None,
 
     Examples
     --------
+    >>> sys = SpinSystem(S=0.5, Nucs=['14N'], A=[20.0, 20.0, 95.0])
     >>> sys2 = nucspinadd(sys, '1H', A=[5.0, 5.0, 10.0])
+    >>> sys2.Nucs
+    ['14N', '1H']
     """
     _reject_h0extra(sys, 'nucspinadd')
     if _nonzero(sys.nn):
@@ -1751,9 +1983,11 @@ def isotopologues(sys: 'SpinSystem') -> list[tuple[float, 'SpinSystem']]:
 
     Examples
     --------
+    >>> sys = SpinSystem(S=0.5, Nucs=['14N', '1H'], A=[40.0, 10.0])
     >>> variants = isotopologues(sys)
     >>> for w, s in variants:
     ...     print(f"weight={w:.4f}, Nucs={s.Nucs}")
+    weight=0.9962, Nucs=['14N', '1H']
     """
     if sys.nNuclei == 0:
         return [(1.0, sys)]

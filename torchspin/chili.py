@@ -66,8 +66,14 @@ class ChiliOptions:
         Basis symmetry switches (auto: from tensor collinearity / tilts).
     highField:
         Keep only pS = +1 spin coherences (EasySpin ``Opt.highField``).
-    pImax, pImaxall, MpSymm:
-        Nuclear coherence-order truncation and M/p symmetry pruning.
+    pImax, pImaxall:
+        Nuclear coherence-order truncation.
+    MpSymm:
+        M-pS-pI symmetry pruning (about 6x fewer basis functions; the spectrum
+        is the same as with the plain basis).  ``None`` (default) prunes
+        whenever the symmetry holds (no director tilt, potential with M = 0
+        terms only); ``True`` raises ``ValueError`` where it does not;
+        ``False`` uses the plain basis.
     Solver:
         ``'L'`` Lanczos + continued fraction (default), ``'\\'`` direct sparse
         solve, ``'E'`` eigenvalue method.
@@ -91,7 +97,7 @@ class ChiliOptions:
     highField: bool = False
     pImax: Optional[list] = None
     pImaxall: Optional[int] = None
-    MpSymm: Optional[bool] = None       # None = EasySpin's effective default (see chili_sle)
+    MpSymm: Optional[bool] = None       # None = prune whenever the symmetry holds (see chili_sle)
     Solver: str = ''
     FieldSweepMethod: str = ''
     GridSize: int = 19

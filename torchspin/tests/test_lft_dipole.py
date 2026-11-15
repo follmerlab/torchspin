@@ -3,9 +3,10 @@
 Self-contained: exact constraints (traceless, symmetric, rotation covariance, C4 symmetry, far
 field), brute-force quadrature of the d_xy density at general points, absolute magnitudes from
 SI constants, unit consistency, gradients (gradcheck in both modes and central differences).
-With telser-tools installed: every fixture of ``tests/data/telser/dipole_fortran.json`` in the
-default (corrected) mode, and the reduced tensor against telser-tools' 60-digit Decimal path on
-A = 1e-3 .. 1e3, both at telser-tools' CODATA 2018 constants.
+Against telser-tools (live when importable, else its frozen outputs, see ``_telser_refs``): every
+fixture of ``tests/data/telser/dipole_fortran.json`` in the default (corrected) mode, and the
+reduced tensor against telser-tools' 60-digit Decimal path on A = 1e-3 .. 1e3, both at
+telser-tools' CODATA 2018 constants.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from torchspin.lft import dipole as tdp
 from torchspin.lft._engines import dipole as E
 from torchspin.lft.units import energy_factor
 from torchspin.nucdata import nucgval
+from torchspin.tests import _telser_refs as R
 
 F64 = torch.float64
 CASES = json.loads((Path(__file__).parent / "data" / "telser" / "dipole_fortran.json").read_text())["cases"]
@@ -258,95 +260,164 @@ def test_electron_electron_gradients_vs_central_differences():
 
 
 # ------------------------------------------------------------------------------ parity with telser-tools
-def _telser():
-    pytest.importorskip("telser_tools.dipole")
-    from telser_tools import dipole
-    from telser_tools.dipole import tensor, zeff
+# live telser-tools when importable, else its frozen outputs (data/telser/refs/dipole.npz, see _telser_refs)
+_C18_FIELDS = ("g_e", "beta_n", "beta_e", "h", "a0_cm", "mhz_to_cm", "ee_point_cm")
+
+
+def _C18():
     from telser_tools.dipole.constants import CODATA2018
-    from telser_tools.dipole.coupling import _nucleus
-    from telser_tools.nuclear import Isotope
-    return dipole, tensor, zeff, CODATA2018, _nucleus, Isotope
+    return {f: getattr(CODATA2018, f) for f in _C18_FIELDS}
+
+
+@R.oracle("dipole")
+def _telser_zstar():
+    """TABULATED and clementi_raimondi(n_d, z) for z = 1..59, n_d = 0..10: values, and (method, notes)
+    as indices into the list of distinct pairs (the notes repeat)."""
+    from telser_tools.dipole import zeff
+    zs = [[zeff.clementi_raimondi(n_d, z) for n_d in range(11)] for z in range(1, 60)]
+    kinds = sorted({(b.method, b.notes) for row in zs for b in row})
+    return dict(tabulated=R.freeze_obj(zeff.TABULATED), kinds=R.freeze_obj(kinds),
+                value=np.array([[b.value for b in row] for row in zs]),
+                kind=np.array([[kinds.index((b.method, b.notes)) for b in row] for row in zs]))
 
 
 def test_zstar_copy_identical_to_telser_tools():
-    _, _, zeff, *_ = _telser()
-    assert E.TABULATED == zeff.TABULATED
+    ref = R.ref(_telser_zstar)
+    assert E.TABULATED == R.thaw_obj(ref["tabulated"])
+    kinds = R.thaw_obj(ref["kinds"])
     for z in range(1, 60):
         for n_d in range(11):
-            a, b = E.clementi_raimondi(n_d, z), zeff.clementi_raimondi(n_d, z)
-            assert (a.value, a.method, a.notes) == (b.value, b.method, b.notes)
+            a = E.clementi_raimondi(n_d, z)
+            assert (a.value, a.method, a.notes) == (ref["value"][z - 1, n_d], *kinds[ref["kind"][z - 1, n_d]])
+
+
+_HF_FIELDS = ("a_mhz", "a_g_mhz", "a_alpha_mhz", "point_dipole_mhz")
+_EE_FIELDS = ("d_mhz", "d_cm", "d_g_mhz", "d_g_cm", "d_alpha_mhz", "d_alpha_cm", "point_dipole_cm", "ddip_edip_cm",
+              "ddip_edip_point_cm", "ddip_edip_alpha_cm")
+
+
+@R.oracle("dipole", cases=[c["name"] for c in CASES])
+def _telser_fixture(name):
+    from telser_tools import dipole
+    from telser_tools.dipole.coupling import _nucleus
+    from telser_tools.nuclear import Isotope
+    i = next(c for c in CASES if c["name"] == name)["input"]
+    nuc = i["nucleus"]
+    if isinstance(nuc, list):
+        mass, label, spin, gn = nuc
+        nuc = Isotope(mass, label, spin, 0.0 if gn is None else gn)
+    if not 0.0 <= i["alpha2"] <= 1.0:
+        try:
+            dipole.hyperfine(i["n_d"], i["z"], nuc, 2.0, alpha2=i["alpha2"])
+        except ValueError:
+            return dict(raises="ValueError")
+        return dict(raises=None)
+    rows = []
+    for r in i["r"]:
+        if i["kind"] == "N":
+            ref = dipole.hyperfine(i["n_d"], i["z"], nuc, r, tuple(i["g"]), i["alpha2"], i["geometry"])
+            fields = _HF_FIELDS
+        else:
+            ref = dipole.electron_electron(i["n_d"], i["z"], r, tuple(i["g"]), i["alpha2"], i["geometry"])
+            fields = _EE_FIELDS
+        rows.append(dict({f: np.asarray(getattr(ref, f), float) for f in fields + ("tensor_cm3",)},
+                         A=float(ref.A), zstar=float(ref.zstar.value)))
+    g_n = _nucleus(nuc, False).g_n if i["kind"] == "N" else None
+    return dict(raises=None, C18=_C18(), g_n=g_n, rows=rows)
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c["name"])
 def test_fixture_parity_default_mode(case):
-    dipole, _, _, C18, _nucleus, Isotope = _telser()
+    ref = R.ref(_telser_fixture, case["name"])
     i = case["input"]
-    nuc = i["nucleus"]
-    if isinstance(nuc, list):
-        mass, name, spin, gn = nuc
-        nuc = Isotope(mass, name, spin, 0.0 if gn is None else gn)
     if not 0.0 <= i["alpha2"] <= 1.0:
-        with pytest.raises(ValueError):
-            dipole.hyperfine(i["n_d"], i["z"], nuc, 2.0, alpha2=i["alpha2"])
+        assert ref["raises"] == "ValueError"                 # telser-tools' dipole.hyperfine raised ValueError
         with pytest.raises(ValueError):
             tdp.hyperfine(i["n_d"], i["z"], None, 2.0, alpha2=i["alpha2"], g_n=1.0)
         return
-    for r in i["r"]:
+    C18 = tdp.Constants(**ref["C18"])
+    for r, rr in zip(i["r"], ref["rows"], strict=True):
         if i["kind"] == "N":
-            ref = dipole.hyperfine(i["n_d"], i["z"], nuc, r, tuple(i["g"]), i["alpha2"], i["geometry"])
             got = tdp.hyperfine(i["n_d"], i["z"], None, r, i["g"], i["alpha2"], i["geometry"],
-                                g_n=_nucleus(nuc, False).g_n, constants=C18)
+                                g_n=ref["g_n"], constants=C18)
             for f, ft in (("a_mhz", "a"), ("a_g_mhz", "a_g"), ("a_alpha_mhz", "a_alpha"),
                           ("point_dipole_mhz", "point_dipole")):
-                if np.abs(getattr(ref, f)).max() > 0:
-                    close(getattr(got, ft), getattr(ref, f))
+                if np.abs(rr[f]).max() > 0:
+                    close(getattr(got, ft), rr[f])
         else:
-            ref = dipole.electron_electron(i["n_d"], i["z"], r, tuple(i["g"]), i["alpha2"], i["geometry"])
             mhz = tdp.electron_electron(i["n_d"], i["z"], r, i["g"], i["alpha2"], i["geometry"], constants=C18)
             cm = tdp.electron_electron(i["n_d"], i["z"], r, i["g"], i["alpha2"], i["geometry"], constants=C18,
                                        units="cm^-1")
             for got, sfx in ((mhz, "mhz"), (cm, "cm")):
                 for f in ("d", "d_g", "d_alpha"):
-                    close(getattr(got, f), getattr(ref, f"{f}_{sfx}"))
-            close(cm.point_dipole, ref.point_dipole_cm)
-            close(cm.ddip_edip, ref.ddip_edip_cm)
-            close(cm.ddip_edip_point, ref.ddip_edip_point_cm)
-            close(cm.ddip_edip_alpha, ref.ddip_edip_alpha_cm)
+                    close(getattr(got, f), rr[f"{f}_{sfx}"])
+            close(cm.point_dipole, rr["point_dipole_cm"])
+            close(cm.ddip_edip, rr["ddip_edip_cm"])
+            close(cm.ddip_edip_point, rr["ddip_edip_point_cm"])
+            close(cm.ddip_edip_alpha, rr["ddip_edip_alpha_cm"])
             got = mhz
-        close(got.tensor_cm3, ref.tensor_cm3)
-        close(got.A, ref.A)
-        close(got.zstar, ref.zstar.value)
+        close(got.tensor_cm3, rr["tensor_cm3"])
+        close(got.A, rr["A"])
+        close(got.zstar, rr["zstar"])
+
+
+_A_GRID = np.geomspace(1e-3, 1e3, 121)
+
+
+@R.oracle("dipole", cases=tdp.GEOMETRIES)
+def _telser_sto_tensor(geometry):
+    from telser_tools.dipole import tensor
+    return np.array([np.array(tensor.sto_tensor(float(A), geometry)) for A in _A_GRID])
 
 
 @pytest.mark.parametrize("geometry", tdp.GEOMETRIES)
 def test_reduced_tensor_matches_decimal_path_everywhere(geometry):
     """rel 1e-13 of max|t| (abs 1e-15 floor at the out_of_plane zero crossing, A ~ 3.19) over A = 1e-3 .. 1e3."""
-    _, tensor, *_ = _telser()
-    A_grid = np.geomspace(1e-3, 1e3, 121)
-    got = tdp.sto_tensor(torch.tensor(A_grid), geometry).numpy()
-    for A, t in zip(A_grid, got):
-        ref = np.array(tensor.sto_tensor(float(A), geometry))
+    want = R.ref(_telser_sto_tensor, geometry)
+    got = tdp.sto_tensor(torch.tensor(_A_GRID), geometry).numpy()
+    for A, t, ref in zip(_A_GRID, got, want, strict=True):
         assert np.abs(t - ref).max() <= 1e-13 * np.abs(ref).max() + 1e-15, A
 
 
+_DA_POINTS = [0.05, 0.5, 3.0, 17.99, 18.01, 40.0]
+_DA_STEPS = (1e-3, 1e-4, 1e-5)
+
+
+@R.oracle("dipole", cases=[f"{g}_{A}" for g in tdp.GEOMETRIES for A in _DA_POINTS])
+def _telser_sto_tensor_fd(case):
+    """Central differences of telser-tools' Decimal sto_tensor at A, steps A * h for h in _DA_STEPS."""
+    from telser_tools.dipole import tensor
+    geometry, A = case.rsplit("_", 1)
+    A = float(A)
+    return [_fd(lambda x: np.array(tensor.sto_tensor(float(x[0]), geometry)), np.array([A]), A * h)
+            for h in _DA_STEPS]
+
+
 @pytest.mark.parametrize("geometry", tdp.GEOMETRIES)
-@pytest.mark.parametrize("A", [0.05, 0.5, 3.0, 17.99, 18.01, 40.0])
+@pytest.mark.parametrize("A", _DA_POINTS)
 def test_dA_vs_decimal_central_differences(geometry, A):
-    _, tensor, *_ = _telser()
+    fds = R.ref(_telser_sto_tensor_fd, f"{geometry}_{A}")
     a = torch.tensor(A, dtype=F64, requires_grad=True)
     t = tdp.sto_tensor(a, geometry)
     J = torch.stack([torch.autograd.grad(t[i], a, retain_graph=True)[0] for i in range(3)]).numpy()[:, None]
-    err = min(np.abs(J - _fd(lambda x: np.array(tensor.sto_tensor(float(x[0]), geometry)), np.array([A]), A * h)).max()
-              for h in (1e-3, 1e-4, 1e-5))
+    err = min(np.abs(J - fd).max() for fd in fds)
     assert err / np.abs(J).max() < 1e-8
+
+
+_LIGAND_NUCLEI = ("1H", "2H", "13C", "14N", "15N", "17O", "19F", "31P", "33S", "35Cl")
+
+
+@R.oracle("dipole")
+def _telser_nuclear_g():
+    from telser_tools.nuclear import find
+    return {n: find(n).g_n for n in _LIGAND_NUCLEI + ("149Sm",)}
 
 
 def test_nucdata_vs_telser_table_for_ligand_nuclei():
     """torchspin.nucdata and telser-tools' table (Weil & Bolton 2007) agree for common ligand nuclei;
     some metal nuclides differ (63Cu 1.7e-3, 55Mn 4.5e-3, 149Sm 5.7e-3 relative, both negative;
     165Ho 1.668 vs 1.19).  Use ``g_n=`` for a specific value."""
-    pytest.importorskip("telser_tools.nuclear")
-    from telser_tools.nuclear import find
-    for n in ("1H", "2H", "13C", "14N", "15N", "17O", "19F", "31P", "33S", "35Cl"):
-        assert float(nucgval(n)) == pytest.approx(find(n).g_n, rel=1e-6), n
-    assert float(nucgval("149Sm")) < 0 and find("149Sm").g_n < 0
+    g_n = R.ref(_telser_nuclear_g)
+    for n in _LIGAND_NUCLEI:
+        assert float(nucgval(n)) == pytest.approx(g_n[n], rel=1e-6), n
+    assert float(nucgval("149Sm")) < 0 and g_n["149Sm"] < 0

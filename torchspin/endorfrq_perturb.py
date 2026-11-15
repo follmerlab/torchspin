@@ -3,18 +3,13 @@
 Fast alternative to the matrix-diagonalization-based :func:`endorfrq`
 for powder averaging.  Restricted to single-electron systems.
 
-Reference
----------
-  M. Iwasaki, J. Magn. Reson. 16, 417-423 (1974).
-  "Second-order perturbation treatment of the general spin Hamiltonian
-   in an arbitrary coordinate system"
+Restrictions: a single electron spin (``nElectrons == 1``), no
+nucleus-nucleus couplings (``Sys.nn``), no A or D strain, no parallel-mode
+ENDOR.
 
-Restrictions
-------------
-- Single electron spin (nElectrons == 1)
-- No nuclear-nuclear couplings (Sys.nn)
-- No A-strain or D-strain
-- No parallel-mode ENDOR
+Reference: M. Iwasaki, "Second-order perturbation treatment of the general
+spin Hamiltonian in an arbitrary coordinate system", J. Magn. Reson. 16,
+417-423 (1974).
 """
 from __future__ import annotations
 
@@ -56,7 +51,7 @@ def endorfrq_perturb(
     nuclei:
         List of 0-based nucleus indices to include.  Default: all nuclei.
     opt:
-        Optional :class:`~torchspin.experiment.Options`.  Only
+        Optional :class:`~torchspin.Options`.  Only
         ``opt.Enhancement`` is read: hyperfine enhancement is not available
         in perturbation theory, so ``Enhancement=True`` raises (EasySpin's
         ``endorfrq_perturb`` silently ignores it).  Use :func:`endorfrq`.
@@ -83,13 +78,13 @@ def endorfrq_perturb(
 
     Notes
     -----
-    The nuclear energy in state (mS, mI) is (Iwasaki 1974):
+    The nuclear energy in state (mS, mI) is (Iwasaki 1974)::
 
-        E = mI · |K(mS)|  +  E2A  +  E1Q  +  E2Q  +  E2DA
+        E = mI · abs(K(mS))  +  E2A  +  E1Q  +  E2Q  +  E2DA
 
-    where K(mS) = mS · A·u + ν_I · h is the effective field at the nucleus,
-    u = g·h/|g·h| is the effective g direction, and ν_I = -gₙ·μₙ·B₀/h
-    is the nuclear Larmor frequency in MHz.
+    where ``K(mS) = mS · A·u + ν_I · h`` is the effective field at the
+    nucleus, ``u = g·h / abs(g·h)`` is the effective g direction, and
+    ``ν_I = -gₙ·μₙ·B₀/h`` is the nuclear Larmor frequency in MHz.
 
     ENDOR transitions connect states mI and mI+1 within the same mS manifold.
 

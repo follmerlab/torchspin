@@ -815,7 +815,7 @@ def _strain_from_matrix(W: torch.Tensor) -> tuple[int, torch.Tensor, torch.Tenso
 def _strain_tensors(sys: SpinSystem) -> list:
     """Orientation dependence of the strain line widths as quadratic forms.
 
-    Every strain width torchspin computes (:mod:`torchspin.strainwidth`) is a
+    Every strain width torchspin computes (``torchspin.strainwidth``) is a
     function of the field direction ``z`` (molecular frame) with the
     symmetry of the quadratic forms ``z.W.z`` returned here; the grid
     symmetry must be a symmetry of each of them (B82).  Returns a list of

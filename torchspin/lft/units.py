@@ -4,15 +4,27 @@ The public API of :mod:`torchspin.lft` follows torchspin: energies and couplings
 fields in mT, frequencies in GHz, angles in radians, molar susceptibility in m^3/mol (SI, as
 :func:`torchspin.curry` returns it).  Ligand-field energies are far easier to read in cm^-1,
 so every function that returns energies takes ``units=`` and every ligand-field plot defaults
-to cm^-1.  The conversions are plain Python floats derived from :mod:`torchspin.constants`,
+to cm^-1.  The conversions are plain Python floats derived from ``torchspin.constants``,
 so multiplying a tensor by one keeps the autograd graph (unlike the NumPy
-:func:`torchspin.utils.unitconvert`).
+:func:`torchspin.unitconvert`).
 
-Energy units: ``'MHz'``, ``'GHz'``, ``'Hz'``, ``'cm^-1'`` (aliases ``'cm-1'``, ``'cm⁻¹'``),
-``'K'``, ``'eV'``, ``'meV'``, ``'J'``.
-Field units: ``'mT'``, ``'T'``, ``'G'``.
-Molar susceptibility: ``'SI'`` (m^3/mol) and ``'cgs'`` (cm^3/mol, emu), related by
-chi_cgs = chi_SI * 1e6 / (4 pi).
+* Energy units: ``'MHz'``, ``'GHz'``, ``'Hz'``, ``'cm^-1'`` (aliases ``'cm-1'``, ``'cm⁻¹'``,
+  ``'1/cm'``, ``'wavenumber'``), ``'K'``, ``'eV'``, ``'meV'``, ``'J'``.
+* Field units: ``'mT'``, ``'T'``, ``'G'``.
+* Molar susceptibility: ``'SI'`` (m^3/mol) and ``'cgs'`` (cm^3/mol, emu), related by
+  ``chi_cgs = chi_SI * 1e6 / (4 pi)``.
+
+Examples
+--------
+>>> from torchspin.lft import units
+>>> round(units.energy_factor("cm^-1", "MHz"), 4)
+29979.2458
+>>> import torch
+>>> B = units.convert_field(torch.tensor(3400.0, requires_grad=True), "G", "mT")
+>>> round(B.item(), 6), B.requires_grad
+(340.0, True)
+>>> units.canonical_energy_unit("1/cm"), units.energy_label("cm-1")
+('cm^-1', 'cm⁻¹')
 """
 
 from __future__ import annotations
@@ -50,7 +62,13 @@ PLOT_ENERGY_UNITS = "cm^-1"
 
 
 def canonical_energy_unit(unit: str) -> str:
-    """The canonical spelling of an energy unit (``'cm-1'`` -> ``'cm^-1'``); raises on unknown units."""
+    """Canonical spelling of an energy unit (``'cm-1'`` -> ``'cm^-1'``).
+
+    Raises
+    ------
+    ValueError
+        For an unknown unit.
+    """
     u = _ENERGY_ALIASES.get(unit, unit)
     if u not in _ENERGY_J:
         raise ValueError(f"unknown energy unit {unit!r}; use one of {', '.join(ENERGY_UNITS)}")
@@ -58,18 +76,28 @@ def canonical_energy_unit(unit: str) -> str:
 
 
 def energy_factor(from_: str, to: str) -> float:
-    """Multiply an energy in ``from_`` by this to get it in ``to``."""
+    """Factor that converts an energy from ``from_`` to ``to`` (a Python float).
+
+    Raises ``ValueError`` for an unknown unit.
+    """
     return _ENERGY_J[canonical_energy_unit(from_)] / _ENERGY_J[canonical_energy_unit(to)]
 
 
 def convert_energy(x, from_: str, to: str):
-    """``x`` (float, array or tensor; the graph is kept) converted from ``from_`` to ``to``."""
+    """Convert an energy from ``from_`` to ``to``.
+
+    ``x`` may be a float, array or tensor (the autograd graph is kept); returned unchanged when the
+    factor is 1.  Raises ``ValueError`` for an unknown unit.
+    """
     f = energy_factor(from_, to)
     return x if f == 1.0 else x * f
 
 
 def field_factor(from_: str, to: str) -> float:
-    """Multiply a magnetic field in ``from_`` by this to get it in ``to``."""
+    """Factor that converts a magnetic field from ``from_`` to ``to`` (``'mT'``, ``'T'``, ``'G'``).
+
+    Raises ``ValueError`` for an unknown unit.
+    """
     for u in (from_, to):
         if u not in _FIELD_T:
             raise ValueError(f"unknown field unit {u!r}; use one of {', '.join(FIELD_UNITS)}")
@@ -77,12 +105,19 @@ def field_factor(from_: str, to: str) -> float:
 
 
 def convert_field(x, from_: str, to: str):
+    """Convert a magnetic field ``x`` (float, array or tensor; graph kept) from ``from_`` to ``to``.
+
+    Raises ``ValueError`` for an unknown unit.
+    """
     f = field_factor(from_, to)
     return x if f == 1.0 else x * f
 
 
 def chi_factor(from_: str, to: str) -> float:
-    """Multiply a molar susceptibility in ``from_`` ('SI' m^3/mol or 'cgs' cm^3/mol) by this to get ``to``."""
+    """Factor that converts a molar susceptibility from ``from_`` to ``to``.
+
+    Units ``'SI'`` (m^3/mol) or ``'cgs'`` (cm^3/mol); raises ``ValueError`` otherwise.
+    """
     for u in (from_, to):
         if u not in _CHI_SI:
             raise ValueError(f"unknown susceptibility unit {u!r}; use 'SI' (m^3/mol) or 'cgs' (cm^3/mol)")
@@ -90,10 +125,14 @@ def chi_factor(from_: str, to: str) -> float:
 
 
 def convert_chi(x, from_: str, to: str):
+    """Convert a molar susceptibility ``x`` (float, array or tensor; graph kept) between ``'SI'`` and ``'cgs'``.
+
+    Raises ``ValueError`` for an unknown unit.
+    """
     f = chi_factor(from_, to)
     return x if f == 1.0 else x * f
 
 
 def energy_label(unit: str) -> str:
-    """Axis label text for an energy unit (``'cm^-1'`` -> ``'cm⁻¹'``)."""
+    """Axis-label text for an energy unit (``'cm^-1'`` -> ``'cm⁻¹'``); raises ``ValueError`` for an unknown unit."""
     return _ENERGY_LABELS[canonical_energy_unit(unit)]

@@ -548,19 +548,21 @@ def saffron(
 
     Returns
     -------
-    tuple of (x, signal, info)
-        x : ndarray or list of ndarray — time or frequency axes
-        signal : ndarray — simulated signal (time domain; complex) or ENDOR
-            spectrum.  When the spin system carries tensors that require grad,
-            ``signal`` and ``info['td']``/``info['fd']`` are torch tensors on the
-            autograd graph instead.
-        info : dict — contains 'td' and 'fd' fields
+    x : ndarray or list of ndarray
+        Time or frequency axes.
+    signal : ndarray
+        Simulated signal (time domain; complex) or ENDOR spectrum.  When the
+        spin system carries tensors that require grad, ``signal`` and
+        ``info['td']``/``info['fd']`` are torch tensors on the autograd graph
+        instead.
+    info : dict
+        Contains the ``'td'`` and ``'fd'`` fields.
 
     Notes
     -----
     ``Opt.SimulationMode`` selects the engine, as in EasySpin: ``'fast'`` is
     the ideal-pulse algorithm implemented here, ``'thyme'`` the real-pulse
-    density-matrix engine in :func:`torchspin.saffron_thyme.saffron_thyme`.
+    density-matrix engine in ``torchspin.saffron_thyme.saffron_thyme``.
     Left unset, the engine is inferred: real pulses (nonzero ``Exp.tp``), a
     list-valued ``Exp.Sequence`` or an ``Exp.DetWindow`` select ``'thyme'``.
 

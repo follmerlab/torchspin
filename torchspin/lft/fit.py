@@ -7,7 +7,8 @@ data sets (each divided by its own sigma) are minimized together, and the Jacobi
 Different data constrain different parameter combinations (bands: B, Dq, low-symmetry
 splittings; susceptibility: zeta, k, zero-field splitting; g: the ground-doublet admixture;
 an EPR spectrum: g through the lineshape), so a direction one data type leaves undetermined
-(:attr:`JointOutcome.null_directions`) can be fixed by another.
+(:attr:`JointOutcome.null_directions`) can be fixed by another.  Outline (``T`` and ``chiT``
+are measured arrays)::
 
     from torchspin import lft
     from torchspin.lft.fit import FitParameter, JointFit, Bands, Susceptibility, GValues
@@ -16,9 +17,9 @@ an EPR spectrum: g through the lineshape), so a direction one data type leaves u
     def model(p):                      # named scalar tensors -> lft.ddn keywords
         return dict(B=p["B"], C=4.2 * p["B"], zeta=p["zeta"], k=p["k"].expand(3),
                     V=lft.crystal_field(p["Dq"], p["Ds"], p["Dt"]))
-    fit = JointFit(7, params, model, [Bands([5, 13], [8100, 17500], sigma=50),
-                                      Susceptibility(T, chiT, quantity="chiT", chi_units="cgs", sigma=0.02),
-                                      GValues([2.1, 2.3, 4.9], sigma=0.01)], units="cm^-1")
+    fit = JointFit(7, params, model, [Bands([5, 13], [8100, 17500], sigma_=50),
+                                      Susceptibility(T, chiT, quantity="chiT", chi_units="cgs", sigma_=0.02),
+                                      GValues([2.1, 2.3, 4.9], sigma_=0.01)], units="cm^-1")
     out = fit.fit()
     print(out.summary())
 
@@ -28,7 +29,7 @@ susceptibility in each block's ``chi_units``, magnetization in ``M_units``.
 
 Jacobians: forward-mode AD (``torch.func.jacfwd``) through :mod:`torchspin.lft` for bands, g,
 chi and M (cost about one evaluation plus a small amount per parameter).  ``Spectrum`` blocks go
-through :func:`torchspin.pepper_autograd.pepper_autograd`, which does not support forward mode;
+through :func:`torchspin.pepper_autograd`, which does not support forward mode;
 their Jacobian is the exact chain rule d(spectrum)/d(g) . d(g)/d(x), with d(spectrum)/d(g) for the
 six independent g components from a double-backward Jacobian-vector product through pepper.
 """
@@ -64,7 +65,25 @@ def _arr(x) -> np.ndarray:
 # ------------------------------------------------------------------------------ parameters and results
 @dataclass(frozen=True)
 class FitParameter:
-    """A named fit parameter with start value, bounds, and a fixed flag."""
+    """A named fit parameter with start value, bounds and a fixed flag.
+
+    Parameters
+    ----------
+    name : str
+        Name; the key under which the value reaches ``model(p)``.
+    value : float
+        Start value, in the unit the model expects (energies in the fit's
+        ``units``).
+    lower, upper : float, default -inf, inf
+        Bounds.
+    fixed : bool, default False
+        Keep the parameter at ``value``.
+
+    Raises
+    ------
+    ValueError
+        If ``value`` lies outside ``[lower, upper]``.
+    """
 
     name: str
     value: float
@@ -79,11 +98,36 @@ class FitParameter:
 
 @dataclass
 class FitResult:
-    """Best-fit values; standard errors and correlations from the exact Jacobian at the solution.
+    """Best-fit values with standard errors and correlations from the exact Jacobian.
 
-    ``stderr`` = sqrt(diag((J^T J)^+)) for the free parameters (residuals already divided by
-    sigma, so these are 1-sigma errors if the sigmas are right; multiply by sqrt(chi2/dof)
-    otherwise).  Fixed parameters have stderr 0; undetermined ones NaN.
+    Attributes
+    ----------
+    names : list of str
+        Parameter names, in :class:`JointFit` order (all parameters).
+    values : numpy.ndarray, shape (n_params,)
+        Best-fit values (fixed parameters at their start values).
+    stderr : numpy.ndarray, shape (n_params,)
+        ``sqrt(diag((J^T J)^+))`` for the free parameters.  The residuals are
+        already divided by sigma, so these are 1-sigma errors if the sigmas
+        are right (multiply by ``sqrt(chi2/dof)`` otherwise).  0 for fixed
+        parameters, NaN for parameters in an undetermined direction
+        (:func:`null_directions`).
+    correlation : numpy.ndarray, shape (n_free, n_free)
+        Correlation matrix of the free parameters.
+    free : numpy.ndarray of bool, shape (n_params,)
+        Which parameters were varied.
+    chi2 : float
+        Sum of squared weighted residuals at the solution.
+    dof : int
+        Number of residuals minus number of free parameters.
+    jacobian : numpy.ndarray, shape (n_residuals, n_free)
+        Exact Jacobian of the weighted residuals at the solution.
+    success : bool
+        Convergence flag of :func:`scipy.optimize.least_squares`.
+    message : str
+        Its message.
+    nfev : int
+        Number of residual evaluations.
     """
 
     names: list[str]
@@ -99,9 +143,11 @@ class FitResult:
     nfev: int
 
     def as_dict(self) -> dict[str, float]:
+        """Return ``{name: value}`` for every parameter."""
         return dict(zip(self.names, self.values.tolist()))
 
     def table(self) -> str:
+        """Return a text table of values and standard errors with chi^2 and dof."""
         lines = [f"{'parameter':<14}{'value':>14}{'stderr':>12}", "-" * 40]
         for nm, v, e, f in zip(self.names, self.values, self.stderr, self.free):
             lines.append(f"{nm:<14}{v:>14.6g}{(f'{e:.3g}' if f else 'fixed'):>12}")
@@ -112,8 +158,24 @@ class FitResult:
 def null_directions(result: FitResult, rtol: float = 1e-6, min_coef: float = 0.05) -> list[dict[str, float]]:
     """Parameter combinations the data do not determine (free parameters only).
 
-    Right singular vectors of the column-scaled Jacobian with singular value below
-    ``rtol`` x the largest; coefficients are for unit-scaled parameters (|x_j| or 1).
+    Parameters
+    ----------
+    result : FitResult
+        A fit result with its Jacobian.
+    rtol : float, default 1e-6
+        A right singular vector of the column-scaled Jacobian counts as
+        undetermined when its singular value is below ``rtol`` times the
+        largest.
+    min_coef : float, default 0.05
+        Coefficients smaller than this (after normalizing the largest to 1)
+        are left out.
+
+    Returns
+    -------
+    list of dict
+        One ``{name: coefficient}`` dict per undetermined direction.  The
+        coefficients are for unit-scaled parameters: each column of the
+        Jacobian is scaled by ``max(abs(x_j), 1)``.
     """
     J = result.jacobian
     if J.size == 0:
@@ -132,9 +194,20 @@ def null_directions(result: FitResult, rtol: float = 1e-6, min_coef: float = 0.0
 
 # ------------------------------------------------------------------------------ evaluation context
 class Context:
-    """Quantities shared by the data sets at one parameter vector (computed once, on demand).
+    """Quantities shared by the data sets at one parameter vector, computed on demand.
 
-    ``H0`` and ``energies`` are in cm^-1 (internal); ``f`` converts the fit's units to cm^-1.
+    Built by :meth:`JointFit.context`.  ``H0`` and ``energies`` are in cm^-1
+    (internal); ``f`` converts the fit's units to cm^-1; ``g`` is the tuple
+    ``(ggT, principal, g, gap_cm)`` of the ground doublet; ``mu`` the Zeeman
+    operators.
+
+    Raises
+    ------
+    ValueError
+        If the model returns ``field``.
+    TypeError
+        If the model returns keywords that :func:`torchspin.lft.ddn.hamiltonian`
+        does not take.
     """
 
     def __init__(self, ops, kwargs: dict, units: str, constants: MagConstants):
@@ -173,7 +246,14 @@ class Context:
 
 # ------------------------------------------------------------------------------ data sets
 class Dataset:
-    """A block of observations with its forward model; residuals are (calc - obs) / sigma."""
+    """Base class of a block of observations with its forward model.
+
+    Subclasses provide ``observed``, ``sigma`` and ``calculate(ctx)``;
+    :meth:`residuals` returns ``(calc - obs) / sigma``.  ``name`` labels the
+    block in :class:`JointOutcome` (made unique by :class:`JointFit`);
+    ``forward_ad`` is ``False`` for blocks whose Jacobian comes from
+    ``jacobian_block`` instead of forward-mode AD.
+    """
 
     name: str = ""
     forward_ad: bool = True        # False: Jacobian supplied by :meth:`jacobian_block`
@@ -200,8 +280,25 @@ def _bcast(s, shape):
 
 @dataclass
 class Bands(Dataset):
-    """Band energies (in the fit's ``units``) of states numbered as DDNFIT does: 1-based over ALL
-    states in ascending order, relative to state 1.  A degenerate level is fitted through its mean."""
+    """Band energies, numbered as DDNFIT does.
+
+    Parameters
+    ----------
+    states : sequence of int
+        1-based state numbers over all states in ascending energy (every
+        state of a degenerate level counts); each energy is relative to
+        state 1.
+    energies : sequence of float
+        Observed energies in the fit's ``units``.
+    sigma_ : float or sequence of float, default 1.0
+        Uncertainty per energy (same units).
+    name : str, default 'bands'
+
+    Raises
+    ------
+    ValueError
+        If a state number is below 1.
+    """
 
     states: Sequence[int]
     energies: Sequence[float]
@@ -228,7 +325,16 @@ class Bands(Dataset):
 
 @dataclass
 class GValues(Dataset):
-    """Principal g values of the ground doublet (effective S = 1/2), compared sorted ascending."""
+    """Principal g values of the ground doublet (effective S = 1/2).
+
+    Parameters
+    ----------
+    g : sequence of 3 float
+        Observed principal g values; compared after sorting ascending.
+    sigma_ : float or sequence of 3 float, default 0.01
+        Uncertainties (sorted with ``g``).
+    name : str, default 'g'
+    """
 
     g: Sequence[float]
     sigma_: float | Sequence[float] = 0.01
@@ -248,7 +354,34 @@ class GValues(Dataset):
 
 @dataclass
 class Susceptibility(Dataset):
-    """Powder chi = M/H (``quantity='chi'``) or chi T (``'chiT'``) at measuring ``field`` (mT), in ``chi_units``."""
+    """Powder magnetic susceptibility chi = M/H or chi T versus temperature.
+
+    Parameters
+    ----------
+    T : sequence of float
+        Temperatures in K.
+    values : sequence of float
+        Observed chi (``chi_units``) or chi T (``chi_units`` times K).
+    sigma_ : float or sequence of float, default 0.01
+        Uncertainties, same units as ``values``.
+    field : float, default 100.0
+        Measuring field in mT (> 0).
+    quantity : {'chiT', 'chi'}, default 'chiT'
+    chi_units : {'cgs', 'SI'}, default 'cgs'
+        cm^3/mol or m^3/mol.
+    grid : OrientationGrid, default gauss_hemisphere(6)
+        Field directions of the powder average.
+    chi0 : float, default 0.0
+        Temperature-independent susceptibility added to chi, in
+        ``chi_units``.
+    name : str, default 'susceptibility'
+
+    Raises
+    ------
+    ValueError
+        If ``quantity`` is unknown or ``field <= 0`` (``chi_units`` is
+        checked when evaluated).
+    """
 
     T: Sequence[float]
     values: Sequence[float]
@@ -285,7 +418,24 @@ class Susceptibility(Dataset):
 
 @dataclass
 class Magnetization(Dataset):
-    """Powder M at points (field_i in mT, T_i in K), in ``M_units`` ('muB' per ion, 'emu/mol', 'SI')."""
+    """Powder magnetization at (field, temperature) points.
+
+    Parameters
+    ----------
+    field : sequence of float
+        Fields in mT, broadcast against ``T``.
+    T : sequence of float
+        Temperatures in K.
+    values : sequence of float
+        Observed M in ``M_units``.
+    sigma_ : float or sequence of float, default 0.01
+        Uncertainties in ``M_units``.
+    M_units : {'muB', 'emu/mol', 'SI'}, default 'muB'
+        Bohr magnetons per ion, emu/mol, or A m^2/mol.
+    grid : OrientationGrid, default gauss_hemisphere(6)
+        Field directions of the powder average.
+    name : str, default 'magnetization'
+    """
 
     field: Sequence[float]
     T: Sequence[float]
@@ -320,13 +470,28 @@ _SYM = [(0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2)]
 
 @dataclass
 class Spectrum(Dataset):
-    """A CW EPR powder spectrum simulated by ``pepper_autograd`` from the ground-doublet g.
+    """A CW EPR powder spectrum simulated by :func:`torchspin.pepper_autograd` from the ground-doublet g.
 
-    ``experiment``, ``options``: torchspin :class:`Experiment`, :class:`Options` (matrix method).
-    ``system``: extra :class:`SpinSystem` keywords (``Nucs``, ``A`` in MHz, ``lw``, ...); ``S``
-    and ``g`` are set from the model.  ``scale='auto'`` fits the amplitude analytically
-    (least-squares projection; differentiated exactly), or give a fixed float.  Only g carries
-    the model parameters into the spectrum.
+    Only g carries the model parameters into the spectrum.
+
+    Parameters
+    ----------
+    experiment : Experiment
+        :class:`torchspin.Experiment` of the measured spectrum.
+    options : Options
+        :class:`torchspin.Options` (matrix method).
+    spectrum : sequence of float, shape (nPoints,)
+        Observed spectrum.
+    sigma_ : float or sequence of float, default 1.0
+        Uncertainty per point.
+    system : dict, default {}
+        Extra :class:`torchspin.SpinSystem` keywords (``Nucs``, ``A`` in MHz,
+        ``lw`` in mT, ...); ``S`` and ``g`` come from the model (setting them
+        raises ``ValueError``).
+    scale : float or 'auto', default 'auto'
+        Amplitude: ``'auto'`` fits it analytically (least-squares
+        projection, differentiated exactly), a float fixes it.
+    name : str, default 'spectrum'
     """
 
     experiment: object
@@ -397,7 +562,19 @@ class Spectrum(Dataset):
 # ------------------------------------------------------------------------------ the fit
 @dataclass
 class JointOutcome:
-    """A joint fit: the shared :class:`FitResult`, the chi^2 of every data set, and undetermined directions."""
+    """Outcome of :meth:`JointFit.fit`.
+
+    Attributes
+    ----------
+    result : FitResult
+        The shared parameter result.
+    chi2 : dict of str to float
+        chi^2 of every data set.
+    n_points : dict of str to int
+        Number of points of every data set.
+    null_directions : list of dict
+        Undetermined parameter combinations (:func:`null_directions`).
+    """
 
     result: FitResult
     chi2: dict[str, float]
@@ -405,6 +582,7 @@ class JointOutcome:
     null_directions: list[dict[str, float]]
 
     def summary(self) -> str:
+        """Return the parameter table, chi^2 per data set and undetermined directions as text."""
         lines = [self.result.table(), "data set            points      chi^2   chi^2/point"]
         for k, c in self.chi2.items():
             n = self.n_points[k]
@@ -416,11 +594,53 @@ class JointOutcome:
 
 
 class JointFit:
-    """Fit one d^n model to several data sets.
+    """Fit one d^n ligand-field model to several data sets with exact Jacobians.
 
-    ``parameters``: :class:`FitParameter` list.  ``model(p)``: maps the dict of named scalar
-    tensors to :func:`torchspin.lft.ddn.hamiltonian` keywords (``B, C, A, zeta, V, k, alpha,
-    slater``) in ``units``.  ``constants``: :class:`torchspin.lft.ddnmag.MagConstants`.
+    Parameters
+    ----------
+    n : int
+        Number of d electrons.
+    parameters : sequence of FitParameter
+        The fit parameters (unique names).
+    model : callable
+        ``model(p)`` maps the dict of named 0-d tensors to
+        :func:`torchspin.lft.ddn.hamiltonian` keywords (``B``, ``C``, ``A``,
+        ``zeta``, ``V``, ``k``, ``alpha``, ``slater``), energies in
+        ``units``.  It must use torch operations so that the Jacobian is
+        exact.
+    datasets : sequence of Dataset
+        :class:`Bands`, :class:`GValues`, :class:`Susceptibility`,
+        :class:`Magnetization`, :class:`Spectrum`; duplicate names get an
+        index appended.
+    units : str, default 'MHz'
+        Energy unit of the model keywords and of :class:`Bands`.
+    constants : MagConstants, default MAG_CONSTANTS
+        :class:`torchspin.lft.ddnmag.MagConstants`.
+    device : str, default 'cpu'
+
+    Raises
+    ------
+    ValueError
+        If parameter names are not unique.
+
+    See Also
+    --------
+    torchspin.lft.ddnfit, torchspin.lft.ddnsus, torchspin.lft.ddnmag
+
+    Examples
+    --------
+    Fit the tetragonal splitting Ds of a Cu(II) model to its g values:
+
+    >>> from torchspin import lft
+    >>> from torchspin.lft.fit import FitParameter, JointFit, GValues
+    >>> params = [FitParameter('Dq', 1200.0, fixed=True), FitParameter('Ds', 1500.0, 500.0, 4000.0),
+    ...           FitParameter('Dt', 300.0, fixed=True)]
+    >>> def model(p):
+    ...     return dict(zeta=830.0, k=(0.8, 0.8, 0.8), V=lft.crystal_field(p['Dq'], p['Ds'], p['Dt']))
+    >>> fit = JointFit(9, params, model, [GValues([2.063, 2.063, 2.423], sigma_=0.001)], units='cm^-1')
+    >>> out = fit.fit()
+    >>> out.result.success, round(out.result.as_dict()['Ds'], -1)
+    (True, 2030.0)
     """
 
     def __init__(self, n: int, parameters: Sequence[FitParameter], model: Callable[[dict], dict],
@@ -442,32 +662,42 @@ class JointFit:
 
     # ------------------------------------------------------------------ evaluation
     def x0(self) -> np.ndarray:
+        """Start values of all parameters, shape (n_params,)."""
         return np.array([p.value for p in self.parameters], float)
 
     def free_mask(self) -> np.ndarray:
+        """Boolean mask of the free (not fixed) parameters, shape (n_params,)."""
         return np.array([not p.fixed for p in self.parameters])
 
     def context(self, x: torch.Tensor) -> Context:
+        """Evaluation :class:`Context` at the full parameter vector ``x`` (tensor, shape (n_params,))."""
         return Context(self.ops, self.model({nm: x[i] for i, nm in enumerate(self.names)}), self.units,
                        self.constants)
 
     def residuals_torch(self, x: torch.Tensor, datasets=None) -> torch.Tensor:
+        """Weighted residuals ``(calc - obs) / sigma`` of all (or the given) data sets, on the graph."""
         ctx = self.context(x)
         ds = self.datasets if datasets is None else datasets
         return torch.cat([d.residuals(ctx) for d in ds]) if ds else torch.zeros(0, dtype=_F64)
 
     def residuals(self, x) -> np.ndarray:
+        """Weighted residuals at the full parameter vector ``x`` as a NumPy array."""
         with torch.no_grad():
             return self.residuals_torch(torch.as_tensor(np.asarray(x, float), dtype=_F64)).numpy()
 
     def calculate(self, x) -> dict[str, np.ndarray]:
-        """Calculated values of every data set at the full parameter vector x."""
+        """Calculated values of every data set at the full parameter vector ``x``, keyed by data-set name."""
         with torch.no_grad():
             ctx = self.context(torch.as_tensor(np.asarray(x, float), dtype=_F64))
             return {d.name: d.calculate(ctx).numpy() for d in self.datasets}
 
     def jacobian(self, x, free=None) -> np.ndarray:
-        """Exact d residuals / d x[free]: forward-mode AD, chain rule through pepper for Spectrum blocks."""
+        """Exact Jacobian d(residuals)/d(x[free]), shape (n_residuals, n_free).
+
+        Forward-mode AD for most blocks; the chain rule through pepper for
+        :class:`Spectrum` blocks.  ``free``: boolean mask (default
+        :meth:`free_mask`).
+        """
         x0 = torch.as_tensor(np.asarray(x, float), dtype=_F64)
         cols = torch.as_tensor(np.flatnonzero(self.free_mask() if free is None else free))
         nf = len(cols)
@@ -498,7 +728,21 @@ class JointFit:
 
     # ------------------------------------------------------------------ fit
     def fit(self, datasets: Sequence[str] | None = None, **kw) -> JointOutcome:
-        """Fit all data sets (or only those named); ``kw`` go to :func:`scipy.optimize.least_squares`."""
+        """Fit all data sets, or only those named.
+
+        Parameters
+        ----------
+        datasets : sequence of str, optional
+            Names of the data sets to fit (default: all).
+        **kw
+            Passed to :func:`scipy.optimize.least_squares` (defaults
+            ``method='trf'``, ``x_scale='jac'``, ``xtol = ftol = gtol =
+            1e-12``).
+
+        Returns
+        -------
+        JointOutcome
+        """
         from scipy.optimize import least_squares
 
         sub = self if datasets is None else self.subset(datasets)
@@ -543,7 +787,13 @@ class JointFit:
         return JointOutcome(result, chi2, npts, nulls)
 
     def subset(self, names: Sequence[str]) -> "JointFit":
-        """The same model fitted to the named data sets only (for identifiability comparisons)."""
+        """Copy restricted to the named data sets (for identifiability comparisons).
+
+        Raises
+        ------
+        ValueError
+            If a name is not a data set of this fit.
+        """
         missing = set(names) - {d.name for d in self.datasets}
         if missing:
             raise ValueError(f"unknown data sets {sorted(missing)}")
@@ -553,7 +803,7 @@ class JointFit:
         return out
 
     def with_start(self, x) -> "JointFit":
-        """Copy with the parameter start values replaced by x (full vector)."""
+        """Copy with the parameter start values replaced by ``x`` (full vector, shape (n_params,))."""
         out = JointFit.__new__(JointFit)
         out.__dict__.update(self.__dict__)
         out.parameters = [FitParameter(p.name, float(v), p.lower, p.upper, p.fixed) for p, v in zip(self.parameters, x)]

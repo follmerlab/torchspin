@@ -1,6 +1,6 @@
 """DDPOWH: powder EPR, FDMR, ENDOR and NMR/NQR spectra at field points, with Telser's level strain.
 
-Torch port of Joshua Telser's DDPOWH in its exact mode (via telser-tools, ``telser_tools_diff.ddpowh``),
+Torch port of Josh Telser's DDPOWH in its exact mode (via telser-tools, ``telser_tools_diff.ddpowh``),
 on a torchspin :class:`~torchspin.SpinSystem`.  The Hamiltonian is torchspin's (``ham``: H = H0 - B n.mu),
 plus two optional Telser terms that torchspin's core does not carry yet (``zeeman2`` for the second-order
 Zeeman w (mu_B B.S)^2 and ``h0_extra`` for the I.S^3 hyperfine U; :mod:`torchspin.lft.telser2torchspin`
@@ -11,13 +11,13 @@ every field B of the sweep, H(B n) is diagonalized and every selected level pair
 
 * f: Telser's DLINE.F line (Gaussian or Lorentzian, HWHM W, cut at ``cutoff`` half widths), evaluated in
   the frequency domain at each field point.  The field-swept line is the frequency line mapped through the
-  exact nu_ij(B), so curved and looping levels need no linearization (the 1/|d nu/dB| weight is implicit).
-* W_ij(n, B) = W(n) (B/B_set)^b (1 + [sqrt(sum_b |c_bi|^2 w_b) + sqrt(sum_b |c_bj|^2 w_b)]/2) with
+  exact nu_ij(B), so curved and looping levels need no linearization (the 1/abs(d nu/dB) weight is implicit).
+* W_ij(n, B) = W(n) (B/B_set)^b (1 + [sqrt(sum_b abs(c_bi)^2 w_b) + sqrt(sum_b abs(c_bj)^2 w_b)]/2) with
   W(n)^2 = sum_k W_k^2 n_k^2.  The square brackets are Telser's **level strain**: w_b is a weight per basis
-  state |m_S, m_I> and c_bi the components of level i, so the width of a transition depends on what its two
+  state ``|m_S, m_I>`` and c_bi the components of level i, so the width of a transition depends on what its two
   levels are made of.  :func:`strain_weights` builds DDPOWH's w_b = WMS(m_S) + WMI(m_I);
   :func:`torchspin.lft.ddpowj.strain_weights` DDPOWJ's product WMS1(m_1) WMS2(m_2).
-* P_ij: the B1-averaged |<i|mu|j>|^2 / mu_B^2 (perpendicular mode; parallel for ``h1mode < 0``;
+* P_ij: the B1-averaged abs(<i|mu|j>)^2 / mu_B^2 (perpendicular mode; parallel for ``h1mode < 0``;
   perpendicular + h1mode x parallel for ``h1mode > 0``).  With ``moment='electron'`` (default, Telser's) mu
   is the electron Zeeman moment only (g.S: no nuclear moment, no third-order Zeeman u); with
   ``moment='full'`` it is torchspin's -dH/dB moment.
@@ -40,21 +40,24 @@ field-derivative spectra are d/dB per mT (10x DDPOWH's per-gauss values).  ``con
 :class:`SpinConstants`) sets mu_B (P normalization), k_B and cm^-1 -> MHz; parity tests pass telser-tools'
 CODATA 2018 values through :meth:`SpinConstants.from_telser`.
 
-    >>> import torch
-    >>> from torchspin import SpinSystem
-    >>> from torchspin.lft import ddpowh
-    >>> sys = SpinSystem(S=1.5, g=[2.0, 2.0, 2.0], D=[-2000., -2000., 4000.])          # MHz
-    >>> w = ddpowh.strain_weights(sys, ms=[1.0, 0.0, 0.0, 1.0])                         # broaden the +-3/2 levels
-    >>> res = ddpowh.epr(sys, torch.linspace(50, 450, 401), 9.5, width=[60., 60., 60.],
-    ...                  strain=ddpowh.Strain(w), igloo=20)
-    >>> res.spectrum.shape                                                              # (401,)
+Example (an S = 3/2 system with D = 6000 MHz whose +-3/2 levels are broadened by level strain):
+
+>>> import torch
+>>> from torchspin import SpinSystem
+>>> from torchspin.lft import ddpowh
+>>> sys = SpinSystem(S=1.5, g=[2.0, 2.0, 2.0], D=[-2000., -2000., 4000.])   # MHz
+>>> w = ddpowh.strain_weights(sys, ms=[1.0, 0.0, 0.0, 1.0])
+>>> res = ddpowh.epr(sys, torch.linspace(50, 450, 201), 9.5, width=60.0,
+...                  strain=ddpowh.Strain(w), igloo=6)
+>>> res.spectrum.shape, res.n_orientations
+(torch.Size([201]), 98)
 
 Gradients
 ---------
 Every tensor parameter of the SpinSystem that ``ham`` keeps on the graph (g, D, A, Q principal values,
-full tensors, ``ee`` ...; not the Euler frames, mol2g bug B3), the widths, the strain weights, b, B_set,
+full tensors, ``ee``, the Euler frames ...), the widths, the strain weights, b, B_set,
 the microwave frequency, the temperature, ``ordering``, ``zeeman2``, ``h0_extra``, the shielding and
-``scale`` carry gradients.  Eigenvalues and eigenvectors come from :func:`torchspin.lft._linalg.eigh_gauge`.
+``scale`` carry gradients.  Eigenvalues and eigenvectors come from ``torchspin.lft._linalg.eigh_gauge``.
 Discrete choices are made on detached values: which (orientation, field) points carry a line (the cutoff),
 the window of each FDMR/ENDOR line and the ENDOR selection sign test.
 
@@ -92,7 +95,23 @@ _DEG = math.pi / 180.0
 
 
 class SpinConstants(NamedTuple):
-    """mu_B/h in MHz per mT, k_B/h in MHz per K, and MHz per cm^-1."""
+    """Physical constants used by the DDPOWH/DDPOWJ simulations.
+
+    Attributes
+    ----------
+    mu_b : float
+        Bohr magneton over Planck's constant, mu_B/h, in MHz per mT
+        (normalizes the transition probabilities P).
+    k_b : float
+        Boltzmann constant over Planck's constant, k_B/h, in MHz per K.
+    mhz_per_cm : float
+        MHz per cm^-1 (energy conversion of widths, axes and the Flygare
+        frequency factor).
+
+    See Also
+    --------
+    TORCHSPIN_CONSTANTS : torchspin's CODATA values.
+    """
 
     mu_b: float
     k_b: float
@@ -100,21 +119,49 @@ class SpinConstants(NamedTuple):
 
     @classmethod
     def from_telser(cls, c) -> "SpinConstants":
-        """From a telser-tools ``Constants``-like object (``mu_b_mhz`` MHz/G, ``mu_b_cm`` cm^-1/G, ``k_b_cm``)."""
+        """Build from a telser-tools ``Constants``-like object.
+
+        Parameters
+        ----------
+        c : object
+            Any object with attributes ``mu_b_mhz`` (MHz per gauss),
+            ``mu_b_cm`` (cm^-1 per gauss) and ``k_b_cm`` (cm^-1 per K), e.g.
+            telser-tools' CODATA 2018 constants (used by the parity tests).
+
+        Returns
+        -------
+        SpinConstants
+            ``mu_b = 10 * mu_b_mhz`` (MHz/mT), ``mhz_per_cm = mu_b_mhz /
+            mu_b_cm`` and ``k_b = k_b_cm * mhz_per_cm``.
+        """
         mhz_per_cm = float(c.mu_b_mhz) / float(c.mu_b_cm)
         return cls(float(c.mu_b_mhz) * 10.0, float(c.k_b_cm) * mhz_per_cm, mhz_per_cm)
 
 
-#: Derived from :mod:`torchspin.constants` (CODATA 2022 mu_B).
+#: Derived from ``torchspin.constants`` (CODATA 2022 mu_B).
 TORCHSPIN_CONSTANTS = SpinConstants(BMAGN / PLANCK * 1e-9, BOLTZMANN / PLANCK * 1e-6, _u.energy_factor("cm^-1", "MHz"))
 
 
 class Strain(NamedTuple):
-    """Telser's strain width factor (B/B_set)^b (1 + [sqrt(sum |c_bi|^2 w_b) + sqrt(sum |c_bj|^2 w_b)]/2).
+    """Telser's level strain of a DDPOWH/DDPOWJ EPR line.
 
-    ``weights`` (n,): one weight per basis state of the SpinSystem (|m_S1, m_S2, ..., m_I1, ...>, every m
-    descending, torchspin's order); see :func:`strain_weights`.  ``b``: the field exponent; ``field``:
-    B_set in mT (only used when b != 0).
+    The half width of the line between levels i and j at field B is
+    ``W(n) (B/B_set)^b (1 + [sqrt(sum_b abs(c_bi)^2 w_b) + sqrt(sum_b
+    abs(c_bj)^2 w_b)]/2)``, where ``c_bi`` are the components of level i in
+    the basis state b and ``w_b`` are the basis weights.
+
+    Attributes
+    ----------
+    weights : torch.Tensor, shape (nStates,)
+        One weight per basis state of the SpinSystem (``nStates = sys.nStates``,
+        states ``|m_S1, m_S2, ..., m_I1, ...>`` with every m descending,
+        torchspin's order), dimensionless.  Built by :func:`strain_weights`
+        (DDPOWH) or :func:`torchspin.lft.ddpowj.strain_weights` (DDPOWJ).
+        May require grad.
+    b : float or torch.Tensor, default 0.0
+        Field exponent of the width.
+    field : float or torch.Tensor, default 1.0
+        Reference field B_set in mT; only used when ``b != 0``.
     """
 
     weights: torch.Tensor
@@ -123,8 +170,24 @@ class Strain(NamedTuple):
 
 
 class PowderResult(NamedTuple):
-    """``axis``: fields (mT, :func:`epr`), energies (``units``, :func:`fdmr`) or rf (MHz, :func:`endor`,
-    :func:`nmr`); ``spectrum`` (len(axis),); ``grid``: the orientations (radians, weights)."""
+    """Result of :func:`epr`, :func:`fdmr`, :func:`endor` and :func:`nmr`.
+
+    Attributes
+    ----------
+    axis : torch.Tensor, shape (npts,)
+        The sweep axis as used: fields in mT (:func:`epr`), energies in
+        ``units`` (:func:`fdmr`) or radio frequencies in MHz (:func:`endor`,
+        :func:`nmr`); detached, ``float64``.
+    spectrum : torch.Tensor, shape (npts,)
+        The spectrum on ``axis`` (DDPOWH's exact-mode intensity scale, see
+        the module docstring), on the autograd graph of differentiable
+        inputs.
+    n_orientations : int
+        Number of grid orientations.
+    grid : Grid
+        The orientation grid (``theta``, ``phi`` in radians, ``weight``,
+        unit ``directions`` (n_orientations, 3), ...).
+    """
 
     axis: torch.Tensor
     spectrum: torch.Tensor
@@ -176,12 +239,47 @@ def _ms_values(s: float) -> np.ndarray:
 
 
 def strain_weights(sys: SpinSystem, ms=None, mi=None, *, electron: int = 0, nucleus: int = 0) -> torch.Tensor:
-    """DDPOWH's basis weights w_b = WMS(m_S) + WMI(m_I) for every basis state of ``sys``.
+    """DDPOWH's basis-state strain weights ``w_b = WMS(m_S) + WMI(m_I)``.
 
-    ``ms`` (2S+1,): WMS for m_S = S, S-1, ..., -S of electron ``electron`` (Telser's input order);
-    ``mi`` (2I+1,): WMI for m_I = I, ..., -I of nucleus ``nucleus``.  Missing vectors count as zeros; a
-    single value for a spin that is absent (Telser's WMI(1) without a nucleus) is added to every state.
-    Tensors keep their graph.
+    Parameters
+    ----------
+    sys : SpinSystem
+        The spin system; one weight is returned per basis state.
+    ms : array_like or torch.Tensor, shape (2S+1,), optional
+        WMS for ``m_S = S, S-1, ..., -S`` of electron ``electron`` (Telser's
+        input order), dimensionless.  ``None``: zeros.
+    mi : array_like or torch.Tensor, shape (2I+1,), optional
+        WMI for ``m_I = I, ..., -I`` of nucleus ``nucleus``.  ``None``: zeros.
+    electron : int, default 0
+        0-based electron index for ``ms``.
+    nucleus : int, default 0
+        0-based nucleus index for ``mi``.
+
+    Returns
+    -------
+    torch.Tensor, shape (nStates,)
+        The weights in torchspin's basis order, ``float64``; tensor inputs
+        keep their graph.
+
+    Raises
+    ------
+    ValueError
+        If ``ms``/``mi`` does not have ``2S+1``/``2I+1`` values, or if the
+        electron or nucleus does not exist and more than one value is given
+        (a single value for an absent spin, Telser's WMI(1) without a
+        nucleus, is added to every state).
+
+    See Also
+    --------
+    Strain, torchspin.lft.ddpowj.strain_weights
+
+    Examples
+    --------
+    >>> from torchspin import SpinSystem
+    >>> from torchspin.lft import ddpowh
+    >>> sys = SpinSystem(S=0.5, Nucs='14N', A=[20.0, 20.0, 95.0])
+    >>> ddpowh.strain_weights(sys, ms=[1.0, 0.0], mi=[0.5, 0.0, 0.5]).tolist()
+    [1.5, 1.0, 1.5, 0.5, 0.0, 0.5]
     """
     spins, ne = _spins(sys)
     dims = [int(round(2 * s)) + 1 for s in spins]
@@ -211,17 +309,54 @@ def strain_weights(sys: SpinSystem, ms=None, mi=None, *, electron: int = 0, nucl
 
 
 def all_pairs(n: int) -> tuple[tuple[int, int], ...]:
-    """Every pair (i, j), i < j, of n levels (0-based, ascending energy)."""
+    """Every level pair ``(i, j)``, ``i < j``, of ``n`` levels.
+
+    Parameters
+    ----------
+    n : int
+        Number of levels.
+
+    Returns
+    -------
+    tuple of tuple of int
+        0-based pairs of levels numbered by ascending energy.
+
+    Examples
+    --------
+    >>> from torchspin.lft import ddpowh
+    >>> ddpowh.all_pairs(3)
+    ((0, 1), (0, 2), (1, 2))
+    """
     return tuple((i, j) for i in range(n) for j in range(i + 1, n))
 
 
 def manifold_pairs(ms_range, manifold_size: int) -> tuple[tuple[int, int], ...]:
     """DDPOWH's level-range pair selection.
 
-    Levels are sorted by energy and grouped in consecutive manifolds of ``manifold_size`` levels (Telser:
-    2I + 1, the "m_S manifolds" at high field).  ``ms_range`` = (a, b, c, d), 1-based manifold numbers:
-    i runs over manifolds a ... b, j over c ... d, and only i < j is kept.  (1, 1, 2, 2) is the lowest
-    manifold to the next; DDPOWJ's default of all pairs is ``all_pairs(n)``.
+    The levels, sorted by energy, are grouped in consecutive manifolds of
+    ``manifold_size`` levels (Telser: 2I + 1, the m_S manifolds at high
+    field).  Level i runs over manifolds a to b, level j over c to d, and
+    only ``i < j`` is kept.
+
+    Parameters
+    ----------
+    ms_range : sequence of 4 int
+        ``(a, b, c, d)``, 1-based manifold numbers; ``(1, 1, 2, 2)`` selects
+        the transitions from the lowest manifold to the next.
+    manifold_size : int
+        Levels per manifold.
+
+    Returns
+    -------
+    tuple of tuple of int
+        0-based level pairs ``(i, j)``.  (DDPOWJ's default, all pairs, is
+        :func:`all_pairs`.)
+
+    Examples
+    --------
+    >>> from torchspin.lft import ddpowh
+    >>> ddpowh.manifold_pairs((1, 1, 2, 2), 2)
+    ((0, 2), (0, 3), (1, 2), (1, 3))
     """
     a, b, c, d = (int(x) for x in ms_range)
     ni = int(manifold_size)
@@ -410,20 +545,122 @@ def epr(sys: SpinSystem, fields, mw_freq, *, width, shape: str = "gaussian", der
         zeeman2=None, h0_extra=None, scale=1.0, units: str = "MHz",
         constants: SpinConstants = TORCHSPIN_CONSTANTS, device="cpu",
         chunk_budget: int = 4_000_000) -> PowderResult:
-    """Field-swept powder (or partial-orientation) EPR spectrum of ``sys`` at the field points ``fields``.
+    """Field-swept powder (or partial-orientation) EPR spectrum at the field points ``fields``.
 
-    ``fields`` (mT, 1-D, not differentiated; Telser's axis is ``linspace(B_min, B_max, npts + 1)``),
-    ``mw_freq`` (GHz).  ``width`` (Wx, Wy, Wz) HWHM in ``units`` (frequency domain), or one value.
-    ``shape``: ``'gaussian'``/``'lorentzian'``; ``derivative``: d/dB (per mT; ``field_derivative=False``:
-    the Fortran's d/dnu).  ``cutoff``: lines cut at ``cutoff`` half widths.  ``temperature`` (K): Boltzmann
-    population differences.  ``h1mode``: 0 perpendicular, < 0 parallel, > 0 perpendicular + h1mode x
-    parallel.  ``pairs``: 0-based level pairs (i, j), i < j (None: all; :func:`manifold_pairs` for
-    Telser's m_S ranges).  ``strain``: :class:`Strain` (None: W(n) only).  ``igloo``: grid rings per 90
-    degrees; ``extent``: ``'hemisphere'`` (general) or ``'octant'`` (D2h systems; Telser's NROT = 1);
-    ``angle_range`` (theta_min, theta_max, phi_min, phi_max): a restricted orientation range instead of the
-    powder (radians unless ``degrees``); ``ordering`` (lam_x, lam_z): weight exp(lam_x cos^2 phi + lam_z
-    cos^2 theta) (Telser applies it only with ``angle_range``).  ``moment``, ``zeeman2`` (3, 3, n, n) MHz/mT^2,
-    ``h0_extra`` (n, n) MHz, ``constants``: module docstring.  ``scale`` multiplies the spectrum.
+    For every grid orientation and every field point the Hamiltonian is
+    diagonalized and every selected level pair adds a line evaluated in the
+    frequency domain (see the module docstring for the intensity formula).
+
+    Parameters
+    ----------
+    sys : SpinSystem
+        Spin system; its Hamiltonian is built by :func:`torchspin.ham`.
+    fields : array_like or torch.Tensor, shape (npts,)
+        Field points in mT (not differentiated).  Telser's axis is
+        ``linspace(B_min, B_max, npts + 1)``.
+    mw_freq : float or torch.Tensor
+        Microwave frequency in GHz.
+    width : float or array_like, shape (3,)
+        Line half width at half maximum ``(Wx, Wy, Wz)`` along the molecular
+        axes, in ``units`` (frequency domain); a scalar is isotropic.  The
+        width for direction n is ``sqrt(sum_k W_k^2 n_k^2)``.
+    shape : {'gaussian', 'lorentzian'}, default 'gaussian'
+        Line shape (Telser's DLINE.F; ``'g'``/``'l'`` also accepted).
+    derivative : bool, default False
+        First-derivative spectrum: d/dB per mT (``field_derivative=False``:
+        the Fortran's d/dnu).
+    cutoff : int, default 8
+        Lines are cut at ``cutoff`` half widths.
+    temperature : float or torch.Tensor, optional
+        Temperature in K for Boltzmann population differences.  ``None``
+        (default): no population factor.
+    h1mode : float, default 0.0
+        Microwave mode: 0 perpendicular, ``< 0`` parallel, ``> 0``
+        perpendicular + ``h1mode`` x parallel.
+    pairs : sequence of (int, int), optional
+        0-based level pairs ``(i, j)``, ``i < j``, levels numbered by
+        ascending energy at each (orientation, field).  ``None`` (default):
+        all pairs.  :func:`manifold_pairs` builds Telser's m_S ranges.
+    strain : Strain, optional
+        Telser's level strain; ``None`` (default): width ``W(n)`` only.
+    frequency_factor : bool, default True
+        Include the Flygare frequency factor (nu for Gaussian, nu^3/nu_mw^2
+        for Lorentzian lines, nu in cm^-1); ``False`` as EasySpin/pepper.
+    igloo : int, default 10
+        Grid rings per 90 degrees of theta.
+    extent : {'hemisphere', 'octant'}, default 'hemisphere'
+        Powder grid extent: a hemisphere (general) or one octant (D2h
+        systems; Telser's NROT = 1).
+    angle_range : sequence of 4 float, optional
+        ``(theta_min, theta_max, phi_min, phi_max)``: a restricted
+        orientation range instead of the powder, in radians (degrees with
+        ``degrees=True``).
+    degrees : bool, default False
+        ``angle_range`` is in degrees.
+    ordering : tuple of 2 float or torch.Tensor, optional
+        ``(lam_x, lam_z)``: orientation weight ``exp(lam_x cos^2(phi) +
+        lam_z cos^2(theta))``, applied whenever given (Telser applies it only
+        with ``angle_range``).
+    moment : {'electron', 'full'}, default 'electron'
+        Transition operator: the electron Zeeman moment ``g.S`` only
+        (Telser) or torchspin's full ``-dH/dB`` moment.
+    zeeman2 : array_like or torch.Tensor, shape (3, 3, nStates, nStates), optional
+        Field-quadratic Zeeman operator in MHz/mT^2: ``H += B^2 n.Z2.n``
+        (:func:`torchspin.lft.telser2torchspin.second_order_zeeman_operator`).
+    h0_extra : array_like or torch.Tensor, shape (nStates, nStates), optional
+        Extra field-independent Hamiltonian in MHz (e.g.
+        :func:`torchspin.lft.telser2torchspin.u_term_operator`).
+    scale : float or torch.Tensor, default 1.0
+        Multiplies the spectrum.
+    units : str, default 'MHz'
+        Unit of ``width`` (``'MHz'``, ``'GHz'``, ``'cm^-1'``, ... of
+        :mod:`torchspin.lft.units`).
+    constants : SpinConstants, default TORCHSPIN_CONSTANTS
+        mu_B/h, k_B/h and MHz per cm^-1.
+    device : str or torch.device, default 'cpu'
+        Device of the computation.
+
+    Returns
+    -------
+    PowderResult
+        ``axis`` = ``fields`` (mT), ``spectrum`` of shape ``(npts,)``.
+
+    Other Parameters
+    ----------------
+    grid : {'exact', 'fortran'}, default 'exact'
+        ``'fortran'`` reproduces the original phi windows of the grid.
+    field_derivative : bool, default True
+        With ``derivative``: d/dB per mT (``False``: d/dnu as the Fortran).
+    normalized_populations : bool, default True
+        Normalize the Boltzmann populations (``False``: as the Fortran).
+    exact_cutoff : bool, default True
+        Cut lines exactly at ``cutoff`` half widths (``False``: Telser's
+        ``sqrt(ICUTOFF)`` rule).
+    chunk_budget : int, default 4000000
+        Approximate number of complex matrix elements per batch of
+        orientations (memory control).
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``shape``, ``extent``, ``grid`` or ``moment``; a
+        ``width`` that is not a scalar or 3 values; ``angle_range`` without
+        4 values; a pair outside ``0 <= i < j < n``; strain weights not of
+        length ``n``; ``zeeman2`` not of shape ``(3, 3, n, n)``.
+
+    See Also
+    --------
+    fdmr, endor, nmr, torchspin.lft.ddpowj.epr, torchspin.pepper
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torchspin import SpinSystem
+    >>> from torchspin.lft import ddpowh
+    >>> sys = SpinSystem(S=0.5, g=[2.0, 2.0, 2.2])
+    >>> res = ddpowh.epr(sys, torch.linspace(300, 350, 101), 9.5, width=50.0, igloo=6)
+    >>> res.axis.shape, res.spectrum.shape, res.n_orientations
+    (torch.Size([101]), torch.Size([101]), 98)
     """
     o = _opts(shape, cutoff, exact_cutoff, frequency_factor, normalized_populations, h1mode)
     m = _Model(sys, zeeman2=zeeman2, h0_extra=h0_extra, moment=moment, constants=constants, device=device)
@@ -507,12 +744,62 @@ def fdmr(sys: SpinSystem, axis, field, *, width, shape: str = "gaussian", deriva
          normalized_populations: bool = True, exact_cutoff: bool = True, moment: str = "electron", zeeman2=None,
          h0_extra=None, scale=1.0, units: str = "MHz", constants: SpinConstants = TORCHSPIN_CONSTANTS,
          device="cpu") -> PowderResult:
-    """Frequency-domain (FDMR) powder spectrum on ``axis`` (energies in ``units``) at one ``field`` (mT).
+    """Frequency-domain (FDMR) powder spectrum at one field.
 
-    ``field = 0`` is a true zero field: the levels are the same for every orientation, and P is still
-    B1-averaged about each grid direction (as DDPOWH does).  ``derivative``: d/dnu.  The Lorentzian Flygare
-    factor is nu^3/x^2 with x the axis in cm^-1.  Other keywords as :func:`epr`; there is no strain in FDMR
-    (Telser's input has none).
+    ``field = 0`` is a true zero field: the levels are the same for every
+    orientation, and the transition probability is still averaged over B1
+    about each grid direction (as DDPOWH does).  There is no strain (Telser's
+    FDMR input has none).
+
+    Parameters
+    ----------
+    sys : SpinSystem
+        Spin system.
+    axis : array_like or torch.Tensor, shape (npts,)
+        Transition energies at which the spectrum is evaluated, in
+        ``units`` (not differentiated).
+    field : float or torch.Tensor
+        Static field in mT (0 allowed).
+    width : float or array_like, shape (3,)
+        HWHM ``(Wx, Wy, Wz)`` in ``units``, or one isotropic value.
+    derivative : bool, default False
+        d/dnu spectrum.
+    frequency_factor : bool, default True
+        Flygare factor: nu (Gaussian) or nu^3/x^2 (Lorentzian), with x the
+        axis in cm^-1.
+    shape, cutoff, temperature, h1mode, pairs, igloo, extent, angle_range, degrees, ordering, moment, zeeman2, h0_extra, scale, units, constants, device
+        As for :func:`epr`.
+
+    Returns
+    -------
+    PowderResult
+        ``axis`` in ``units``, ``spectrum`` of shape ``(npts,)``.
+
+    Other Parameters
+    ----------------
+    grid, normalized_populations, exact_cutoff
+        As for :func:`epr`.
+
+    Raises
+    ------
+    ValueError
+        As for :func:`epr`.
+
+    See Also
+    --------
+    epr
+
+    Examples
+    --------
+    Zero-field FDMR of an S = 1 system (D = 3000 MHz, E = 300 MHz):
+
+    >>> import torch
+    >>> from torchspin import SpinSystem
+    >>> from torchspin.lft import ddpowh
+    >>> res = ddpowh.fdmr(SpinSystem(S=1, D=[3000.0, 300.0]), torch.linspace(2000, 4000, 201),
+    ...                   0.0, width=50.0, igloo=6)
+    >>> round(float(res.axis[res.spectrum.argmax()]))
+    3300
     """
     o = _opts(shape, cutoff, exact_cutoff, frequency_factor, normalized_populations, h1mode)
     m = _Model(sys, zeeman2=zeeman2, h0_extra=h0_extra, moment=moment, constants=constants, device=device)
@@ -606,17 +893,89 @@ def endor(sys: SpinSystem, rf, field, mw_freq, *, width, nmr_width, shape: str =
           degrees: bool = False, ordering=None, grid: str = "exact", normalized_populations: bool = True,
           exact_cutoff: bool = True, moment: str = "electron", zeeman2=None, h0_extra=None, scale=1.0,
           units: str = "MHz", constants: SpinConstants = TORCHSPIN_CONSTANTS, device="cpu") -> PowderResult:
-    """Powder ENDOR spectrum on ``rf`` (MHz, absolute, uniform) at one ``field`` (mT) and ``mw_freq`` (GHz).
+    """Powder ENDOR spectrum at one field, with orientation selection by the EPR line.
 
-    Every orientation is weighted by the EPR excitation sum_(k,l) P_kl f(nu_kl - nu_mw; W_kl) over
-    ``epr_pairs`` (None: all), with the EPR ``width``/``shape``/``strain`` (``field_strain``: include
-    (B/B_set)^b); orientations with a non-positive weight are dropped.  Each NMR pair (``pairs``, 0-based;
-    None: all) then adds P_NMR pop nu f(rf - nu_ij; w(n)) with P_NMR the B1-averaged |<i|I|j>|^2 of
-    nucleus ``nucleus`` (no g_N, no hyperfine enhancement; Telser's NMRTRANS in exact form), the NMR half
-    width ``nmr_width`` (wx, wy, wz) and line ``nmr_shape``.  ``intensity_shape``: which line type selects
-    the nu or nu^3/rf^2 Flygare factor (``'nmr'``, Telser exact; ``'epr'``, the Fortran's ELNTYP flag).
-    ``cutoff`` cuts the EPR selection line, ``nmr_cutoff`` (default ``cutoff``) the NMR lines.
-    Other keywords as :func:`epr`.
+    Every orientation is weighted by its EPR excitation, the sum over
+    ``epr_pairs`` of ``P_kl f(nu_kl - nu_mw; W_kl)`` with the EPR ``width``,
+    ``shape`` and ``strain``; orientations with a non-positive weight are
+    dropped.  Each NMR pair then adds ``P_NMR pop nu f(rf - nu_ij; w(n))``,
+    where ``P_NMR`` is the B1-averaged ``abs(<i|I|j>)^2`` of nucleus
+    ``nucleus`` (no g_N, no hyperfine enhancement; Telser's NMRTRANS in exact
+    form).
+
+    Parameters
+    ----------
+    sys : SpinSystem
+        Spin system with at least one nucleus (without electron spins every
+        orientation has weight 1).
+    rf : array_like or torch.Tensor, shape (npts,)
+        Radio frequencies in MHz (absolute, uniform).
+    field : float or torch.Tensor
+        Static field in mT.
+    mw_freq : float or torch.Tensor
+        Microwave frequency in GHz.
+    width : float or array_like, shape (3,)
+        EPR HWHM ``(Wx, Wy, Wz)`` in ``units`` for the orientation selection.
+    nmr_width : float or array_like, shape (3,)
+        NMR HWHM ``(wx, wy, wz)`` in ``units``.
+    shape : {'gaussian', 'lorentzian'}, default 'gaussian'
+        EPR (selection) line shape.
+    nmr_shape : {'gaussian', 'lorentzian'}, default 'gaussian'
+        NMR line shape.
+    derivative : bool, default False
+        d/d(rf) spectrum.
+    epr_derivative : bool, default False
+        Use the derivative EPR line for the selection weights.
+    cutoff : int, default 8
+        Cut of the EPR selection line in half widths.
+    nmr_cutoff : int, optional
+        Cut of the NMR lines; default ``cutoff``.
+    pairs : sequence of (int, int), optional
+        0-based NMR level pairs; ``None``: all.
+    epr_pairs : sequence of (int, int), optional
+        0-based EPR level pairs for the selection; ``None``: all.
+    nucleus : int, default 0
+        0-based nucleus whose spin operator drives the NMR transitions.
+    strain : Strain, optional
+        Level strain of the EPR selection line.
+    field_strain : bool, default True
+        Include the ``(B/B_set)^b`` factor of ``strain``.
+    intensity_shape : {'nmr', 'epr'}, default 'nmr'
+        Which line type selects the nu or nu^3/rf^2 Flygare factor
+        (``'nmr'``: Telser exact; ``'epr'``: the Fortran's ELNTYP flag).
+    temperature, h1mode, frequency_factor, igloo, extent, angle_range, degrees, ordering, moment, zeeman2, h0_extra, scale, units, constants, device
+        As for :func:`epr`.
+
+    Returns
+    -------
+    PowderResult
+        ``axis`` = ``rf`` (MHz), ``spectrum`` of shape ``(npts,)``.
+
+    Other Parameters
+    ----------------
+    grid, normalized_populations, exact_cutoff
+        As for :func:`epr`.
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``intensity_shape`` or a nonexistent ``nucleus``, and
+        as for :func:`epr`.
+
+    See Also
+    --------
+    epr, nmr, torchspin.salt
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torchspin import SpinSystem
+    >>> from torchspin.lft import ddpowh
+    >>> sys = SpinSystem(S=0.5, g=[2.0, 2.0, 2.1], Nucs='1H', A=[5.0, 5.0, 12.0])
+    >>> res = ddpowh.endor(sys, torch.linspace(5, 25, 201), 340.0, 9.5, width=30.0,
+    ...                    nmr_width=0.2, igloo=6)
+    >>> res.spectrum.shape
+    torch.Size([201])
     """
     o = _opts(shape, cutoff, exact_cutoff, frequency_factor, normalized_populations, h1mode)
     m = _Model(sys, zeeman2=zeeman2, h0_extra=h0_extra, moment=moment, constants=constants, device=device)
@@ -639,14 +998,65 @@ def nmr(sys: SpinSystem, rf, field, *, nmr_width, shape: str = "gaussian", deriv
         grid: str = "exact", normalized_populations: bool = True, exact_cutoff: bool = True, h0_extra=None,
         scale=1.0, units: str = "MHz", constants: SpinConstants = TORCHSPIN_CONSTANTS,
         device="cpu") -> PowderResult:
-    """Powder NMR/NQR spectrum (S = 0: ``SpinSystem(S=[], Nucs=...)``) on ``rf`` (MHz) at ``field`` (mT).
+    """Powder NMR/NQR spectrum of a system without electron spins (Telser's DDPOWH NMR mode).
 
-    Telser's DDPOWH NMR mode: the nuclear levels (nuclear Zeeman + quadrupole Q) at every grid orientation,
-    each pair (``pairs``; None: all) adding P pop nu f(rf - nu_ij; w(n)), P = B1-averaged |<i|I|j>|^2 (no
-    g_N).  ``field = 0`` gives the NQR spectrum.  ``shielding_khz`` (sigma_x, sigma_y, sigma_z): Telser's
-    shielding, the shift of the Larmor frequency in kHz for the field along each molecular axis (a positive
-    sigma lowers |nu_N|): the nuclear Zeeman moment along k is scaled by 1 - sigma_k/|nu_N(B)|.  Differentiable
-    in Q, the shielding, the widths and the temperature.  ``nmr_width`` (wx, wy, wz) HWHM in ``units``.
+    The nuclear levels (nuclear Zeeman + quadrupole) are computed at every
+    grid orientation and each pair adds ``P pop nu f(rf - nu_ij; w(n))`` with
+    ``P`` the B1-averaged ``abs(<i|I|j>)^2`` (no g_N).  ``field = 0`` gives the
+    NQR spectrum.  Differentiable in Q, the shielding, the widths and the
+    temperature.
+
+    Parameters
+    ----------
+    sys : SpinSystem
+        Spin system with ``S=[]`` and at least one nucleus, e.g.
+        ``SpinSystem(S=[], Nucs='14N', Q=...)``; only the first nucleus is
+        driven.
+    rf : array_like or torch.Tensor, shape (npts,)
+        Radio frequencies in MHz.
+    field : float or torch.Tensor
+        Static field in mT (0: NQR).
+    nmr_width : float or array_like, shape (3,)
+        HWHM ``(wx, wy, wz)`` in ``units``.
+    shielding_khz : array_like, shape (3,), optional
+        Telser's shielding ``(sigma_x, sigma_y, sigma_z)``: the shift of the
+        Larmor frequency in kHz for the field along each molecular axis (a
+        positive sigma lowers ``abs(nu_N)``); the nuclear Zeeman moment along
+        k is scaled by ``1 - sigma_k/abs(nu_N(B))``.  Ignored at zero field.
+    shape, derivative, cutoff, temperature, h1mode, pairs, frequency_factor, igloo, extent, angle_range, degrees, ordering, h0_extra, scale, units, constants, device
+        As for :func:`epr` (``shape`` is the NMR line shape).
+
+    Returns
+    -------
+    PowderResult
+        ``axis`` = ``rf`` (MHz), ``spectrum`` of shape ``(npts,)``.
+
+    Other Parameters
+    ----------------
+    grid, normalized_populations, exact_cutoff
+        As for :func:`epr`.
+
+    Raises
+    ------
+    ValueError
+        If the system has electron spins or no nucleus, ``shielding_khz`` is
+        not three values, and as for :func:`epr`.
+
+    See Also
+    --------
+    endor
+
+    Examples
+    --------
+    14N NQR (e2qQ/h = 3 MHz, eta = 0.2):
+
+    >>> import torch
+    >>> from torchspin import SpinSystem
+    >>> from torchspin.lft import ddpowh
+    >>> sys = SpinSystem(S=[], Nucs='14N', Q=[3.0, 0.2])
+    >>> res = ddpowh.nmr(sys, torch.linspace(0.1, 3.0, 300), 0.0, nmr_width=0.02, igloo=6)
+    >>> round(float(res.axis[res.spectrum.argmax()]), 1)
+    2.4
     """
     if int(sys.nElectrons) != 0:
         raise ValueError("nmr is for S = 0 (SpinSystem(S=[], Nucs=...)); use endor for electron spins")
@@ -684,12 +1094,36 @@ _FUNCS = {"epr": epr, "fdmr": fdmr, "endor": endor, "nmr": nmr}
 
 
 def simulate(conversion, sys: SpinSystem | None = None, **overrides) -> tuple[PowderResult, ...]:
-    """Every spectrum of a Telser input converted with ``telser2torchspin.ddpowh2sys(inp, target='lft')``
-    (or ``ddpowj2sys(..., target='lft')``), one :class:`PowderResult` per spectrum.
+    """Every spectrum of a converted Telser DDPOWH/DDPOWJ input.
 
-    ``sys`` replaces the converted SpinSystem (e.g. one rebuilt with tensor parameters for gradients);
-    ``overrides`` replace keywords of every spectrum (``width=``, ``strain=``, ``temperature=``, ...).
-    The axis Telser writes is in ``conversion.extras['spectra'][k]['x']`` (G or T, cm^-1 or THz, MHz).
+    Parameters
+    ----------
+    conversion : TelserConversion
+        Result of ``telser2torchspin.ddpowh2sys(inp, target='lft')`` or
+        ``ddpowj2sys(..., target='lft')``; its
+        ``extras['spectra']`` lists the spectra (function name and keywords).
+    sys : SpinSystem, optional
+        Replaces the converted SpinSystem (e.g. one rebuilt with tensor
+        parameters for gradients).
+    **overrides
+        Keywords that replace those of every spectrum (``width=``,
+        ``strain=``, ``temperature=``, ...).
+
+    Returns
+    -------
+    tuple of PowderResult
+        One result per spectrum, in input order.  The axis Telser writes is
+        in ``conversion.extras['spectra'][k]['x']`` (G or T, cm^-1 or THz,
+        MHz).
+
+    Raises
+    ------
+    ValueError
+        If ``conversion`` was not made with ``target='lft'``.
+
+    See Also
+    --------
+    torchspin.lft.telser2torchspin.ddpowh2sys, torchspin.lft.telser2torchspin.ddpowj2sys
     """
     spectra = conversion.extras.get("spectra", ())
     if conversion.extras.get("target") != "lft":

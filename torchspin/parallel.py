@@ -5,7 +5,7 @@ torchspin can run three nested levels of CPU parallelism:
 1. an outer pool of whole simulations (esfit population methods,
    :func:`torchspin.ml.simulate_batch`);
 2. inner thread pools inside one simulation (the batched eigendecomposition and
-   chunked accumulation in :mod:`torchspin._linalg`);
+   chunked accumulation in ``torchspin._linalg``);
 3. the native BLAS/OpenMP pools of torch, NumPy and SciPy.
 
 If each level sizes itself to the whole machine, they multiply and oversubscribe
@@ -52,7 +52,7 @@ def cpu_budget() -> int:
     which reflects ``taskset`` and scheduler cgroups), ``SLURM_CPUS_PER_TASK``,
     and ``os.cpu_count()``. A SLURM value larger than the affinity mask is ignored,
     because the mask is what the kernel enforces. (Implemented in
-    :mod:`torchspin._resources`, which also sizes ``n_workers='auto'`` by memory.)
+    ``torchspin._resources``, which also sizes ``n_workers='auto'`` by memory.)
     """
     from torchspin._resources import cpu_budget as _cpu_budget
     return _cpu_budget()
@@ -117,7 +117,7 @@ def native_thread_env(n: int):
     Child processes inherit the environment at spawn and size their native pools
     from it at import. Without these caps every spawned worker starts one thread
     per core. Workers also start with ``OMP_WAIT_POLICY=PASSIVE`` unless the user
-    set a value (see :mod:`torchspin._omp`). The previous values are restored on exit.
+    set a value (see ``torchspin._omp``). The previous values are restored on exit.
     """
     from torchspin._omp import passive_for_children
     n = max(1, int(n))

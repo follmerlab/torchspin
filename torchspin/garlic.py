@@ -1,22 +1,24 @@
-"""
-garlic - Fast-motion and isotropic solution EPR simulation
+"""Isotropic and fast-motion CW EPR spectra of S = 1/2 systems in solution.
 
-MATLAB equivalent: easyspin/garlic.m
+Port of EasySpin's ``garlic.m``; the public entry point is :func:`garlic`
+(parameters, units and examples are documented there).
 
-Simulates CW-EPR spectra for S=1/2 systems in solution:
-- Isotropic mode (tcorr=0): isotropic g and A, sharp lines broadened by
-  ``sys.lw`` / ``sys.lwpp``
-- Fast-motion mode (tcorr>0): Kivelson/Freed motional-narrowing linewidths
-  per hyperfine line
+Two regimes:
 
-Line positions follow EasySpin's per-nuclear-group algorithm (garlic.m):
-each entry of ``Nucs`` (optionally a set of ``n`` equivalent nuclei, reduced
-with ``equivcouple``) contributes a list of resonance shifts from either the
-exact Breit–Rabi solution (``Options.Method='exact'``, default; fixed-point
-iteration after J. A. Weil, J. Magn. Reson. 4, 394 (1971)) or a Taylor
-expansion of it in the hyperfine coupling (``'perturb1'``–``'perturb5'``,
-``'perturb'`` = 5th order, Newton–Raphson root finding).  The shift lists of
-all groups are then combined additively.
+- Isotropic limit (no correlation time): isotropic g and A, sharp lines
+  broadened by ``Sys.lw`` / ``Sys.lwpp``.
+- Fast-motion regime (``Sys.tcorr`` or ``Sys.logtcorr`` > 0): Kivelson/Freed
+  motional-narrowing Lorentzian width for every hyperfine line, computed from
+  the anisotropic parts of g, A and Q.
+
+Line positions follow EasySpin's per-nuclear-group algorithm: each entry of
+``Nucs`` (optionally a set of ``n`` equivalent nuclei, reduced with
+``equivcouple``) contributes a list of resonance shifts from either the exact
+Breit–Rabi solution (``Options.Method='exact'``, default; fixed-point iteration
+after J. A. Weil, J. Magn. Reson. 4, 394 (1971)) or a Taylor expansion of it in
+the hyperfine coupling (``'perturb1'``–``'perturb5'``, ``'perturb'`` = 5th
+order, Newton–Raphson root finding).  The shift lists of all groups are then
+combined additively.
 
 Perturbation theory converges slowly when the hyperfine coupling is a sizable
 fraction of the microwave frequency. For isotropic 91Zr with A = 780 MHz at
@@ -31,43 +33,8 @@ so it has no finite-difference derivative with respect to g or A. Use
 a gradient-based optimizer. On the autograd graph, garlic switches to
 ``'linear'`` itself.
 
-Usage:
-    B, spec = garlic(sys, exp)
-    B, spec = garlic(sys, exp, opt)
-    nu, spec = garlic(sys, exp)   # frequency sweep (exp.Field + exp.mwRange)
-
-Parameters:
-    sys : SpinSystem
-        S = [1/2] (one electron spin, must be 1/2)
-        g : isotropic value, principal values or full matrix (averaged)
-        Nucs : str / list — nuclear isotopes, e.g. '14N' or '1H,1H'
-        n : list[int], optional — number of equivalent nuclei per Nucs entry
-        A : hyperfine couplings [MHz] (only the isotropic part is used)
-        lw / lwpp : [GaussianFWHM, LorentzianFWHM]; mT for field sweeps,
-            MHz for frequency sweeps
-        tcorr / logtcorr : rotational correlation time (fast-motion regime)
-
-    exp : Experiment
-        Field sweep: mwFreq [GHz] + Range or CenterSweep [mT]
-        Frequency sweep: Field [mT] + mwRange or mwCenterSweep [GHz]
-        nPoints, Harmonic (0/1/2), mwPhase [rad], Temperature [K],
-        ModAmp [mT] (field modulation; requires Harmonic ≥ 1),
-        Mode ('perpendicular' / 'parallel')
-
-    opt : Options, optional
-        Method : 'exact' (default) | 'perturb' | 'perturb1'..'perturb5'
-        AccumMethod : None (auto) | 'binning' | 'linear' | 'explicit'
-        Accuracy, MaxIterations : solver controls
-        Verbosity : 0 (silent), 1 (normal)
-
-Returns:
-    x : torch.Tensor, shape (nPoints,)
-        Field axis [mT] (field sweep) or frequency axis [GHz] (frequency sweep)
-    spec : torch.Tensor, shape (nPoints,)
-        Simulated spectrum (EasySpin intensity convention)
-
-Reference:
-    EasySpin documentation: https://easyspin.org/easyspin/documentation/garlic.html
+Reference: EasySpin documentation,
+https://easyspin.org/easyspin/documentation/garlic.html
 """
 
 from __future__ import annotations
@@ -101,17 +68,155 @@ def garlic(
     exp: Experiment,
     opt: Optional[Options] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Solution (fast-motion or isotropic) CW EPR simulation.
+    """Isotropic or fast-motion CW EPR spectrum of S = 1/2 systems in solution.
 
-    Accepts a single :class:`SpinSystem` or a list of components (EasySpin
-    ``compisoloop``): every component is expanded into its isotopologues
-    (``'B'``, ``'(63,65)Cu'`` + ``Abund``), simulated separately and summed with
-    ``weight × abundance``; ``Options.separate='components'`` returns one row per
-    component/isotopologue.  The sweep range may be omitted (``Range``/
-    ``CenterSweep`` for field sweeps, ``mwRange`` for frequency sweeps with
-    ``Field``): it is then determined automatically from the line positions and
-    widths as in EasySpin, which is only possible for a single (isotopologue)
-    component.  See :func:`_garlic_single` for the line engine.
+    Simulates the spectrum of one electron spin S = 1/2 with isotropic g and
+    hyperfine couplings, either in the isotropic limit (no correlation time)
+    or in the fast-motion regime (``Sys.tcorr``/``Sys.logtcorr`` set), where
+    every hyperfine line gets its own Kivelson/Freed Lorentzian width.  Field
+    sweeps and frequency sweeps are supported.
+
+    Parameters
+    ----------
+    sys_or_list : SpinSystem or list of SpinSystem
+        One spin system or a list of components.  Every component is expanded
+        into its isotopologues (element symbols such as ``'Cu'`` use natural
+        abundances, ``'(63,65)Cu'`` uses ``Sys.Abund``), each is simulated and
+        the spectra are summed with weight ``Sys.weight`` × abundance.  Fields
+        read from each system:
+
+        - ``S``: must be a single electron spin 1/2.
+        - ``g``: line positions use the isotropic value (mean of the principal
+          values, or of the eigenvalues of a full matrix); the fast-motion
+          widths use the full tensor.
+        - ``Nucs``, ``n`` (equivalent nuclei per entry, isotropic limit only),
+          ``A`` (MHz; isotropic mean for the positions, anisotropic part for
+          the fast-motion widths), ``gnscale``; ``Q`` (MHz) enters only the
+          fast-motion widths.
+        - ``lw`` / ``lwpp``: ``[GaussianFWHM, LorentzianFWHM]``, in mT for
+          field sweeps and in MHz for frequency sweeps.  In the fast-motion
+          regime the Lorentzian part is added to every motional width and
+          the Gaussian part is convolved.
+        - ``tcorr`` (s) or ``logtcorr`` (log10 of s): rotational correlation
+          time; selects the fast-motion regime when > 0.  Must lie in
+          [1e-13, 1e-3] s.
+        - ``weight``, ``Abund``: component weight and custom isotope
+          abundances.
+
+        Not used: frames (``gFrame``, ``AFrame``, ``QFrame``; for a relative
+        g/A orientation in the fast-motion regime give full 3x3 matrices),
+        ``D``, strains, ``Diff``/``logDiff``, ``sigma``, ``initState``.  Rejected
+        (``ValueError``): nonzero ``ee`` or ``nn``, ``Ham``, ``H0Extra``.
+    exp : Experiment
+        Field sweep: ``mwFreq`` (GHz) with ``Range`` or ``CenterSweep`` (mT).
+        Frequency sweep: ``Field`` (mT, > 0) with ``mwRange`` or
+        ``mwCenterSweep`` (GHz); also selected when ``Field`` is set and
+        ``mwFreq`` is not.  The sweep range may be omitted (single
+        isotopologue only): it is then set from the line positions and widths
+        (EasySpin's automatic range, padded by ``Options.Stretch``).  Also
+        read: ``nPoints``; ``Harmonic`` (0, 1, 2; falls back to 0 when no
+        broadening is given); ``ModAmp`` (mT, peak-to-peak field modulation,
+        field sweeps only, requires ``Harmonic >= 1``); ``mwPhase`` (rad,
+        requires ``AccumMethod='explicit'``, the fast-motion default);
+        ``Temperature`` (K; multiplies the intensities by the Boltzmann
+        polarization, ``None`` or ``inf`` = no factor); ``Mode``
+        (``'perpendicular'``, or ``'parallel'``, which gives an all-zero
+        spectrum for S = 1/2).  Not used: ``mwMode``, ``SampleFrame``,
+        ``CrystalSymmetry``, ``MolFrame``, ``SampleRotation``, ``Ordering``,
+        ``lightBeam``, ``lightScatter``, ``ExciteWidth``, ``Orientations``,
+        ``OrientationWeights``.
+    opt : Options, optional
+        Default ``None`` = ``Options()``.  Fields read:
+
+        - ``Method``: ``'exact'`` (Breit–Rabi, default; the ``Options``
+          default ``'matrix'`` also means ``'exact'`` here), ``'perturb'``
+          (5th order) or ``'perturb1'``–``'perturb5'``.  ``'hybrid'`` raises.
+        - ``AccumMethod``: ``None`` (auto: ``'binning'`` in the isotropic
+          limit, ``'explicit'`` in the fast-motion regime), ``'binning'``,
+          ``'linear'`` (differentiable; chosen automatically instead of
+          ``'binning'`` when g, A, Q, tcorr or lw require grad) or
+          ``'explicit'`` (per-line Lorentzians).
+        - ``Accuracy`` (default 1e-12) and ``MaxIterations`` (default 15):
+          convergence controls of the Breit–Rabi / Newton solvers.
+        - ``Stretch`` (automatic range padding), ``IsoCutoff`` (isotopologue
+          abundance cutoff), ``separate`` (only ``'components'`` is honored),
+          ``Verbosity`` (>= 1 prints progress), ``QuadraticZeeman``.
+
+        Not used: grid, transition, hybrid and device options.
+
+    Returns
+    -------
+    x : torch.Tensor, shape (nPoints,)
+        Abscissa, float64 on the CPU: magnetic field in mT for field sweeps,
+        microwave frequency in GHz for frequency sweeps.
+    spec : torch.Tensor, shape (nPoints,) or (nComponents, nPoints)
+        Spectrum (EasySpin's garlic intensity scale, arbitrary units) at the
+        requested harmonic.  With ``Options(separate='components')`` one row
+        per component and isotopologue, each already multiplied by its weight.
+        On the autograd graph when inputs require grad.
+
+    Raises
+    ------
+    ValueError
+        System not a single S = 1/2, nonzero ``ee``/``nn``, ``Ham``,
+        ``H0Extra``, nuclei with I = 0 or zero isotropic coupling,
+        ``Field <= 0``, missing ``mwFreq`` for a field sweep, automatic range
+        with several components, ``tcorr`` outside [1e-13, 1e-3] s,
+        equivalent nuclei (``n > 1``) in the fast-motion regime, isotropic g
+        and A without Q in the fast-motion regime, unknown ``Method`` (incl.
+        ``'hybrid'``), ``'binning'`` in the fast-motion regime,
+        ``'explicit'`` with a zero Lorentzian width, ``ModAmp`` with a
+        frequency sweep, with ``Harmonic=0`` or without broadening,
+        ``Mode`` other than perpendicular/parallel, ``Temperature <= 0``,
+        negative line widths, or a Breit–Rabi/Newton solver that does not
+        converge (hyperfine coupling too large for the microwave frequency:
+        use :func:`torchspin.pepper`).
+    NotImplementedError
+        ``mwPhase != 0`` with ``AccumMethod`` ``'binning'``/``'linear'``, or
+        ``Options.QuadraticZeeman=True`` with field-quadratic ``Sys.Ham``
+        terms.
+
+    See Also
+    --------
+    torchspin.pepper : Rigid-limit (powder, crystal) spectra.
+    torchspin.chili : Slow-motion spectra (tcorr above about 1e-8 s).
+    torchspin.fastmotion : The fast-motion line widths alone.
+
+    Notes
+    -----
+    Line positions are the exact Breit–Rabi solution by default and agree
+    with EasySpin (MATLAB-validated to cosine similarity > 0.999).  The
+    algorithm and the accuracy of the perturbation orders are described in
+    the module docstring.  See KNOWN_LIMITATIONS.md, "Garlic — what is and is
+    not ported".
+
+    Examples
+    --------
+    Nitroxide in the fast-motion regime:
+
+    >>> from torchspin import SpinSystem, Experiment, Options, garlic
+    >>> sys = SpinSystem(S=0.5, g=[2.0088, 2.0061, 2.0027], Nucs='14N',
+    ...                  A=[16, 16, 95], tcorr=1e-10, lw=[0.05, 0.0])
+    >>> exp = Experiment(mwFreq=9.5, Range=[332, 346], nPoints=1024)
+    >>> B, spc = garlic(sys, exp)
+    >>> B.shape, spc.shape
+    (torch.Size([1024]), torch.Size([1024]))
+
+    Methyl radical (three equivalent protons) in the isotropic limit,
+    second-order perturbation theory, automatic field range:
+
+    >>> sys = SpinSystem(S=0.5, g=2.0026, Nucs='1H', n=[3], A=65, lw=[0, 0.1])
+    >>> B, spc = garlic(sys, Experiment(mwFreq=9.7, nPoints=512),
+    ...                 Options(Method='perturb2'))
+    >>> spc.shape
+    torch.Size([512])
+
+    Frequency sweep at a fixed field (line widths in MHz, axis in GHz):
+
+    >>> sys = SpinSystem(S=0.5, g=2.0, Nucs='1H', A=50, lw=[1.0, 0.0])
+    >>> nu, spc = garlic(sys, Experiment(Field=340, mwRange=[9.4, 9.6], nPoints=512))
+    >>> round(float(nu[0]), 3), round(float(nu[-1]), 3)
+    (9.4, 9.6)
     """
     opt_ = opt if opt is not None else Options()
     from torchspin.experiment import require_positive_field
@@ -138,57 +243,12 @@ def _garlic_single(
     exp: Experiment,
     opt: Optional[Options] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Solution (fast-motion or isotropic) CW EPR simulation.
+    """Spectrum of one isotopologue/component (the line engine of :func:`garlic`).
 
-    Computes the isotropic-averaged EPR spectrum for an S=1/2 spin system in
-    solution. When ``sys.tcorr`` (or ``sys.logtcorr``) is set, Kivelson/Freed
-    fast-motion linewidth theory is applied per hyperfine line.
-
-    Parameters
-    ----------
-    sys : SpinSystem
-        Spin system. Only the isotropic parts of g and A enter the line
-        positions; the anisotropic parts enter the fast-motion linewidths.
-        ``sys.n`` gives the number of equivalent nuclei per ``Nucs`` entry.
-    exp : Experiment
-        Field sweep: ``mwFreq`` (GHz) and ``Range``/``CenterSweep`` (mT).
-        Frequency sweep: ``Field`` (mT) and ``mwRange``/``mwCenterSweep``
-        (GHz). Also ``nPoints``, ``Harmonic``, ``mwPhase``, ``Temperature``,
-        ``ModAmp`` (field modulation, mT) and ``Mode``.
-    opt : Options, optional
-        ``Method`` (``'exact'`` default, or ``'perturbN'``), ``AccumMethod``,
-        ``Accuracy``, ``MaxIterations``, ``Verbosity``.
-
-    Returns
-    -------
-    x : torch.Tensor, shape (nPoints,)
-        Field axis in mT (field sweep) or frequency axis in GHz (frequency
-        sweep).
-    spec : torch.Tensor, shape (nPoints,)
-        Simulated spectrum.
-
-    Examples
-    --------
-    Nitroxide triplet in solution::
-
-        >>> from torchspin import SpinSystem, Experiment, garlic
-        >>> sys = SpinSystem(S=[0.5], g=2.006, Nucs='14N', A=[16, 16, 95],
-        ...                  tcorr=1e-10, lw=[0.1, 0.0])
-        >>> exp = Experiment(mwFreq=9.5, Range=[336, 342], nPoints=1024, Harmonic=1)
-        >>> B, spc = garlic(sys, exp)
-
-    Methyl radical with three equivalent protons, second-order perturbation::
-
-        >>> sys = SpinSystem(S=[0.5], g=2.0026, Nucs='1H', n=[3], A=65, lw=[0, 0.1])
-        >>> exp = Experiment(mwFreq=9.7, CenterSweep=[346, 12])
-        >>> B, spc = garlic(sys, exp, Options(Method='perturb2'))
-
-    Notes
-    -----
-    * For slow-motion regimes (tcorr > ~1e-8 s), use :func:`chili` instead.
-    * For rigid-limit / powder spectra, use :func:`pepper`.
-    * Line positions are the exact Breit–Rabi solution by default (EasySpin
-      default); MATLAB-validated to cosine similarity > 0.999.
+    Same ``sys`` (a single :class:`SpinSystem`), ``exp`` and ``opt`` as
+    :func:`garlic`, without the isotopologue expansion and component weight.
+    Returns ``(x, spec)`` with ``x`` in mT (field sweep) or GHz (frequency
+    sweep) and ``spec`` of shape ``(nPoints,)``.
     """
     if opt is None:
         opt = Options()

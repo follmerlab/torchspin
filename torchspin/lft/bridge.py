@@ -17,17 +17,61 @@ __all__ = ["dn2sys"]
 
 
 def dn2sys(n: int, params: dict, *, units: str = "MHz", min_gap=None, **sys_kwargs) -> tuple[SpinSystem, _ddn.GTensor]:
-    """(SpinSystem, GTensor) for the ground doublet of d^n.
+    """Spin-1/2 SpinSystem of the ground Kramers doublet of a d^n ligand-field model.
 
-    ``params``: keywords of :func:`torchspin.lft.ddn.g_tensor` (``B``, ``C``, ``zeta``, ``V``,
-    ``k``, ...) in ``units``.  They are passed as a dict because ``A`` means the Racah A there
-    and the hyperfine tensor in :class:`SpinSystem`.
+    Parameters
+    ----------
+    n : int
+        Number of d electrons (an odd n gives a Kramers doublet).
+    params : dict
+        Keywords of :func:`torchspin.lft.ddn.g_tensor` (``B``, ``C``,
+        ``zeta``, ``V``, ``k``, ...), energies in ``units``.  They are passed
+        as a dict because ``A`` is the Racah A there and the hyperfine
+        tensor in :class:`~torchspin.SpinSystem`.  Tensors that require grad
+        stay on the graph.
+    units : str, default 'MHz'
+        Energy unit of ``params`` and ``min_gap`` (``'cm^-1'``, ``'MHz'``,
+        ... of :mod:`torchspin.lft.units`).
+    min_gap : float, optional
+        Raise if the doublet is closer than this (in ``units``) to the next
+        state, where an effective spin 1/2 is not a good description and
+        gradients grow as 1/gap.  ``None`` (default): no check.
+    **sys_kwargs
+        Passed to :class:`~torchspin.SpinSystem` (``Nucs``, ``A``, ``lw``,
+        ``HStrain``, ...) in torchspin's units (MHz, mT).  ``S`` and ``g``
+        are set here.
 
-    ``sys_kwargs`` go to :class:`SpinSystem` (``Nucs``, ``A``, ``lw``, ``HStrain``, ...), in
-    torchspin's units.  ``S`` and ``g`` are set here.
+    Returns
+    -------
+    sys : SpinSystem
+        ``S = 1/2`` with the full 3x3 molecular-frame g matrix
+        (``sys.g`` of shape (3, 3); not principal values plus ``gFrame``, so
+        the graph stays intact).
+    gt : torchspin.lft.ddn.GTensor
+        The g tensor (``g``, ``ggT``, ``principal`` ascending, ``gap`` in
+        ``units``).
 
-    ``min_gap`` (in ``units``): raise if the doublet is closer than this to the next state,
-    where an effective spin 1/2 is not a good description (and gradients grow as 1/gap).
+    Raises
+    ------
+    TypeError
+        If ``sys_kwargs`` contains ``S`` or ``g``.
+    ValueError
+        If the gap is below ``min_gap``, or the parameters are batched (more
+        than one g tensor).
+
+    See Also
+    --------
+    torchspin.lft.ddn.g_tensor, torchspin.pepper
+
+    Examples
+    --------
+    Tetragonally elongated Cu(II), d^9, parameters in cm^-1:
+
+    >>> from torchspin import lft
+    >>> V = lft.crystal_field(1200.0, 2000.0, 300.0)       # Dq, Ds, Dt
+    >>> sys, gt = lft.dn2sys(9, dict(V=V, zeta=830.0, k=(0.8, 0.8, 0.8)), units='cm^-1', lw=1.0)
+    >>> sys.g.shape, [round(v, 3) for v in gt.principal.tolist()]
+    (torch.Size([3, 3]), [2.063, 2.063, 2.423])
     """
     for key in ("S", "g"):
         if key in sys_kwargs:

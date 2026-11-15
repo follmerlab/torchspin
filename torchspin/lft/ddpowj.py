@@ -1,13 +1,13 @@
 """DDPOWJ: field-swept powder EPR of an exchange-coupled dimer, with Telser's product level strain.
 
-Torch port of Joshua Telser's DDPOWJ in its exact mode (via telser-tools, ``telser_tools_diff.ddpowj``).  A
+Torch port of Josh Telser's DDPOWJ in its exact mode (via telser-tools, ``telser_tools_diff.ddpowj``).  A
 dimer is a two-electron torchspin :class:`~torchspin.SpinSystem` (``ee``, ``ee2``; build it from Telser's
 parameters with :func:`torchspin.lft.telser2torchspin.dimer2sys` or :func:`~torchspin.lft.telser2torchspin.ddpowj2sys`),
 so the spectrum is :func:`torchspin.lft.ddpowh.epr` with DDPOWJ's defaults:
 
 * every level pair i < j (``pairs=None``; DDPOWJ's level ranges are 0-based (i, j) lists here, as
   :func:`level_range_pairs` builds them);
-* the strain weights of a basis state |m1, m2> are the **product** WMS1(m1) WMS2(m2) of the two sites'
+* the strain weights of a basis state ``|m1, m2>`` are the **product** WMS1(m1) WMS2(m2) of the two sites'
   factors (:func:`strain_weights`), not DDPOWH's sum.
 
 Open question (DDPOWJ-10, waiting on J. Telser): an S = 1/2 site has no m_S strain factors (WMS = 0), so in
@@ -36,13 +36,53 @@ _F64 = torch.float64
 
 
 def strain_weights(sys: SpinSystem, ms1=None, ms2=None, *, s12_weight: float = 0.0, partner_weight=None) -> torch.Tensor:
-    """DDPOWJ's basis weights WMS1(m1) WMS2(m2) for every |m1, m2> state of a dimer ``sys``.
+    """DDPOWJ's product strain weights ``WMS1(m1) WMS2(m2)`` of a dimer.
 
-    ``ms1`` (2S1+1,), ``ms2`` (2S2+1,): each site's factors for m = S ... -S (Telser's order).  Sites with
-    S < 1 have no factors in Telser's input; their weights are ``s12_weight`` (0.0: exact; 1.0: the Fortran,
-    finding DDPOWJ-10; see the module docstring).  A one-electron ``sys`` (the dimer of an S = 0 site with
-    a spin S) multiplies the electron's factors by the S = 0 site's single weight ``partner_weight``
-    (default ``s12_weight``).  Tensors keep their graph.
+    Parameters
+    ----------
+    sys : SpinSystem
+        The dimer: one or two electron spins and no nuclei.  A one-electron
+        system is the dimer of an S = 0 site with a spin S.
+    ms1 : array_like or torch.Tensor, shape (2S1+1,), optional
+        Site 1 factors for ``m = S1, ..., -S1`` (Telser's order),
+        dimensionless.  ``None``: zeros.
+    ms2 : array_like or torch.Tensor, shape (2S2+1,), optional
+        Site 2 factors.  For a one-electron ``sys``, used if ``ms1`` is
+        ``None``.
+    s12_weight : float or torch.Tensor, default 0.0
+        Weight of every state of a site with S < 1, which has no factors in
+        Telser's input (given factors are ignored): 0.0 is the exact model,
+        1.0 the Fortran (finding DDPOWJ-10; see the module docstring).
+    partner_weight : float or torch.Tensor, optional
+        One-electron ``sys`` only: the single weight of the S = 0 site that
+        multiplies the electron's factors; default ``s12_weight``.
+
+    Returns
+    -------
+    torch.Tensor, shape (nStates,)
+        Weights for every basis state ``|m1, m2>`` (both m descending), to
+        be passed as ``Strain(weights)``.  Tensors keep their graph.
+
+    Raises
+    ------
+    ValueError
+        If ``sys`` has nuclei or not one or two electron spins, or a factor
+        vector has the wrong length.
+
+    See Also
+    --------
+    torchspin.lft.ddpowh.strain_weights : DDPOWH's additive weights.
+
+    Examples
+    --------
+    An S = 1 site coupled to an S = 1/2 site, Fortran reading of the S = 1/2
+    weights:
+
+    >>> from torchspin import SpinSystem
+    >>> from torchspin.lft import ddpowj
+    >>> dimer = SpinSystem(S=[1, 0.5], ee=3000.0)
+    >>> ddpowj.strain_weights(dimer, ms1=[1.0, 0.0, 1.0], s12_weight=1.0).tolist()
+    [1.0, 1.0, 0.0, 0.0, 1.0, 1.0]
     """
     spins = [float(s) for s in sys.Spins][: int(sys.nElectrons)]
     if int(sys.nNuclei) != 0:
@@ -69,10 +109,28 @@ def strain_weights(sys: SpinSystem, ms1=None, ms2=None, *, s12_weight: float = 0
 
 
 def level_range_pairs(level_range, n_levels: int) -> tuple[tuple[int, int], ...]:
-    """DDPOWJ's pair selection: (a, b, c, d) 1-based level numbers, i in a ... b, j in c ... d, i < j (0-based).
+    """DDPOWJ's level-range pair selection.
 
-    Levels are numbered by ascending energy at each (orientation, field).  Pairs outside ``n_levels`` are
-    dropped.  (The Fortran's i >= j pairs are a reproduction option of telser-tools, not ported.)
+    Parameters
+    ----------
+    level_range : sequence of 4 int
+        ``(a, b, c, d)``, 1-based level numbers (ascending energy at each
+        orientation and field): i runs over a to b, j over c to d, and only
+        ``i < j`` is kept.
+    n_levels : int
+        Number of levels; pairs beyond it are dropped.
+
+    Returns
+    -------
+    tuple of tuple of int
+        0-based pairs ``(i, j)``.  (The Fortran's ``i >= j`` pairs are a
+        telser-tools reproduction option, not ported.)
+
+    Examples
+    --------
+    >>> from torchspin.lft import ddpowj
+    >>> ddpowj.level_range_pairs((1, 2, 3, 4), 6)
+    ((0, 2), (0, 3), (1, 2), (1, 3))
     """
     a, b, c, d = (int(x) for x in level_range)
     out = []
@@ -84,10 +142,48 @@ def level_range_pairs(level_range, n_levels: int) -> tuple[tuple[int, int], ...]
 
 
 def epr(sys: SpinSystem, fields, mw_freq, *, width, pairs=None, strain: Strain | None = None, **kwargs) -> PowderResult:
-    """Field-swept powder EPR of the dimer ``sys``: :func:`torchspin.lft.ddpowh.epr` with DDPOWJ's defaults.
+    """Field-swept powder EPR of a dimer: :func:`torchspin.lft.ddpowh.epr` with DDPOWJ's defaults.
 
-    ``pairs`` None: every pair i < j.  ``strain``: a :class:`Strain` with :func:`strain_weights` (product
-    form).  Other keywords: :func:`torchspin.lft.ddpowh.epr`.
+    Parameters
+    ----------
+    sys : SpinSystem
+        The dimer (two electron spins coupled by ``ee``/``ee2``), e.g. from
+        :func:`torchspin.lft.telser2torchspin.dimer2sys`.
+    fields : array_like or torch.Tensor, shape (npts,)
+        Field points in mT.
+    mw_freq : float or torch.Tensor
+        Microwave frequency in GHz.
+    width : float or array_like, shape (3,)
+        HWHM ``(Wx, Wy, Wz)`` in ``units`` (default MHz).
+    pairs : sequence of (int, int), optional
+        0-based level pairs with ``i < j`` (:func:`level_range_pairs`);
+        ``None`` (default): every pair.
+    strain : Strain, optional
+        Level strain with :func:`strain_weights` (product form).
+    **kwargs
+        Every other keyword of :func:`torchspin.lft.ddpowh.epr`.
+
+    Returns
+    -------
+    PowderResult
+        ``axis`` = ``fields`` (mT), ``spectrum`` of shape ``(npts,)``.
+
+    Raises
+    ------
+    ValueError
+        If a pair has ``i >= j``, and as :func:`torchspin.lft.ddpowh.epr`.
+
+    Examples
+    --------
+    Two S = 1/2 spins with strong exchange (a triplet at g = 2):
+
+    >>> import torch
+    >>> from torchspin import SpinSystem
+    >>> from torchspin.lft import ddpowj
+    >>> dimer = SpinSystem(S=[0.5, 0.5], ee=30000.0)
+    >>> res = ddpowj.epr(dimer, torch.linspace(300, 380, 81), 9.5, width=50.0, igloo=6)
+    >>> res.spectrum.shape
+    torch.Size([81])
     """
     if pairs is not None:
         bad = [(i, j) for i, j in pairs if not i < j]

@@ -71,10 +71,10 @@ def resfields_batch(
         (the complete spin system), ``perturb_idx`` (0-based indices of the
         nuclei treated perturbationally), ``n_equiv`` (``SpinSystem.n``) and
         ``int_threshold``.  Each core line is replaced by the nuclear sub-lines
-        of :func:`torchspin.resfields_hybrid.hybrid_sublines`.
+        of ``torchspin.resfields_hybrid.hybrid_sublines``.
     zeeman_ho:
         ``Options.QuadraticZeeman``: ``(G2, G3)`` from
-        :func:`torchspin.ham_ezho.field_nonlinear_zeeman_ops` (either may be
+        ``torchspin.ham_ezho.field_nonlinear_zeeman_ops`` (either may be
         None).  The Hamiltonian becomes H(B) = H0 − B muzL + B² Q2 + B³ Q3 with
         Q2 = n·G2·n and Q3 = G3[n,n,n]; level slopes, Newton polish, dB/dE and
         strain widths use dH/dB = −muzL + 2B Q2 + 3B² Q3.  ``None`` (default):

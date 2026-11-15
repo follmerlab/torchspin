@@ -1,6 +1,6 @@
 """Resonance field finder for CW EPR (matrix method), one orientation.
 
-:func:`resfields` is a thin wrapper over :func:`torchspin.resfields_batch.resfields_batch`
+:func:`resfields` is a thin wrapper over ``torchspin.resfields_batch.resfields_batch``
 with a single orientation (M = 1): the same segment model of the level
 diagram, Newton/bisection root search, intensities (``Exp.mwMode``,
 ``Exp.Temperature``, intensity threshold on ``|I|``) and strain widths at each

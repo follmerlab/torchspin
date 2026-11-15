@@ -78,15 +78,15 @@ def endorfrq(
     threshold:
         Relative selection threshold (EasySpin ``Opt.Threshold``).  A level
         pair is kept if its nuclear-moment rate summed over the selection grid
-        is ``> threshold * max`` (0.9.14; before, intensities at this
-        the per-orientation intensities ``>= threshold * max``).  Default
+        is ``> threshold * max`` (0.9.14; before, the selection used the
+        per-orientation intensities ``>= threshold * max``).  Default
         ``1e-4`` (EasySpin's endorfrq default is 1e-3; ``salt`` passes
         ``Options.Threshold``, 1e-4).
     mwFreq:
         Microwave frequency in GHz.  Currently unused (reserved for
         orientation-selection weighting).
     opt:
-        Optional :class:`~torchspin.experiment.Options`.  Reads
+        Optional :class:`~torchspin.Options`.  Reads
         ``Enhancement``, ``Transitions``, ``TPSGridSymm`` and ``TPSGridSize``
         (``threshold`` stays the explicit argument).  With
         ``Enhancement=True`` the intensities use the total magnetic moment
@@ -98,11 +98,6 @@ def endorfrq(
         ``Opt.Transitions``.  ``TPSGridSymm``/``TPSGridSize`` set the
         selection grid (EasySpin's undocumented options of the same names,
         defaults ``'D2h'`` and 4).  ``None`` (default) = all defaults.
-
-    Electronic level pairs are always excluded from the automatic selection,
-    as in EasySpin (0.9.14; before, only with ``Enhancement``).  Levels are
-    grouped by energy into blocks of ``nStates / prod(2S+1)``, valid when the
-    electron Zeeman/zero-field splitting exceeds the nuclear splittings.
 
     Returns
     -------
@@ -122,6 +117,13 @@ def endorfrq(
     ------
     ValueError
         If the spin system contains no nuclei.
+
+    Notes
+    -----
+    Electronic level pairs are always excluded from the automatic selection,
+    as in EasySpin (0.9.14; before, only with ``Enhancement``).  Levels are
+    grouped by energy into blocks of ``nStates / prod(2S+1)``, valid when the
+    electron Zeeman/zero-field splitting exceeds the nuclear splittings.
     """
     if sys.nNuclei == 0:
         raise ValueError("endorfrq: spin system must contain at least one nucleus.")

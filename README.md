@@ -33,16 +33,32 @@ validated against MATLAB and what is not.
 pip install torchspin                 # core
 pip install "torchspin[plot]"         # + matplotlib for the plotting helpers
 pip install "torchspin[gui]"          # + the interactive fitting panel (torchspin.fitgui)
+pip install "torchspin[notebooks]"    # + Jupyter and everything the tutorials need
 ```
 
-CPU-only PyTorch, to avoid the large CUDA wheels:
+torchspin cannot choose the PyTorch build for you. Install the build you want first, and torchspin keeps
+it:
 
 ```bash
+# CPU only (on Linux this avoids several GB of CUDA packages)
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install torchspin
+
+# NVIDIA GPU on Windows, or a specific CUDA version on Linux (pick the cuXXX for your driver)
+pip install torch --index-url https://download.pytorch.org/whl/cu130
+pip install torchspin
+
+# uv
+uv pip install torchspin --torch-backend=cpu      # or auto, or cu130
 ```
 
-Requires Python 3.10+, PyTorch 2.0+, NumPy 1.23+, SciPy 1.10+.
+On Linux, plain `pip install torchspin` already installs a CUDA build of PyTorch. On macOS torchspin runs
+on the CPU (MPS lacks float64). Intel Macs are not supported, because the last PyTorch for them is 2.2.
+Requires Python 3.10+, PyTorch 2.3+, NumPy 1.23+, SciPy 1.10+. Run the pip commands in a virtual environment
+you have created and activated (`python -m venv .venv`). `uv pip` needs one made with `uv venv`.
+
+**[docs/installation.md](docs/installation.md)** covers the details: per-platform notes, keeping an
+existing PyTorch, uv projects, the extras, and what package metadata can and cannot enforce.
 
 ---
 
@@ -187,6 +203,20 @@ These match EasySpin, so parameters transfer directly:
 
 ---
 
+## Documentation
+
+**https://follmerlab.github.io/torchspin/** has a user guide, the tutorials
+below, and an API reference for every public function and class with the
+parameters it accepts. Its sources are in [docs/](docs/index.md); CI builds it
+on every change and publishes it from `main`. To build it locally:
+
+```bash
+pip install -e ".[docs]"
+make -C docs html          # then open docs/_build/html/index.html
+```
+
+---
+
 ## Tutorials
 
 Start with `01_torchspin_quickstart.ipynb`, then branch to autograd or fitting
@@ -212,18 +242,26 @@ example collection in `examples/{solidstate,liquids,slowmotion,endor,fitting,mag
 ## Accuracy and performance
 
 Every simulator with an EasySpin counterpart is checked against stored MATLAB
-reference output on each commit. Agreement is cosine ≥ 0.999 (most
-0.9999–1.0000) for `pepper`, `garlic`, `salt` and `curry`, with absolute
-intensities matched where EasySpin defines them. The pulse-EPR routes
+reference output on every push and pull request to main (the full-suite CI job).
+`pepper` and `garlic` agree at cosine ≥ 0.999 (most 0.9999–1.0000); `salt` at
+≥ 0.999, or > 0.99 with orientation selection; `curry` within 0.5–1 % of the
+maximum; absolute intensities are matched where EasySpin defines them. The pulse-EPR routes
 (`saffron`, `saffron_thyme`, `spidyan`) are held to a stricter metric — the
 relative L2 error on the raw *and* the mean-centered signal, 1e-16..1e-7 —
 because a cosine is scale-invariant and dominated by a pulse-EPR trace's DC
 offset.
-`chili` and the stochastic `cardamom` have documented caveats. Details per
-simulator, with the evidence: [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+`chili` and the stochastic `cardamom` have documented caveats. Where EasySpin
+and an objective check (a closed form, a converged grid, a rotation invariance)
+disagree, torchspin follows the objective check: strain widths in tilted frames
+are rotation covariant (0.9.33), and projected `pepper`/`salt` spectra use
+centered bins instead of EasySpin's half-bin offset (0.9.35). The EasySpin
+comparisons those changes move are kept as strict expected failures with
+their measured numbers. Details per simulator, with the evidence:
+[physics and validation](https://follmerlab.github.io/torchspin/physics_validation.html)
+and [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
 
 On speed, torchspin is competitive rather than uniformly faster. On an audited
-nine-workload comparison it beat EasySpin on six — most strongly on
+nine-workload comparison (measured on v0.2.2) it beat EasySpin on six — most strongly on
 slow-motion `chili` (7.3×) and trajectory `cardamom` (2.0×) — and was slower on
 three, including matrix-method Cu(II) powders (0.34×). The GPU path pays off
 for batched and gradient-based work, not for single simulations. Numbers,
@@ -264,6 +302,10 @@ so the cross-validation suite only runs from a checkout.
 
 - [EasySpin](https://easyspin.org) — the MATLAB reference implementation
 - [PyTorch](https://pytorch.org) — the autograd engine
+
+## Acknowledgments
+
+torchspin was developed with help from Claude (Anthropic).
 
 ## License
 

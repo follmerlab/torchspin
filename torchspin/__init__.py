@@ -25,7 +25,7 @@ try:
     __version__ = _pkg_version("torchspin")
 except _PkgNotFound:
     # Editable install during development, or version metadata unavailable.
-    __version__ = "0.9.37+dev"
+    __version__ = "0.9.38+dev"
 
 # Idle OpenMP threads must sleep, not spin-wait (see torchspin/_omp.py and
 # docs/pitfalls.md, "Threads and performance"). This has to run before anything
@@ -358,8 +358,6 @@ __all__ = [
     'signalprocessing',
     # Visualization
     'oripotentialplot',
-    # Tier 3c — Higher-order Zeeman
-    'ham_ezho',
     # Tier 3d-i — Pulse EPR primitives
     'resonatorprofile',
     'transmitter',

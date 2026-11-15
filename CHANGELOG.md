@@ -6,7 +6,133 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.9.38] — 2026-11-15
+
+### Added
+
+- **Documentation site** (https://follmerlab.github.io/torchspin/), built with Sphinx from `docs/`
+  (pydata-sphinx-theme, MyST Markdown, notebooks rendered without execution).
+  - Navigation, user-first: Getting started, a User guide of task pages with checked examples,
+    Tutorials, Installation, the API reference, and Troubleshooting and reference.
+  - The API reference documents every public name (198) at its public path. A local extension
+    adds repository links, the tutorial notebooks, a constants directive and a warning for any undocumented public
+    name.
+  - The `docs` workflow builds the site for every pull request and deploys it from `main` to
+    GitHub Pages. `pip install -e ".[docs]"` and `make -C docs html` build it locally.
+  - The development notes (roadmap, real-pulse plan, acceleration notes) stay in the repository
+    but are not published.
+- **Standardized docstrings** (NumPy style) for the core API (`SpinSystem`, `Experiment`,
+  `Options`, `pepper`, `garlic`, `esfit`/`FitOptions`/`FitResult`, `differentiable_spectrum`,
+  `grid_convergence`) and all 22 public `torchspin.lft` modules, with cross-references between
+  public names. Code is unchanged (checked file by file with docstrings stripped); some
+  docstrings that disagreed with the code were corrected (e.g. the `Harmonic` default, `ModAmp`
+  readers, `esfit` `target='auto'`, the claim that Euler frames carry no gradient). The site
+  builds with no warnings.
+- **Doctests in the default test suite:** `torchspin/tests/test_doctests.py` runs the docstring
+  examples of 29 modules.
+- **Physics and validation pages:** `docs/physics_validation.md` (one row per simulator: what
+  it computes, method, what it is validated against, strongest evidence, main caveat; the five
+  kinds of evidence) and one page per simulator in `docs/physics/` (model, method, validation
+  with the test files, limitations). `docs/chili_empirical_rules.md` derives chili's symmetry
+  basis. Developer pages, not on the site: `docs/physics/coverage_gaps.md`,
+  `docs/physics/manuscript_claims.md`.
+- **Installation guide** (`docs/installation.md`): pip and uv routes for CPU and CUDA builds of
+  PyTorch, keeping an existing PyTorch, conda, contributors, and platform notes. Every route
+  says whether it creates the environment for you. `docs/installation_validation.md` records
+  what was tested (macOS arm64, Python 3.10–3.13, pip and uv, all nine tutorial notebooks
+  executed); Linux, Windows and CUDA routes are not yet validated by hand.
+- **`notebooks` extra** (`pip install "torchspin[notebooks]"`): Jupyter plus everything the
+  shipped tutorials import (matplotlib, ipywidgets, ipympl, cloudpickle).
+- **`install-docs` workflow**: checks the documented installation routes against a wheel of the
+  commit in clean Linux, Windows and macOS environments (on pull requests that touch them, and
+  weekly). It cannot exercise CUDA.
+
+### Changed
+
+- **PyTorch floor raised to `torch>=2.3,<3`.** The published floor `torch>=2.0` was wrong:
+  torch 2.0.1 and 2.1.2 fail (`torch.any(dim=tuple)` in `resfields_batch`), and 2.2.2 works
+  only with numpy < 2. Intel Macs, whose last PyTorch is 2.2.2, are no longer supported.
+- `torchspin.__all__` lists `ham_ezho` once (it was listed twice); the public names are
+  unchanged.
+- README: links the documentation site; corrected accuracy claims (salt > 0.99 with orientation
+  selection, curry 0.5–1 %, the speed numbers measured on v0.2.2); a shorter install section;
+  an acknowledgment that torchspin was developed with help from Claude (Anthropic).
+- KNOWN_LIMITATIONS: the garlic paragraph listed automatic sweep ranging, isotope mixtures,
+  multi-component input and `separate` as not ported; they are ported.
+- The docs and docstrings refer to Josh Telser by the name he uses.
+
+### Fixed
+
+- **chili: the M–pS–pI symmetry basis is derived, exact, and no longer halves `highField`
+  spectra (B114, B115).** Without director tilt, and with a potential that has only M = 0
+  terms, the Liouvillian conserves pS + pI − M. The S_x starting vector then splits into
+  +1 and −1 blocks, and the −1 block is the complex-conjugate mirror of the +1 block:
+  I(z) = ½[I₊(z) + conj(I₊(conj z))]. `MpSymm` now keeps the +1 block and adds the mirror
+  term, so `MpSymm=None`, `True` and `False` return the plain-basis spectrum. Measured against
+  the plain basis solved directly: 5e-16 for a nitroxide, 6e-16 for ⁶³Cu, 5e-11 for S = 1
+  with D = 100 MHz, 2e-8 with D = 500 MHz.
+  - The default (`MpSymm=None`) now prunes every untilted system. Before, an empirical rule
+    applied only to one S = 1/2 electron with ≤ 2 nuclei, no potential and a rhombic LLMK.
+    Pruning shrinks the basis about 6×.
+  - `highField=True` with the default returned 0.5× the plain-basis spectrum (B114). The
+    factor is now 1, as in EasySpin (fast vs general direct: ratio 1.00000).
+  - An explicit `MpSymm=True` raises `ValueError` under director tilt (powder grid with a
+    potential, tilted `Exp.SampleFrame`) or with M ≠ 0 potential terms, where the symmetry
+    does not hold (B115). Before, it returned a wrong spectrum (cosine 0.67, 6.9× amplitude
+    for a nitroxide with `Potential=[2 0 0 1]`, `GridSize=5`), as EasySpin's general method
+    still does.
+  - An explicit `MpSymm=True` no longer returns twice the plain-basis amplitude. EasySpin's
+    general method still does; see KNOWN_LIMITATIONS § Chili.
+- **chili: the Lanczos no longer stops at a near-breakdown (B116).** EasySpin's rule accepts
+  the first check step whose Lentz change is below `Opt.Threshold`. In the pseudo-norm
+  recursion a near-breakdown can pass that test while the continued fraction is far from
+  converged. For the ¹⁴N nitroxide at τc = 100 ns (default LLMK, plain basis) it stopped at
+  step 40, with cosine 0.9648 against the direct solve.
+  - A passing check is now accepted only if the spectrum then moves by less than
+    100 × `Threshold` over the next interval. The accepted spectrum is the same one, so
+    converged results are unchanged.
+  - A full-length tridiagonalization counts as converged.
+  - A Lanczos that does not converge warns once and falls back to the direct solver. Before,
+    it silently returned `ones(nPoints)`, as EasySpin does.
+  - EasySpin's own default (`fast`) output has the same early stop for this nitroxide at
+    256 points (cosine 0.9647 against its general method solved directly). It also explains
+    the loosened ext case `simple_tc1e-07`: with `Opt.Threshold=1e-10`, EasySpin's output
+    matches torchspin to cosine 0.9999966. That case's comparison with EasySpin's default
+    output is now held to the default 0.999 / 2 % as a strict xfail (it was loosened to
+    0.997 / 8 %); the converged comparison is the objective check.
+  - Default outputs on the stored EasySpin cases change by at most 0.06 % in amplitude
+    (`simplepotential_grid19`, plain basis on a powder grid). No tolerance was loosened.
+
 ### Tests
+
+- **The `torchspin.lft` parity tests against telser-tools now run without telser-tools.** CI
+  does not install telser-tools, so 618 tests in the lft files were skipped there. Now 1405
+  run and pass without telser-tools. The 5 that still skip are the 2 dpnfit cases with no free
+  parameter and the 3 magnetometry tests, which stay live-only (their oracle,
+  `telser_tools_diff`, runs on torch).
+  - The telser-tools values the tests use (results, parsed inputs, constants) come from
+    oracle functions in the test modules. They run live when telser-tools is importable;
+    otherwise the tests use the copies in `torchspin/tests/data/telser/refs/*.npz` (13 files,
+    2.6 MiB). `TORCHSPIN_TELSER_REFS=frozen` forces the stored copies.
+  - `torchspin/tests/data/telser/generate_telser_refs.py` writes those files with their
+    provenance (`tests/data/DATA_PROVENANCE.md`).
+  - Tolerances are unchanged, with two changes for the frozen copies:
+    - Bit-for-bit checks of BLAS-order-dependent products, such as `L2 = Re(Σ L_i L_i)`, are
+      evaluated from the stored factors in the test's own process.
+    - Term projectors, stored factored, are compared at `1e-12 - 1e-13`.
+    - The engine-copy identity checks (dsoxf `zero_field`/`spin_spin`, the dlsd5 tetragonal
+      solutions, the ddnpow igloo grids) stay exact against live telser-tools. Against a frozen
+      copy, made on another platform, they allow 4 ulp of the largest entry: Linux and Windows
+      libm/BLAS round some of these values 1 ulp (1.1e-16) differently from macOS. The dlsd5
+      tetragonal solutions, whose closed forms amplify round-off (up to 1.55e-15 seen), allow
+      1e-13 × max(|value|, 1).
+  - Exception (`d1_skipdeg_field`): g(obs) at its 1 mG field (level splitting ~1.8e-9 cm⁻¹)
+    is ill-conditioned: it moved by up to 2e-3 between torch 2.10 and 2.15, even against live
+    telser-tools. It is compared at rtol 2e-2 (10× that), instead of 1e-9.
+  - `test_lft_telser_refs.py` checks that the stored keys match the oracles. With
+    telser-tools importable, it also checks that the stored values still equal live
+    telser-tools to round-off.
+  - No code change.
 
 - **EasySpin reference for frequency sweeps with field-quadratic `Sys.Ham2xx` terms.** EasySpin's
   `resfreqs_matrix.m` could not run them before StollLab/EasySpin d46e5ef9 (it tested for obsolete
@@ -1526,7 +1652,7 @@ published separately.
 
 ### Added
 
-- **`torchspin.lft`: ligand-field tools.** Joshua Telser's programs, ported from
+- **`torchspin.lft`: ligand-field tools.** Josh Telser's programs, ported from
   telser-tools and differentiable. `lft.ddn`, `ddnloop`, `ddnpow`, `ddnfit`, `ddnsus`, `ddnmag`,
   `dpn`, `dpnfit`, `dsoxf`, `tanabe_sugano`, `dlsd5`, `dipole`, `dtd`.
   - `lft.fit.JointFit` fits one model to band energies, g values, χ, M and EPR spectra together,

@@ -22,3 +22,8 @@ examples/**/*.png
 # local scratch
 scratch/
 .research_workspace/
+
+# documentation build (Sphinx); generated API stubs and notebook copies
+docs/_build/
+docs/api/generated/
+docs/tutorials/*.ipynb

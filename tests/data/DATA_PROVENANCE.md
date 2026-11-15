@@ -36,6 +36,7 @@ Tests comparing against these are true cross-validation.
 | `generate_endorfrq_perturb_refs.m` | `endorfrq_perturb_refs.mat` | `endorfrq_perturb` element by element (0.8.8, B20/B27): frequencies and intensities, PerturbOrder 2 and 1, 4 orientations (one `SampleFrame` row `[0 -theta -phi]` each), 340 mT; 1H with AFrame, 14N with Q/QFrame, 1H+14N, 55Mn with Q, strongly coupled 1H, 14N with full Q, 1H+14N with full A and full Q, S = 3/2 with D + 14N (8 cases) |
 | `generate_salt_first_order_refs.m` | `salt_first_order_refs.mat` | salt first-order intensity scale (bug B16, 0.8.1): fixed-field salt with `Opt.Method` `'matrix'` and `'perturb1'` for 1H and 1H+14N (no Q) |
 | `generate_salt_narrowlw_refs.m` | `salt_narrowlw_refs.mat` | salt final `Sys.lwEndor` convolution (bug B24, 0.8.11): Gaussian widths of 0, 1.5, 2.0, 2.5 and 10 increments (at most two increments not convolved, salt.m:899-911), fixed-field 1H powder, `Opt.Method` `'perturb1'` (5 cases) |
+| `generate_chili_mpsymm_refs.m` | `ref_chili_mpsymm_a.mat` … `_d.mat` | chili M–pS–pI symmetry and Lanczos stop (B114, B116): nitroxide at τc = 100 ns, fast vs general Lanczos vs general direct, `highField`, fast at tight `Threshold`; `simple_tc1e-07` fast at `Threshold` 1e-10. Run one part per job (`part='a'`…`'d'`) |
 | `generate_pepper_cupc_refs.m` | `ref_pepper_cupc.mat` | Cu(II) + ligand nuclei: `matrix`/`perturb`/`hybrid` on the same systems (34 cases), incl. natural-abundance isotopologues, tilted and anisotropic ligand A tensors, quadrupole coupling, enlarged exact core, two components |
 | `generate_nucspin_core_refs.m` | `ref_nucspin_core.mat` | Cores built with `nucspinrmv` (0.8.2, B14): pepper `hybrid` and `matrix` on an anisotropic exchange-coupled Cu dimer, an isotropic dimer and S = 3/2 with `Ham132` |
 | `generate_pepper_orientations_refs.m` | `ref_pepper_orientations.mat` | `Exp.Orientations` (0.7.6): EasySpin crystal spectra (`MolFrame=[0 0 0]`, one `SampleFrame` row per orientation, `SampleRotation={'z',[0 pi/2]}`) as an exact χ average, 5 cases incl. strain, Boltzmann triplet, frequency sweep, 4000-point Fibonacci sphere; plus EasySpin's powder of the axial case on the normal and the half-bin-shifted axis |
@@ -108,6 +109,7 @@ Tests comparing against these are true cross-validation.
 **Slow-motion (chili):**
 `chili_ref_*.mat` (4 files: anisog, isog_notcorr, 14N_isoA, 1H_fastmotion) — MATLAB-gen
 `chili_*.mat` (remaining ~20 files) — MATLAB
+`ref_chili_mpsymm_{a,b,c,d}.mat` — MATLAB-gen (`generate_chili_mpsymm_refs.m`, EasySpin main (~/Follmer_UCD/Follmer_Lab/Code/EasySpin/easyspin), R2024b, 2026-11-14, one `-singleCompThread -batch` job per part; store `Sys`/`Exp`): ¹⁴N nitroxide, τc = 100 ns, default LLMK, 256 points — (a) fast builder, general Lanczos, general direct (`Solver='\'`); (b) `highField` fast and general direct; (c) fast at `Threshold` 1e-10 and 1e-12; (d) case `simple_tc1e-07` of `generate_chili_ext_refs.m`, fast at the default and at `Threshold` 1e-10 (B114, B116)
 
 **ENDOR (salt):**
 `salt_ref_14N.mat`, `salt_ref_1H.mat` — MATLAB
@@ -224,6 +226,26 @@ centered bins moved (B85).
 **MD analysis:**
 `mdhmm_*.mat` (4 files), `mdload_files_*.mat` (2 files) — Python
 `ref_md_readdcd.mat` — MATLAB-gen (`generate_md_readdcd_refs.m`, EasySpin main, R2024b, 2026-11-14): EasySpin `md_readdcd` on `tests/mdfiles/A10R1_polyAla.dcd` and `A10TOAC_polyAla.dcd` (B97, 0.9.34): all frames for a fixed atom subset (`idx`, 1-based), the first frame for all atoms, `nAtoms`, `nFrames`, `dt`. Used by `test_mdload.py`. That file also compares `mdload` label frames (`FrameTraj`, `FrameTrajwrtProt`, `RProtDiff`) with `mdload_files_R1.mat`/`mdload_files_TOAC.mat`, which are byte-identical to EasySpin's own `tests/data` regression files (EasySpin `mdload_files_R1.m`, `mdload_files_TOAC.m`) and are therefore MATLAB references despite the tag above.
+
+---
+
+## telser-tools References (torchspin.lft parity)
+
+`torchspin/tests/data/telser/refs/<group>.npz`: the telser-tools outputs used by the
+`torchspin.lft` parity tests (`torchspin/tests/test_lft_<group>.py`), so that those tests run
+without telser-tools (as in CI). Tag: **External** (Josh Telser's programs as ported to
+NumPy in telser-tools, the source of the `torchspin.lft` port; independent of the torchspin
+code under test). Each file holds the values of the oracles that the test module registers
+(`torchspin/tests/_telser_refs.py`), as a JSON tree plus one flat array per dtype, with no
+pickles. Each file also stores its provenance. With telser-tools importable, the tests use
+live telser-tools instead, and `test_lft_telser_refs.py` checks that the frozen values still
+match it to 1e-10 × max(1, |largest entry|). `test_lft_magnetometry.py` stays live-only: its
+oracle, `telser_tools_diff`, runs on torch, so a frozen copy would depend on the torch
+version.
+
+| Generator | Files | telser-tools | Date | Environment |
+|-----------|-------|--------------|------|-------------|
+| `torchspin/tests/data/telser/generate_telser_refs.py` (run from the repo root: `PYTHONPATH=.:<telser-tools>/src OMP_NUM_THREADS=1 python torchspin/tests/data/telser/generate_telser_refs.py`) | `core`, `ddn`, `ddnloop`, `ddnpow`, `ddpowh`, `dipole`, `dlsd5`, `dpn`, `dpnfit`, `dsoxf`, `dtd`, `tanabe_sugano`, `telser2torchspin` (13 files, 2.6 MiB) | `12e4cf6d6d10d0f552076e52072c0ad160265b6e` (branch `differentiable-ddn`, clean tree) | 2026-11-15 (UTC) | Python 3.12.15, NumPy 2.5.3, SciPy 1.18.1, torch 2.10.0 (used by `telser_tools_diff` in the `dpnfit` oracles), macOS 15.5 arm64, NumPy on OpenBLAS, single thread |
 
 ---
 

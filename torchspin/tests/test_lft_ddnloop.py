@@ -3,14 +3,14 @@
 Self-contained checks (closed forms, the effective-spin g limit, units, gauge-invariant level
 sums), gradients (forward-mode AD against central differences, best of several steps), and
 forward parity with telser-tools' NumPy DDNLOOP (exact mode) on all 21 DDNLOOP reference
-inputs when telser-tools is installed.
+inputs: live when telser-tools is importable, else against its frozen outputs (data/telser/refs,
+see ``_telser_refs``).
 """
 
 from __future__ import annotations
 
 import json
 import math
-from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +20,7 @@ import torch
 from torchspin import lft
 from torchspin.lft import ddn, ddnloop
 from torchspin.lft.units import energy_factor
+from torchspin.tests import _telser_refs as R
 
 F64 = torch.float64
 CM_TO_MHZ = energy_factor("cm^-1", "MHz")
@@ -236,103 +237,145 @@ def test_zero_field_level_probability_gradient():
 
 
 # ------------------------------------------------------------------------------ parity with telser-tools
-@lru_cache(maxsize=None)
-def _telser():
-    dl = pytest.importorskip("telser_tools.ddnloop")
-    from telser_tools.ddn.hamiltonian import CODATA2018
-    from telser_tools.ddnloop.model import exact_probabilities, pair_elements
-    from telser_tools.ddnloop.program import _points, model_for
-    return dl, CODATA2018, exact_probabilities, pair_elements, _points, model_for
-
-
+# telser-tools' values come from oracles: live when it is importable, else the frozen copies in
+# data/telser/refs/ddnloop.npz (see _telser_refs)
 def _isolated(e, rtol=1e-6):
     """States whose gap to every other exceeds rtol * max|E| (eigenvectors conditioned to ~eps/rtol)."""
     d = np.abs(e[..., :, None] - e[..., None, :]) + np.eye(e.shape[-1]) * 1e300
     return d.min(-1) > np.maximum(rtol * np.abs(e).max(-1, keepdims=True), 1e-3)
 
 
-def _ours(inp, C18):
+_ROW_FIELDS = ("theta", "phi", "h0", "i", "j", "energy", "probability", "population", "mw_weight", "g_obs")
+
+
+# drift (OpenBLAS vs Accelerate): eigenvalue round-off moves the weight on the flank of the line (1.1e-9),
+# g(obs) (1.2e-10) and the probabilities of nearly degenerate pairs (1.5e-9)
+@R.oracle("ddnloop", cases=sorted(INPUTS),
+          drift={"*$.rows.mw_weight*": 1e-8, "*$.rows.g_obs*": 1e-9, "*$.rows.probability*": 1e-8})
+def _telser_parity(name):
+    """The parsed input (what _ours needs), telser-tools' exact-mode run (energies, loop points, listed
+    rows), and its level-summed and per-pair probabilities at every point for the requested pairs."""
+    import telser_tools.ddnloop as dl
+    from telser_tools.ddn.hamiltonian import CODATA2018 as C18
+    from telser_tools.ddnloop.model import exact_probabilities as np_exact
+    from telser_tools.ddnloop.model import pair_elements as np_pairs
+    from telser_tools.ddnloop.program import _points as points
+    from telser_tools.ddnloop.program import model_for
+    inp = dl.parse_input(INPUTS[name])
     p = inp.parameters()
-    kw = dict(zeta=p.zeta, V=None if p.ligand_field is None else torch.tensor(p.ligand_field), k=p.k, alpha=p.alpha)
-    if p.slater is not None:
-        kw["slater"] = tuple(p.slater)
-    else:
-        kw.update(B=p.B, C=p.C, A=p.A)
-    pairs = None
+    pairs = []
     if inp.epr:
         pairs = [(i - 1, j - 1) for i in range(inp.i_min, inp.i_max + 1) for j in range(inp.j_min, inp.j_max + 1)
                  if j > i]
-    consts = ddn.Constants(mu_b=C18.mu_b * 10.0, g_e=C18.g_e, k_b=C18.k_b)       # cm^-1/G -> cm^-1/mT
-    return ddnloop.scan(inp.n, fields=inp.fields() / 10.0, theta=inp.thetas(), phi=inp.phis(), mesh=True,
-                        degrees=True, pairs=pairs, temperature=inp.temperature, h1mode=inp.h1mode,
-                        mw_freq=inp.mw_ghz, units="cm^-1", constants=consts, **kw)
+    a = dl.run(inp, "exact")
+    th, ph, hh = points(inp)
+    out = dict(
+        C18=dict(mu_b=C18.mu_b, g_e=C18.g_e, k_b=C18.k_b),
+        inp=dict(n=inp.n, epr=inp.epr, pairs=pairs, fields=inp.fields(), thetas=inp.thetas(), phis=inp.phis(),
+                 temperature=inp.temperature, h1mode=inp.h1mode, mw_ghz=inp.mw_ghz),
+        params=dict(zeta=p.zeta, V=p.ligand_field, k=list(p.k), alpha=p.alpha,
+                    slater=None if p.slater is None else list(p.slater), B=p.B, C=p.C, A=p.A),
+        npts=len(a.fields), energies=a.energies, th=th, ph=ph, hh=hh,
+        rows={f: [getattr(r, f, None) for r in a.rows] for f in _ROW_FIELDS})
+    if not inp.epr or not pairs:
+        return out
+    pi, pj = [i for i, _ in pairs], [j for _, j in pairs]
+    npts = len(a.fields)
+    model = model_for(inp, a.options)
+    t, ph_ = np.radians(th), np.radians(ph)
+    dirs = np.stack([np.sin(t) * np.cos(ph_), np.sin(t) * np.sin(ph_), np.cos(t)], -1)
+    w, v = model.solve(hh[:, None] * dirs)
+    N = w.shape[-1]
+    m = np.swapaxes(v.conj(), -1, -2)[:, None] @ model.mu[None] @ v[:, None]
+    Pall = np_exact(m.reshape(npts, 3, N * N), dirs, inp.h1mode).reshape(npts, N, N)
+    D = (np.abs(w[:, :, None] - w[:, None, :]) <= 1e-11 * np.abs(w).max(-1)[:, None, None] + 1e-9).astype(float)
+    out["level_sums"] = (D @ Pall @ D)[:, pi, pj]
+    # per-pair values only where both states are isolated (the only entries compared; elsewhere they
+    # depend on the arbitrary basis of a degenerate level and are not reproducible): NaN there
+    iso = _isolated(a.energies)
+    ok = iso[:, pi] & iso[:, pj]
+    out["pair_probs"] = np.where(ok, np_exact(np_pairs(v, model.mu, np.array(pi), np.array(pj)), dirs, inp.h1mode),
+                                 np.nan)
+    return out
+
+
+def _ours(ref):
+    inp, p, c = ref["inp"], ref["params"], ref["C18"]
+    kw = dict(zeta=p["zeta"], V=None if p["V"] is None else torch.tensor(p["V"]), k=tuple(p["k"]), alpha=p["alpha"])
+    if p["slater"] is not None:
+        kw["slater"] = tuple(p["slater"])
+    else:
+        kw.update(B=p["B"], C=p["C"], A=p["A"])
+    pairs = [tuple(x) for x in inp["pairs"]] if inp["epr"] else None
+    consts = ddn.Constants(mu_b=c["mu_b"] * 10.0, g_e=c["g_e"], k_b=c["k_b"])        # cm^-1/G -> cm^-1/mT
+    return ddnloop.scan(inp["n"], fields=inp["fields"] / 10.0, theta=inp["thetas"], phi=inp["phis"], mesh=True,
+                        degrees=True, pairs=pairs, temperature=inp["temperature"], h1mode=inp["h1mode"],
+                        mw_freq=inp["mw_ghz"], units="cm^-1", constants=consts, **kw)
 
 
 @pytest.mark.parametrize("name", sorted(INPUTS))
 def test_parity_with_telser_tools(name):
     """Energies, populations, every listed row (energy, probability where both states are isolated,
     population factor, mw weight, g_obs) and the level-summed probabilities everywhere."""
-    dl, C18, np_exact, np_pairs, points, model_for = _telser()
-    inp = dl.parse_input(INPUTS[name])
-    a = dl.run(inp, "exact")
-    b = _ours(inp, C18)
-    npts = len(a.fields)
+    ref = R.ref(_telser_parity, name)
+    b = _ours(ref)
+    npts, energies = ref["npts"], ref["energies"]
     E = b.energies.reshape(npts, -1).numpy()
-    np.testing.assert_allclose(E, a.energies, rtol=1e-12, atol=1e-9)
-    th, ph, hh = points(inp)
+    np.testing.assert_allclose(E, energies, rtol=1e-12, atol=1e-9)
+    th, ph, hh = ref["th"], ref["ph"], ref["hh"]
     np.testing.assert_allclose(np.degrees(b.theta.reshape(-1).numpy()), th, atol=1e-12)
     np.testing.assert_allclose(b.fields.reshape(-1).numpy() * 10.0, hh, atol=1e-12)
-    iso = _isolated(a.energies)
+    iso = _isolated(energies)
     flat = lambda t: None if t is None else t.reshape(npts, -1).numpy()  # noqa: E731
     pops = flat(b.populations)
-    if not inp.epr:
-        for r in a.rows:
-            k = int(np.flatnonzero((th == r.theta) & (ph == r.phi) & (hh == r.h0))[0])
-            assert E[k, r.i - 1] == pytest.approx(r.energy, rel=1e-12, abs=1e-9)
-            if r.population is not None:
-                assert pops[k, r.i - 1] == pytest.approx(r.population, rel=1e-9, abs=1e-12)
+    rows = [dict(zip(_ROW_FIELDS, vals)) for vals in zip(*(ref["rows"][f] for f in _ROW_FIELDS))]
+    if not ref["inp"]["epr"]:
+        for r in rows:
+            k = int(np.flatnonzero((th == r["theta"]) & (ph == r["phi"]) & (hh == r["h0"]))[0])
+            assert E[k, r["i"] - 1] == pytest.approx(r["energy"], rel=1e-12, abs=1e-9)
+            if r["population"] is not None:
+                assert pops[k, r["i"] - 1] == pytest.approx(r["population"], rel=1e-9, abs=1e-12)
         return
     if not b.pairs:
         return
+    assert list(b.pairs) == [tuple(x) for x in ref["inp"]["pairs"]]     # the oracle's pairs
     q_of = {pr: q for q, pr in enumerate(b.pairs)}
     tr, P, pf, mw, g = (flat(x) for x in (b.transition_energies, b.probabilities, b.population_factors,
                                           b.mw_weights, b.g_obs))
-    pmax = max([1.0] + [r.probability for r in a.rows])
-    for r in a.rows:
-        k = int(np.flatnonzero((th == r.theta) & (ph == r.phi) & (hh == r.h0))[0])
-        q = q_of[(r.i - 1, r.j - 1)]
-        assert tr[k, q] == pytest.approx(r.energy, rel=1e-12, abs=1e-9)
-        if r.g_obs is not None:
-            assert g[k, q] == pytest.approx(r.g_obs, rel=1e-9)
-        if r.population is not None:
-            assert pf[k, q] == pytest.approx(r.population, rel=1e-9, abs=1e-9 * pmax)
-        if iso[k, [r.i - 1, r.j - 1]].all():
-            assert P[k, q] == pytest.approx(r.probability, rel=1e-9, abs=1e-9 * pmax)
-            if r.mw_weight is not None:
+    pmax = max([1.0] + [r["probability"] for r in rows])
+    for r in rows:
+        k = int(np.flatnonzero((th == r["theta"]) & (ph == r["phi"]) & (hh == r["h0"]))[0])
+        q = q_of[(r["i"] - 1, r["j"] - 1)]
+        assert tr[k, q] == pytest.approx(r["energy"], rel=1e-12, abs=1e-9)
+        if r["g_obs"] is not None:
+            assert g[k, q] == pytest.approx(r["g_obs"], rel=1e-9)
+        if r["population"] is not None:
+            assert pf[k, q] == pytest.approx(r["population"], rel=1e-9, abs=1e-9 * pmax)
+        if iso[k, [r["i"] - 1, r["j"] - 1]].all():
+            assert P[k, q] == pytest.approx(r["probability"], rel=1e-9, abs=1e-9 * pmax)
+            if r["mw_weight"] is not None:
                 # E_j - E_i agrees to ~1e-11 cm^-1 (eigenvalue round-off), which moves a weight on the
                 # flank of the 2 % line by ~1e-9 relative
-                assert mw[k, q] == pytest.approx(r.mw_weight, rel=1e-7, abs=1e-9 * pmax)
+                assert mw[k, q] == pytest.approx(r["mw_weight"], rel=1e-7, abs=1e-9 * pmax)
     # level sums at every point (including B = 0) vs the NumPy per-pair values summed over levels
     pi, pj = [i for i, _ in b.pairs], [j for _, j in b.pairs]
-    model = model_for(inp, a.options)
-    t, p = np.radians(th), np.radians(ph)
-    dirs = np.stack([np.sin(t) * np.cos(p), np.sin(t) * np.sin(p), np.cos(t)], -1)
-    w, v = model.solve(hh[:, None] * dirs)
-    N = w.shape[-1]
-    m = np.swapaxes(v.conj(), -1, -2)[:, None] @ model.mu[None] @ v[:, None]
-    Pall = np_exact(m.reshape(npts, 3, N * N), dirs, inp.h1mode).reshape(npts, N, N)
-    D = (np.abs(w[:, :, None] - w[:, None, :]) <= 1e-11 * np.abs(w).max(-1)[:, None, None] + 1e-9).astype(float)
-    want = (D @ Pall @ D)[:, pi, pj]
+    want = ref["level_sums"]
     atol = 1e-9 * max(1.0, np.abs(want).max())
     np.testing.assert_allclose(flat(b.level_probabilities), want, rtol=1e-9, atol=atol)
     ok = iso[:, pi] & iso[:, pj]
-    want_pp = np_exact(np_pairs(v, model.mu, np.array(pi), np.array(pj)), dirs, inp.h1mode)
-    np.testing.assert_allclose(P[ok], want_pp[ok], rtol=1e-9, atol=atol)
+    np.testing.assert_allclose(P[ok], ref["pair_probs"][ok], rtol=1e-9, atol=atol)
+
+
+_MIRROR_LIGS = [(30, 20, 10, 5000, 900, 700, 0, 0), (120, 250, 0, 4000, 800, 800, 0, 0)]
+
+
+@R.oracle("ddnloop")
+def _telser_mirror_image():
+    from telser_tools.ddn import ligand_field as tlf
+    v = tlf.aom([tlf.Ligand(*lig) for lig in _MIRROR_LIGS])
+    return dict(V=v, mirror=tlf.from_m_basis(np.conj(tlf.to_m_basis(v))))
 
 
 def test_mirror_image_parity_with_telser_tools():
-    pytest.importorskip("telser_tools")
-    from telser_tools.ddn import ligand_field as tlf
-    v = tlf.aom([tlf.Ligand(30, 20, 10, 5000, 900, 700, 0, 0), tlf.Ligand(120, 250, 0, 4000, 800, 800, 0, 0)])
-    want = tlf.from_m_basis(np.conj(tlf.to_m_basis(v)))
-    np.testing.assert_allclose(ddnloop.mirror_image(torch.tensor(v)).numpy(), want, atol=1e-11)
+    ref = R.ref(_telser_mirror_image)
+    np.testing.assert_allclose(ddnloop.mirror_image(torch.tensor(ref["V"])).numpy(), ref["mirror"], atol=1e-11)
