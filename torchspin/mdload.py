@@ -13,6 +13,7 @@ Based on EasySpin's mdload.m and associated MD file readers.
 import numpy as np
 import struct
 import os
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple, Union
 
@@ -153,8 +154,10 @@ def _read_dcd(filename, atom_indices=None):
             n_out = nAtoms
 
         frames_list = []
+        file_size = os.fstat(f.fileno()).st_size
 
         while True:
+            frame_start = f.tell()
             try:
                 # Skip extra block (unit cell) if present
                 if has_extra_block:
@@ -182,6 +185,8 @@ def _read_dcd(filename, atom_indices=None):
 
                 frames_list.append(frame)
             except (struct.error, EOFError, ValueError):
+                _warn_partial_trajectory(filename, 'DCD', frame_start,
+                                         file_size, len(frames_list))
                 break
 
         nFrames = len(frames_list)
@@ -383,6 +388,21 @@ def _read_gro(filename, res_name, label_name):
 # TRR trajectory reader (md_readtrr.m)
 # ---------------------------------------------------------------------------
 
+def _warn_partial_trajectory(filename, fmt, frame_start, file_size, n_read):
+    """Warn when frame reading stops before the end of the file.
+
+    Reading stops at the first frame that cannot be decoded. At a clean end of
+    file nothing is left; otherwise the trailing bytes (a truncated last frame,
+    or data this reader does not understand) used to be dropped silently (B80).
+    """
+    if frame_start < file_size:
+        warnings.warn(
+            f"mdload: stopped reading {fmt} file '{filename}' after {n_read} "
+            f"frame(s); {file_size - frame_start} trailing byte(s) could not be "
+            "decoded as a frame (truncated file?) and were ignored.",
+            RuntimeWarning, stacklevel=3)
+
+
 def _read_trr(filename, atom_indices=None):
     """Read a TRR trajectory file (GROMACS format).
 
@@ -403,12 +423,16 @@ def _read_trr(filename, atom_indices=None):
 
     with open(filename, 'rb') as f:
         prev_time = None
+        file_size = os.fstat(f.fileno()).st_size
 
         while True:
+            frame_start = f.tell()
             try:
                 # TRR frame header
                 magic = struct.unpack('>i', f.read(4))[0]
                 if magic != 1993:
+                    _warn_partial_trajectory(filename, 'TRR', frame_start,
+                                             file_size, len(frames))
                     break
 
                 slen = struct.unpack('>i', f.read(4))[0]
@@ -471,6 +495,8 @@ def _read_trr(filename, atom_indices=None):
                 f.read(v_size + f_size)
 
             except (struct.error, ValueError):
+                _warn_partial_trajectory(filename, 'TRR', frame_start,
+                                         file_size, len(frames))
                 break
 
     if not frames:

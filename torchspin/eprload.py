@@ -127,17 +127,25 @@ def eprload(
     elif ext == '.D00':
         return _load_d00_wis_eth(filepath)
     else:
-        # Try JEOL auto-detection from header
+        # Try JEOL auto-detection from header. Only the sniff is guarded: once
+        # the JEOL process type matches, a loader failure is reported as such
+        # instead of as 'Unsupported file extension' (B80).
         try:
             with open(filepath, 'rb') as f:
                 header = f.read(16)
-            process_type = header.split(b'\x00')[0].decode('ascii', errors='ignore')
-            jeol_types = ['spin', 'cAcqu', 'endor', 'pAcqu', 'cidep',
-                          'sod', 'iso', 'ani']
-            if any(process_type.startswith(t) for t in jeol_types):
+        except OSError:
+            header = b''
+        process_type = header.split(b'\x00')[0].decode('ascii', errors='ignore')
+        jeol_types = ['spin', 'cAcqu', 'endor', 'pAcqu', 'cidep',
+                      'sod', 'iso', 'ani']
+        if any(process_type.startswith(t) for t in jeol_types):
+            try:
                 return _load_jeol(filepath)
-        except Exception:
-            pass
+            except Exception as e:
+                raise ValueError(
+                    f"JEOL file '{filepath}' (process type '{process_type}') "
+                    f"could not be read: {type(e).__name__}: {e}"
+                ) from e
         raise ValueError(
             f"Unsupported file extension '{filepath.suffix}' (normalized to '{ext}').\n"
             f"Supported: .DTA/.DSC, .SPC/.PAR, .D01, .SPE, .XML, .ESR, "
