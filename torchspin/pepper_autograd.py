@@ -193,6 +193,13 @@ def _interp_matrix(symmetry: str, N_c: int, N_f: int, mode: str, linear: bool) -
     interpolating the columns of the identity."""
     n_c = sphgrid(symmetry, N_c)[0].numel()
     n_f = sphgrid(symmetry, N_f)[0].numel()
+    if (not linear and mode != 'val' and symmetry in _pep._CLOSEDPHI_1OCT
+            and n_c == N_c * (N_c + 1) // 2 and n_f == N_f * (N_f + 1) // 2
+            and n_c * n_f <= _pep._INTERP_MATRIX_MAX):
+        # G3 positions on the triangular one-octant grid: _interp_sph applies this
+        # very matrix to the values, so its columns are the matrix itself (building
+        # them by interpolating the identity column by column took ~2 s at [31 4])
+        return _pep._d2h_interp_matrix(N_c, N_f).copy()
     M = np.zeros((n_f, n_c))
     eye = np.eye(n_c)
     for j in range(n_c):
