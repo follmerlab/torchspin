@@ -7,14 +7,15 @@ Run from the torchspin repository root with telser-tools importable, e.g.::
 
 Every oracle (``torchspin.tests._telser_refs.oracle``) registered by the test modules of the
 given groups (``core`` for test_lft_core.py, ...) is evaluated for every case and written, one
-compressed npz per group, together with its provenance
-(telser-tools commit and tree state, date, Python/NumPy/SciPy versions, command).  Then record the
-regeneration in tests/data/DATA_PROVENANCE.md.  Without arguments every group is regenerated.
+compressed npz per group, together with its provenance (telser-tools commit and tree state, date,
+Python/NumPy/SciPy/torch versions, thread count, command).  Then record the regeneration in
+tests/data/DATA_PROVENANCE.md.  Without arguments every group is regenerated.
 """
 
 from __future__ import annotations
 
 import datetime
+import os
 import platform
 import subprocess
 import sys
@@ -43,6 +44,7 @@ def _telser_provenance() -> dict:
 def main(argv: list[str]) -> int:
     import numpy as np
     import scipy
+    import torch
 
     from torchspin.tests import _telser_refs as R
 
@@ -51,7 +53,8 @@ def main(argv: list[str]) -> int:
     prov = dict(_telser_provenance(),
                 date=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
                 python=platform.python_version(), numpy=np.__version__, scipy=scipy.__version__,
-                platform=platform.platform(),
+                torch=torch.__version__,              # telser_tools_diff (used by the dpnfit oracles) runs on torch
+                omp_num_threads=os.environ.get("OMP_NUM_THREADS"), platform=platform.platform(),
                 command="python torchspin/tests/data/telser/generate_telser_refs.py " + " ".join(argv))
     if not prov["telser_tools_tree_clean"]:
         print("warning: the telser-tools tree is not clean (or not a git checkout)", file=sys.stderr)

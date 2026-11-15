@@ -12,21 +12,20 @@ and returns plain data (a dict of NumPy arrays and JSON values).  The test asks 
 
 Both paths return the same types (live values go through the same encode/decode as the stored
 ones), and the comparisons in the tests are the same.  ``test_lft_telser_refs.py`` checks, when
-telser-tools is importable, that every stored value still equals the live one to round-off and
+telser-tools is importable, that every stored value still equals the live one to round-off
+(``DRIFT_RTOL``, or the oracle's ``drift`` entry for an output that round-off moves by more) and
 that the stored keys match the registered oracles exactly.
 
 Leaves an oracle may return: NumPy arrays (numeric or bool), Python/NumPy scalars, strings,
-``None``, and (nested) lists/tuples/dicts of those (tuples come back as lists).  ``Exact(a)``
-stores only a SHA-256 digest of a large array that a test compares bit for bit; in live mode the
-array itself is returned, so a failure shows the difference.  Compare with :func:`assert_identical`.
+``None``, and (nested) lists/tuples/dicts of those (tuples come back as lists).  Mostly-zero
+arrays can be stored with :func:`sparse` (exact).
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-from dataclasses import dataclass
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
@@ -39,14 +38,17 @@ ENV = "TORCHSPIN_TELSER_REFS"            # auto (default) | frozen | live
 
 # group -> {oracle name -> (function, case ids)}
 ORACLES: dict[str, dict[str, tuple[Callable, tuple]]] = {}
+DRIFT_RTOL = 1e-10          # frozen vs live: rtol and rtol * max(1, largest entry) of each float array
 
 # test modules that register oracles (imported by the generator and the drift test); the group
 # of an oracle is its module name without the "test_lft_" prefix
 MODULES = (
     "test_lft_core", "test_lft_ddn", "test_lft_ddnloop", "test_lft_ddnpow", "test_lft_ddpowh",
     "test_lft_dipole", "test_lft_dlsd5", "test_lft_dpn", "test_lft_dpnfit", "test_lft_dsoxf",
-    "test_lft_dtd", "test_lft_magnetometry", "test_lft_tanabe_sugano", "test_lft_telser2torchspin",
+    "test_lft_dtd", "test_lft_tanabe_sugano", "test_lft_telser2torchspin",
 )
+# not here: test_lft_magnetometry.py compares with telser_tools_diff, which runs on torch, so a frozen copy
+# would depend on the torch version (2.2e-10 between torch 2.10 and 2.15 vs rtol 1e-11); it stays live-only
 GROUPS = tuple(m.removeprefix("test_lft_") for m in MODULES)
 
 
@@ -73,9 +75,14 @@ def live() -> bool:
 
 
 # ------------------------------------------------------------------------------ registry
-def oracle(group: str, cases=(None,)):
-    """Register ``fn(case) -> plain data`` (or ``fn()`` when ``cases`` is ``(None,)``) under ``group``."""
+def oracle(group: str, cases=(None,), drift: dict | None = None):
+    """Register ``fn(case) -> plain data`` (or ``fn()`` when ``cases`` is ``(None,)``) under ``group``.
+
+    ``drift`` maps glob patterns (``*`` only; matched against ``key + path``, e.g.
+    ``_telser_fit[x]$.stderr``) to the drift tolerance of outputs that round-off moves by more than
+    ``DRIFT_RTOL`` between BLAS/LAPACK builds (``None``: not compared); the first match wins."""
     cases = tuple(cases)
+    rules = [(re.compile(".*".join(map(re.escape, pat.split("*"))) + r"\Z"), tol) for pat, tol in (drift or {}).items()]
 
     def deco(fn):
         reg = ORACLES.setdefault(group, {})
@@ -83,8 +90,19 @@ def oracle(group: str, cases=(None,)):
             raise ValueError(f"oracle {group}.{fn.__name__} registered twice")
         reg[fn.__name__] = (fn, cases)
         fn.group = group
+        fn.drift_rules = rules
         return fn
     return deco
+
+
+def drift_tolerance(fn: Callable, k: str) -> Callable[[str], float | None]:
+    """path -> drift rtol (None: skip) for the stored entry ``k`` of oracle ``fn``."""
+    def tol(path):
+        for rx, t in fn.drift_rules:
+            if rx.match(k + path):
+                return t
+        return DRIFT_RTOL
+    return tol
 
 
 def key(fn: Callable, case=None) -> str:
@@ -99,7 +117,7 @@ def compute(fn: Callable, case=None):
 def ref(fn: Callable, case=None):
     """The oracle's value: live when telser-tools is importable, else the frozen reference."""
     if live():
-        return _decode(*_encode(compute(fn, case)), keep_exact=True)
+        return _decode(*_encode(compute(fn, case)))
     return _decode(*_frozen(fn.group)[key(fn, case)])
 
 
@@ -117,54 +135,12 @@ def dense(d: dict) -> np.ndarray:
     return out.reshape(d["shape"])
 
 
-# ------------------------------------------------------------------------------ exact (digest) arrays
-@dataclass(frozen=True)
-class Exact:
-    """Marks an array that is compared bit for bit and stored as a digest only."""
-    array: np.ndarray
-
-
-@dataclass(frozen=True)
-class Digest:
-    sha256: str
-    dtype: str
-    shape: tuple
-
-
-def _canonical(a: np.ndarray) -> np.ndarray:
-    a = np.ascontiguousarray(a)
-    if a.dtype.kind in "fc":
-        a = a + a.dtype.type(0)                         # -0.0 -> +0.0 (assert_array_equal treats them as equal)
-    return a
-
-
-def digest(a) -> Digest:
-    a = _canonical(np.asarray(a))
-    h = hashlib.sha256(f"{a.dtype.str}{a.shape}".encode())
-    h.update(a.tobytes())
-    return Digest(h.hexdigest(), a.dtype.str, tuple(a.shape))
-
-
-def assert_identical(ours, want) -> None:
-    """``np.testing.assert_array_equal`` against an array or (frozen) against its digest."""
-    ours = np.asarray(ours)
-    if isinstance(want, Digest):
-        assert ours.shape == want.shape, (ours.shape, want.shape)
-        conv = ours.astype(want.dtype)
-        assert np.array_equal(conv, ours), "dtype conversion changed values"
-        assert digest(conv) == want, "array differs from the frozen telser-tools array (bitwise)"
-    else:
-        np.testing.assert_array_equal(ours, want)
-
-
 # ------------------------------------------------------------------------------ encode / decode
 def _encode(value) -> tuple[Any, dict[str, np.ndarray]]:
     """Plain data -> (JSON-able tree, {array key: array})."""
     arrays: dict[str, np.ndarray] = {}
 
     def enc(v, path):
-        if isinstance(v, Exact):
-            return {"__exact__": [v.array], "__digest__": digest(v.array).__dict__}
         if isinstance(v, np.ndarray):
             if v.dtype.kind not in "biufc":
                 raise TypeError(f"{path}: unsupported array dtype {v.dtype}")
@@ -188,7 +164,7 @@ def _encode(value) -> tuple[Any, dict[str, np.ndarray]]:
     return enc(value, "$"), arrays
 
 
-def _decode(tree, arrays, keep_exact: bool = False):
+def _decode(tree, arrays):
     def dec(v):
         if isinstance(v, list):
             return [dec(x) for x in v]
@@ -197,11 +173,6 @@ def _decode(tree, arrays, keep_exact: bool = False):
                 return np.array(arrays[v["__array__"]])
             if "__complex__" in v:
                 return complex(*v["__complex__"])
-            if "__digest__" in v:
-                if keep_exact and "__exact__" in v:
-                    return np.array(v["__exact__"][0])
-                d = v["__digest__"]
-                return Digest(d["sha256"], d["dtype"], tuple(d["shape"]))
             return {k: dec(x) for k, x in v.items()}
         return v
     return dec(tree)
@@ -219,10 +190,11 @@ def _frozen(group: str) -> dict[str, tuple[Any, dict[str, np.ndarray]]]:
         pytest.fail(f"frozen telser-tools reference {p} is missing; run data/telser/generate_telser_refs.py")
     with np.load(p, allow_pickle=False) as z:
         meta = json.loads(str(z["__json__"]))
-        out = {}
-        for k, tree in meta["entries"].items():
-            names = meta["arrays"][k]
-            out[k] = (tree, {n: z[f"{k}/{n}"] for n in names})
+        flat = {dt: z[dt] for dt in z.files if dt != "__json__"}
+    out = {}
+    for k, tree in meta["entries"].items():
+        out[k] = (tree, {n: flat[dt][off:off + int(np.prod(shape))].reshape(shape)
+                         for n, (dt, off, shape) in meta["arrays"][k].items()})
     return _Missing(out, p)
 
 
@@ -237,7 +209,7 @@ class _Missing(dict):
 
 @lru_cache(maxsize=None)
 def frozen_entries(group: str) -> dict:
-    """{key: decoded value} of a stored group (digests stay digests)."""
+    """{key: decoded value} of a stored group."""
     return {k: _decode(*v) for k, v in _frozen(group).items()}
 
 
@@ -247,28 +219,25 @@ def frozen_provenance(group: str) -> dict:
 
 
 def write_group(group: str, entries: dict, provenance: dict) -> Path:
-    """Store ``{key: plain data}`` as one compressed npz (no pickles; the JSON tree is a 0-d str array)."""
-    trees, names, flat = {}, {}, {}
+    """Store ``{key: plain data}`` as one compressed npz without pickles: the JSON tree as a 0-d str array
+    and the arrays packed into one flat array per dtype (offset and shape in the JSON)."""
+    trees, names, parts, sizes = {}, {}, {}, {}
     for k, v in entries.items():
         tree, arrays = _encode(v)
-        trees[k], names[k] = _strip_exact(tree), sorted(arrays)
-        for n, a in arrays.items():
-            flat[f"{k}/{n}"] = a
+        trees[k], names[k] = tree, {}
+        for n in sorted(arrays):
+            a = np.asarray(arrays[n])
+            dt = a.dtype.str
+            names[k][n] = [dt, sizes.get(dt, 0), list(a.shape)]
+            parts.setdefault(dt, []).append(a.reshape(-1))
+            sizes[dt] = sizes.get(dt, 0) + a.size
     meta = json.dumps({"provenance": provenance, "entries": trees, "arrays": names}, sort_keys=True)
     REF_DIR.mkdir(parents=True, exist_ok=True)
     p = path_for(group)
-    np.savez_compressed(p, __json__=np.array(meta), **flat)
+    np.savez_compressed(p, __json__=np.array(meta), **{dt: np.concatenate(v) for dt, v in parts.items()})
     _frozen.cache_clear()
     frozen_entries.cache_clear()
     return p
-
-
-def _strip_exact(tree):
-    if isinstance(tree, list):
-        return [_strip_exact(x) for x in tree]
-    if isinstance(tree, dict):
-        return {k: _strip_exact(v) for k, v in tree.items() if k != "__exact__"}
-    return tree
 
 
 def all_keys(groups=GROUPS) -> dict[str, list[tuple[str, Callable, Any]]]:
@@ -325,40 +294,41 @@ def thaw_obj(d):
 
 
 # ------------------------------------------------------------------------------ drift comparison
-def assert_same(live_value, frozen_value, rtol: float, path: str = "$") -> None:
-    """Live telser-tools output vs its frozen copy: arrays to ``rtol`` of their scale, the rest exactly
-    (floats to ``rtol``), digests bit for bit."""
+def drift_mismatches(live_value, frozen_value, tol: Callable[[str], float | None], path: str = "$") -> list[str]:
+    """Where a live telser-tools output differs from its frozen copy: floating-point arrays beyond
+    ``tol(path)`` (relative, and absolute times max(1, largest entry)), floats beyond rel/abs ``tol(path)``,
+    anything else (integers, bools, strings, None, shapes, keys) if not equal."""
     a, b = live_value, frozen_value
-    if isinstance(b, Digest):
-        assert isinstance(a, Digest) and a == b, f"{path}: bitwise digest changed"
-        return
+    t = tol(path)
+    if t is None:
+        return []
     if isinstance(b, np.ndarray):
-        assert isinstance(a, np.ndarray), f"{path}: {type(a).__name__} vs array"
-        assert a.shape == b.shape and a.dtype == b.dtype, (path, a.shape, b.shape, a.dtype, b.dtype)
+        if not isinstance(a, np.ndarray) or a.shape != b.shape or a.dtype != b.dtype:
+            return [f"{path}: {getattr(a, 'dtype', type(a))}{getattr(a, 'shape', '')} vs {b.dtype}{b.shape}"]
         if b.dtype.kind in "biu":
-            np.testing.assert_array_equal(a, b, err_msg=path)
-        else:
-            fin = np.isfinite(b)
-            np.testing.assert_array_equal(np.isfinite(a), fin, err_msg=path)
-            np.testing.assert_array_equal(a[~fin], b[~fin], err_msg=path)
-            scale = np.abs(b[fin]).max() if fin.any() else 0.0
-            np.testing.assert_allclose(a[fin], b[fin], rtol=rtol, atol=rtol * scale, err_msg=path)
-        return
+            return [] if np.array_equal(a, b) else [f"{path}: integer/bool values differ"]
+        fin = np.isfinite(b)
+        if not (np.array_equal(np.isfinite(a), fin) and np.array_equal(a[~fin], b[~fin], equal_nan=True)):
+            return [f"{path}: non-finite entries differ"]
+        if not fin.any():
+            return []
+        scale = max(np.abs(b[fin]).max(), 1.0)
+        d = np.abs(a[fin] - b[fin])
+        bad = d > t * scale + t * np.abs(b[fin])
+        return [f"{path}: max |live - frozen| = {d.max():.3g} (scale {scale:.3g}, rtol {t:g})"] if bad.any() else []
     if isinstance(b, dict) and b.keys() == {"shape", "index", "value"}:          # sparse(): compare dense
-        assert isinstance(a, dict) and a.keys() == b.keys(), path
-        assert_same(dense(a), dense(b), rtol, path)
-        return
+        if not (isinstance(a, dict) and a.keys() == b.keys()):
+            return [f"{path}: not a sparse array"]
+        return drift_mismatches(dense(a), dense(b), tol, path)
     if isinstance(b, dict):
-        assert isinstance(a, dict) and a.keys() == b.keys(), (path, sorted(a) if isinstance(a, dict) else a, sorted(b))
-        for k in b:
-            assert_same(a[k], b[k], rtol, f"{path}.{k}")
-        return
+        if not (isinstance(a, dict) and a.keys() == b.keys()):
+            return [f"{path}: keys {sorted(a) if isinstance(a, dict) else type(a).__name__} vs {sorted(b)}"]
+        return [m for k in b for m in drift_mismatches(a[k], b[k], tol, f"{path}.{k}")]
     if isinstance(b, list):
-        assert isinstance(a, list) and len(a) == len(b), (path, a, b)
-        for i, (x, y) in enumerate(zip(a, b)):
-            assert_same(x, y, rtol, f"{path}[{i}]")
-        return
+        if not (isinstance(a, list) and len(a) == len(b)):
+            return [f"{path}: list of {len(a) if isinstance(a, list) else type(a).__name__} vs {len(b)}"]
+        return [m for i, (x, y) in enumerate(zip(a, b)) for m in drift_mismatches(x, y, tol, f"{path}[{i}]")]
     if isinstance(b, float) and isinstance(a, float):
-        assert a == pytest.approx(b, rel=rtol, abs=0.0, nan_ok=True), (path, a, b)
-        return
-    assert type(a) is type(b) and a == b, (path, a, b)
+        ok = a == pytest.approx(b, rel=t, abs=t, nan_ok=True)
+        return [] if ok else [f"{path}: {a!r} vs {b!r} (rtol {t:g})"]
+    return [] if (type(a) is type(b) and a == b) else [f"{path}: {a!r} vs {b!r}"]
