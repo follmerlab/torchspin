@@ -2,19 +2,19 @@
 
 This page summarizes, for each torchspin simulator, what it computes and how well that is checked.
 Each simulator has its own page with the equations, the method, the full list of tests, and the
-limitations. This page describes torchspin 0.9.31.
+limitations. This page describes torchspin 0.9.38.
 
 | Simulator | Computes | Method | Validated against | Strongest evidence | Main caveat |
 |---|---|---|---|---|---|
 | [pepper](physics/pepper.md), `pepper_autograd`, `differentiable_spectrum` | Rigid-limit CW EPR of powders and crystals, field or frequency sweeps; gradients | Exact, perturbative or hybrid resonance fields; interpolated powder grid; triangle projection | EasySpin (about 250 cases), closed-form intensity, converged grids, central differences | Cosine ≥ 0.999 and amplitude ±2 % on 101 ported EasySpin tests; powder integral to 1e-4; autograd = pepper to 1e-9 | The default grid is not converged for narrow lines on a large hyperfine; check with `grid_convergence` ([§ choosing a method](../KNOWN_LIMITATIONS.md#pepper--choosing-a-method-and-what-each-costs-2026-10-07)) |
 | [garlic](physics/garlic.md) | Isotropic and fast-motion solution CW EPR | Exact Breit–Rabi line positions; Kivelson–Freed widths | EasySpin, central differences | Line positions to 1e-6 mT, spectra cosine > 0.9999 | Fast motion only; use chili for slow motion ([§ Garlic](../KNOWN_LIMITATIONS.md#garlic--what-is-and-is-not-ported)) |
-| [chili](physics/chili.md) | Slow-motion CW EPR | Stochastic Liouville equation; Lanczos continued fraction | EasySpin (60 cases), EasySpin's internal matrices | Cosine > 0.999, amplitude ±2 %; basis and operators identical to EasySpin | Not differentiable; choose `LLMK` yourself; solver fixes in progress ([chili rules](chili_empirical_rules.md)) |
+| [chili](physics/chili.md) | Slow-motion CW EPR | Stochastic Liouville equation; Lanczos continued fraction | EasySpin (60 cases), EasySpin's internal matrices | Cosine > 0.999, amplitude ±2 %; basis and operators identical to EasySpin | Not differentiable; choose `LLMK` yourself; no converged-basis test ([symmetry basis](chili_empirical_rules.md)) |
 | [salt](physics/salt.md) | Powder ENDOR at fixed field | EPR resonance search, ENDOR transitions, triangle projection | EasySpin, closed forms, central differences | Cosine > 0.999 on an 8-case suite; first-order path = EasySpin `perturb1` to cosine > 0.999999 | Absolute scale is EasySpin × Δx/(8π²); field-swept mode is a torchspin extension ([§ ENDOR](../KNOWN_LIMITATIONS.md#endor-salt)) |
 | [saffron, saffron_thyme, spidyan](physics/pulse.md) | Pulse EPR: ESEEM, HYSCORE, Mims ENDOR, real and shaped pulses, arbitrary sequences | Ideal-pulse pathway sums; stepwise propagation | EasySpin, closed forms | Relative L2 error 1e-6 to 1e-12 on raw and mean-centered signals | saffron gradients use the time-domain path, which EasySpin validates only indirectly ([§ Pulse EPR](../KNOWN_LIMITATIONS.md#pulse-epr--saffron-spidyan-and-saffron_thyme-are-matlab-validated)) |
 | [cardamom](physics/cardamom.md) | CW EPR from stochastic or MD orientation trajectories | Density-matrix propagation along trajectories, FFT of the FID | EasySpin (3 cases, statistical) | Cosine 0.9992–0.9998 for diffusion | Finite-ensemble noise; test tolerance only cosine > 0.97 ([§ Cardamom](../KNOWN_LIMITATIONS.md#cardamom--validated-against-easyspin-2026-09-02)) |
 | [curry, blochsteady](physics/curry_blochsteady.md) | Magnetization, susceptibility; Bloch steady state | Boltzmann averages over a powder; frequency-domain Bloch solve | EasySpin, Curie law | 0.5–1 % of the maximum on 4 curry cases | χ is a 1 mT finite difference, as in EasySpin |
 | [esfit](physics/esfit.md) | Fits of any simulator to data | Ten local and global optimizers | EasySpin fits, SciPy | Reaches EasySpin's residual or better on 6 fits | Uncertainty outputs are not checked against a known covariance |
-| [lft](physics/ligand_field.md) | Ligand-field models: levels, g, magnetometry, powder spectra | Full dⁿ determinant basis; degenerate-safe derivatives | Closed forms, telser-tools, part of the Fortran output | 10Dq, 15B, Curie, TIP; exact gradients through degeneracies | telser-tools parity runs only where telser-tools is installed, not in CI ([lft.md](lft.md)) |
+| [lft](physics/ligand_field.md) | Ligand-field models: levels, g, magnetometry, powder spectra | Full dⁿ determinant basis; degenerate-safe derivatives | Closed forms, telser-tools, part of the Fortran output | 10Dq, 15B, Curie, TIP; exact gradients through degeneracies | telser-tools parity runs in CI against frozen references; Telser's Fortran printout is compared only for DTD and part of DLSD5 ([lft.md](lft.md)) |
 
 ## How torchspin validates
 
@@ -51,8 +51,8 @@ with central differences of that simulator.
 ## Further reading
 
 - [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md): what is and is not ported, option by option.
-- [chili_empirical_rules.md](chili_empirical_rules.md): why chili's default basis rule is exact, and
-  the three solver defects being fixed.
+- [chili_empirical_rules.md](chili_empirical_rules.md): chili's M–pS–pI symmetry basis, why it is
+  exact, and the solver defects fixed in 0.9.38.
 - For maintainers:
   - [coverage gaps](physics/coverage_gaps.md): what the tests do not yet cover.
   - [manuscript claims](physics/manuscript_claims.md): results measured on the manuscript's release

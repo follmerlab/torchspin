@@ -205,11 +205,10 @@ These match EasySpin, so parameters transfer directly:
 
 ## Documentation
 
-The documentation site has a user guide, the tutorials below, and an API
-reference for every public function and class with the parameters it accepts.
-Its sources are in [docs/](docs/index.md); CI builds it on every change (the
-HTML is a workflow artifact until GitHub Pages is enabled). To build it
-locally:
+**https://follmerlab.github.io/torchspin/** has a user guide, the tutorials
+below, and an API reference for every public function and class with the
+parameters it accepts. Its sources are in [docs/](docs/index.md); CI builds it
+on every change and publishes it from `main`. To build it locally:
 
 ```bash
 pip install -e ".[docs]"
@@ -251,8 +250,15 @@ maximum; absolute intensities are matched where EasySpin defines them. The pulse
 relative L2 error on the raw *and* the mean-centered signal, 1e-16..1e-7 —
 because a cosine is scale-invariant and dominated by a pulse-EPR trace's DC
 offset.
-`chili` and the stochastic `cardamom` have documented caveats. Details per
-simulator, with the evidence: [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
+`chili` and the stochastic `cardamom` have documented caveats. Where EasySpin
+and an objective check (a closed form, a converged grid, a rotation invariance)
+disagree, torchspin follows the objective check: strain widths in tilted frames
+are rotation covariant (0.9.33), and projected `pepper`/`salt` spectra use
+centered bins instead of EasySpin's half-bin offset (0.9.35). The EasySpin
+comparisons those changes move are kept as strict expected failures with
+their measured numbers. Details per simulator, with the evidence:
+[physics and validation](https://follmerlab.github.io/torchspin/physics_validation.html)
+and [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
 
 On speed, torchspin is competitive rather than uniformly faster. On an audited
 nine-workload comparison (measured on v0.2.2) it beat EasySpin on six — most strongly on

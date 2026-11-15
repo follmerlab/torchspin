@@ -151,8 +151,13 @@ Which method to use, and what each costs, is in
   1.6–5.6 % for strongly curved levels ([lft_gap_analysis.md](../lft_gap_analysis.md)).
 - Grid discretization: the default `GridSize=[19,4]` is not converged for narrow lines on a large
   hyperfine coupling. Check with `torchspin.grid_convergence`.
-- Each bin's integral is reported at its lower edge, half a bin low, as in EasySpin. The pending B85
-  change centers the bins.
+- Projected spectra use centered bins: point k carries the facet density integrated against a hat
+  of half-width Δ centered on x_k (0.9.35, B85). EasySpin reports each bin at its lower edge, half
+  a bin low. The 168 EasySpin comparisons this moves are strict xfails with their measured numbers;
+  re-run against EasySpin mapped onto centered bins, 73 pass at their original tolerances
+  (`test_b85_easyspin_centered.py`). Converged references decide
+  (`test_projection_centered.py`, `test_projection_accuracy.py`,
+  [§ Centered projection bins](../../KNOWN_LIMITATIONS.md#centered-projection-bins-deliberate-deviation-from-easyspin-0935-b85)).
 - In the differentiable path, the projection is piecewise linear. Gradients are exact almost
   everywhere but have kinks where a vertex crosses a bin edge.
 - With differentiated frame angles the grid becomes Ci

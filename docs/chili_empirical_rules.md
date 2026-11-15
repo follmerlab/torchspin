@@ -1,49 +1,65 @@
-# chili's basis-symmetry and amplitude rules: basis, scope, validation
+# chili's M–pS–pI symmetry basis: derivation and validation
 
-This page investigates the two "empirical" compatibility rules in torchspin's `chili`. Both are
-applied when `ChiliOptions.MpSymm` is left at `None`:
+`chili` computes slow-motion spectra in a basis that is pruned by an exact symmetry, the M–pS–pI
+(Meirovitch) selection rule, whenever that symmetry holds. This page derives the rule, shows how
+torchspin recovers the full spectrum from the pruned basis, and records the evidence: the torchspin
+tests, four MATLAB checks against EasySpin, and the investigation that replaced an earlier empirical
+rule.
 
-- **Symmetry-selection rule** (`torchspin/chili_sle.py:1038-1046`). The M–pS–pI (Meirovitch) symmetry
-  basis is used when all of the following hold:
-  - one electron with S = 1/2,
-  - at most two nuclei,
-  - no orienting potential,
-  - a rhombic basis (`LLMK` with Mmax > 0 and Kmax > 0).
+## What torchspin does (since 0.9.38)
 
-  For any other system, the plain general basis is used.
-- **Amplitude rule** (`chili_sle.py:1187`). When the symmetry basis was selected automatically, the
-  spectrum is divided by 2.
+- **When the basis is pruned.** `ChiliOptions.MpSymm=None` (the default) prunes whenever there is no
+  director tilt: any spin system, with no orienting potential or one with M = 0 terms only, and
+  `GridSize=1` or an untilted `SampleFrame`. Under director tilt, or with M ≠ 0 potential terms, the
+  plain basis is used.
+- **The spectrum does not depend on `MpSymm`.** The pruned basis keeps the pS + pI − M = +1 block.
+  torchspin adds the −1 block's response exactly, as the complex-conjugate mirror of the +1 block
+  (see [Basis of the rule](#basis-of-the-rule)). `MpSymm=None`, `True` and `False` therefore return
+  the plain-basis spectrum, and pruning shrinks the basis about 6×.
+- **`highField=True`.** There is no −1 half (pSmin = +1), so nothing is mirrored and the factor is 1.
+- **An explicit `MpSymm=True` where the symmetry does not hold** (director tilt, or M ≠ 0 potential
+  terms) raises `ValueError`.
+- **Lanczos stopping.** A step that passes the continued-fraction test is accepted only if the
+  spectrum then moves by less than 100 × `Threshold` over the next interval. A full-length
+  tridiagonalization, or an exact breakdown, counts as converged. If the Lanczos does not converge,
+  chili warns once (`RuntimeWarning`) and uses the direct solver.
 
-The rules were introduced on 2026-09-02 (CHANGELOG, "Fixed — chili default basis"), and are therefore
-also in v0.2.2, the manuscript's release. Their stated basis was numerical: EasySpin's compiled
-`fast` builder, its default for these systems, was matched against its general method. The results
-were "general + MpSymm at half amplitude" for a rhombic basis and "plain general" for an axial one
-([KNOWN_LIMITATIONS § Chili](../KNOWN_LIMITATIONS.md#chili--slow-motion-sle-rewritten-2026-09-01)).
+**Deviations from EasySpin, by design** (also in
+[KNOWN_LIMITATIONS § Chili](../KNOWN_LIMITATIONS.md#chili--slow-motion-sle-rewritten-2026-09-01)):
 
-## Findings
+- With `MpSymm=True`, EasySpin's general method drops the −1 half and returns twice the plain-basis
+  amplitude. torchspin returns the plain-basis spectrum.
+- EasySpin's general method prunes under director tilt too, and the result is wrong. torchspin raises
+  instead.
+- EasySpin's Lanczos accepts the first passing check step. On a near-breakdown that can be far from
+  converged, and a non-converged run returns `ones(nPoints)`. torchspin checks one more interval and
+  falls back to the direct solver.
 
-1. **Both rules follow from an exact symmetry and the starting vector's normalization. They are not
-   empirical fits.** For a system without director tilt, the automatic result equals the converged
-   solution of the plain general basis to 1e-8 of the maximum. No EasySpin input is needed for that.
-2. **The plain general method is not a different model.** Its ~6 % difference from the `fast` builder
-   (cosine 0.937 at τc = 100 ns) comes from the Lanczos continued fraction stopping early. Solved
-   directly, the plain basis reproduces EasySpin's default output exactly as well as the automatic
-   rule does: cosine 0.999992 and amplitude 1.0000.
-3. **The rhombic/axial split has no physical meaning.** The identity holds equally for axial bases.
-   The split only marks where, in the stored cases, the plain-basis Lanczos happened to fail.
-4. **Defect, being fixed: the amplitude rule is wrong with `highField=True`.** Nothing is removed there,
-   so the factor should be 1. torchspin returns half the amplitude of the plain general solution.
-   No stored case covers this.
-5. **Defect, being fixed, shared with EasySpin's general method: an explicit `MpSymm=True` is wrong
-   with director tilt** (an orienting potential on a powder grid): cosine 0.726. The automatic rule never
-   selects it there.
+## Before 0.9.38: the empirical rule
 
-These two defects, and the early Lanczos stop in finding 2, are **being fixed (B114–B116, branch
-`fix/chili-mpsymm`)**. This page records the evidence for them. The coordinator could not reproduce
-the early stop on a nitroxide with LLMK [10 7 6 2]. The reproducing case here uses the default
-LLMK [14 7 2 6] at τc = 100 ns (Exp. 1, 3, 4), and [10 5 4 4] (Exp. 2).
+From 2026-09-02 (CHANGELOG, "Fixed — chili default basis", so also in v0.2.2, the manuscript's
+release) to 0.9.37, `MpSymm=None` applied an empirical compatibility rule. The symmetry basis was
+used at half amplitude only for one S = 1/2 electron with at most two nuclei, no orienting potential
+and a rhombic basis (Mmax > 0 and Kmax > 0). Every other system used the plain basis. The rule was
+fitted by matching EasySpin's `fast` builder against its general method.
 
-## Basis of the rules
+The investigation below found the following:
+
+1. **The rule follows from an exact symmetry; it is not an empirical fit.** Without director tilt the
+   automatic result equalled the converged plain-basis solution to 1e-8 of the maximum.
+2. **The plain general method was not a different model.** Its ~6 % difference from the `fast`
+   builder (cosine 0.937 at τc = 100 ns, 2048 points) was the Lanczos continued fraction stopping
+   early.
+3. **The rhombic/axial split had no physical meaning.** It only marked where, in the stored cases,
+   the plain-basis Lanczos happened to stop early.
+4. **The rule halved `highField=True` spectra** (B114).
+5. **An explicit `MpSymm=True` was wrong under director tilt** (B115; cosine 0.726 in Exp. 5b), as
+   EasySpin's general method still is.
+6. **The plain-basis Lanczos could stop early, silently** (B116).
+
+0.9.38 fixes all three defects (B114–B116).
+
+## Basis of the rule
 
 **Exact block structure.** Without director tilt, the lab-frame Liouvillian conserves pS + pI − M:
 
@@ -79,8 +95,21 @@ $$
 I_{\rm plain}=\tfrac12\,I_{\rm MpSymm}\,\big(1+O(10^{-8})\big)
 $$
 
-This is the half amplitude. The pruning also shrinks the basis about 6× (5616 → 969 functions for
-the default LLMK and one ¹⁴N).
+This is the half amplitude of the old rule. The pruning also shrinks the basis about 6× (5616 → 969
+functions for the default LLMK and one ¹⁴N).
+
+**The exact mirror term.** The 1e-8 residual above matters for large non-secular terms: it grows to
+4.9e-6 for ⁶³Cu with A_z = 600 MHz and to 2.2e-3 for S = 1 with D = 2 GHz at X-band. torchspin
+therefore does not use the factor ½. The −1 block is the complex-conjugate mirror of the +1 block, so
+
+$$
+I_{\rm plain}(z)=\tfrac12\big[I_{+}(z)+\overline{I_{+}(\bar z)}\big]
+$$
+
+with $z$ the complex frequency. The Lanczos needs no second recursion: the same tridiagonalization
+is evaluated at the mirrored frequencies. Against the plain basis solved directly, the result agrees
+to 5e-16 for a nitroxide, 6e-16 for ⁶³Cu, 5e-11 for S = 1 with D = 100 MHz and 2e-8 with
+D = 500 MHz. The last residual is not yet explained; direct and Lanczos solves give the same value.
 
 **EasySpin's `fast` builder computes $I_{\rm plain}$.**
 
@@ -101,10 +130,50 @@ peculiar to the C code.
 - Continued without the early stop, the same recursion converges to the direct solution by step 200
   (Exp. 4). The symmetry basis (210 steps) and `highField=True` (80 steps) converge normally.
 
-torchspin's port reproduces EasySpin's general method with this behavior, including its stopping
-rule.
+Up to 0.9.37, torchspin's port reproduced EasySpin's general method with this behavior, including its
+stopping rule.
 
-## Experiments
+## MATLAB checks (EasySpin, 2026-11-14)
+
+Four small jobs (`matlab -singleCompThread -batch`, one at a time) with the generator
+`tests/data/generate_chili_mpsymm_refs.m`. The outputs are stored as
+`tests/data/ref_chili_mpsymm_{a,b,c,d}.mat`. Settings: the nitroxide below, τc = 100 ns, default
+LLMK, 256 points.
+
+- **(a) fast vs general.** EasySpin's `fast` output and its general-method Lanczos agree (cosine
+  0.999999). Both are off the general method solved directly (cosine 0.964724, amplitude ratio
+  1.0129). The general Lanczos against general direct gives 0.964772, the number torchspin 0.9.37
+  gave for its plain basis. **EasySpin's default output for this system is a continued fraction that
+  stopped early.** The stored 2048-point example that the old rule was fitted to happened to
+  converge.
+- **(b) `highField`.** fast vs general direct: cosine 1.000000, ratio 1.00000. The factor is 1, which
+  confirms B114.
+- **(c) Tight threshold.** fast with `Opt.Threshold` 1e-10 or 1e-12 matches general direct (cosine
+  0.999998, ratio 1.00013). torchspin's default (pruned basis with the mirror term) and its plain
+  direct solve both match EasySpin's general direct solve at cosine 1.000000, ratio 1.00000.
+- **(d) `simple_tc1e-07`.** For the one loosened case of `test_chili_ext_matlab_validation.py`
+  (0.997 / 8 %), EasySpin's default fast output is 0.9979 / 1.069 from its own output at
+  `Threshold` 1e-10. torchspin matches the converged fast output at cosine 0.9999966. The loose entry
+  measures EasySpin's early stop, not a torchspin error.
+
+## Tests
+
+- `test_chili_mpsymm.py`: the pruned basis equals the plain basis over several spin systems and
+  options; the mirror term is needed and is exact; `highField` amplitude (also against EasySpin, b);
+  `MpSymm=True` raises under director tilt or M ≠ 0 potential terms; the automatic basis is plain
+  under tilt.
+- `test_chili_lanczos.py`: plain-basis Lanczos equals the direct solve; the default equals
+  EasySpin's converged output (a, c); a full-length tridiagonalization counts as converged; a
+  non-converged Lanczos falls back to the direct solver with a warning; `simple_tc1e-07` matches
+  EasySpin's converged fast output (d).
+- `test_chili_default_basis.py`: the default matches EasySpin's default at four correlation times
+  (cosine > 0.9999), and the plain basis now does too. Before the fix this test asserted
+  0.93 < cosine < 0.95 for the plain basis, which encoded the early stop.
+
+Default outputs on the stored EasySpin cases changed by at most 0.06 % in amplitude
+(`simplepotential_grid19`). No tolerance was loosened.
+
+## Investigation (torchspin 0.9.31, before the fix)
 
 All runs used torchspin `main` 80c782d (0.9.31) with torch 2.15.0, NumPy 2.5.4 and SciPy 1.18.1, on
 CPU:
@@ -114,7 +183,7 @@ PYTHONPATH=<worktree> OMP_NUM_THREADS=2..4 python expN_*.py <worktree>
 ```
 
 The scripts are in the session scratch directory (`docs-physics/exp*.py`). Each one is a few lines
-of `chili` calls with `ChiliOptions(MpSymm=..., Solver=...)`. MATLAB was not run.
+of `chili` calls with `ChiliOptions(MpSymm=..., Solver=...)`. The MATLAB checks came later (see above).
 
 The nitroxide used throughout:
 
@@ -185,119 +254,31 @@ plain-direct.
 MpSymm Lanczos at thresholds 1e-6 and 1e-10, and MpSymm direct. Auto against MpSymm-direct/2 gives
 cosine 1 − 6e-8 and amplitude 1.0003. All of them are 0.99798 / 1.066 from EasySpin's stored `fast`
 output. The residual therefore lies between EasySpin's fast output and the converged general model,
-not in torchspin's basis choice. Its cause is open; one candidate is the fast builder's own Lanczos
-stop.
+not in torchspin's basis choice. MATLAB check (d) later confirmed the cause: the fast builder's
+own Lanczos stop.
 
 **Exp. 8** (S = 1 and ¹⁴N + 2 ¹H at 100 ns, rhombic [10 5 2 4]). These systems are outside the rule,
 so the automatic result is plain Lanczos. S = 1: Lanczos vs direct cosine 1.000000, amplitude 1.0007.
 The three-nucleus direct solves were stopped unfinished (see the end of the Scope section).
 
-## Scope
+## Open items
 
-**Verified against EasySpin (stored cases).** The rule fires in these cases:
-
-- the 4 τc of `test_chili_default_basis.py`;
-- the 4 cases of `test_chili_matlab_validation.py`;
-- 33 cases of `test_chili_ext_matlab_validation.py`:
-  - `simple_*` ×5, `rhombicdiff_*` ×3, `appfield_14N`, `fullA_*` ×2, `fullg_*` ×2, `freqsweep_14N`;
-  - `frqdep_*` ×4, `mwphase_*` ×2, `temperature_*` ×3, `magnetictilt_*` ×2;
-  - `twocomp_*` ×3, `twonuclei_15N_1H`, `postconv_*` ×2, `largebasis_*` ×2;
-- plus the 4 `LiouvMethod='general'` cases of Exp. 6.
-
-Most of these cases use the default LLMK, at τc ≤ 100 ns. All are field or frequency sweeps of
-S = 1/2 with 0–2 nuclei. `highField` is false and no potential is present in any of them.
-
-**Verified by the identity (torchspin only, Exp. 2).** The identity was checked on:
-
-- other LLMK, including odd L, Mmax > Kmax and axial bases;
-- `evenK=False` and `jKmin=-1`;
-- `pImax`;
-- tilted tensor frames;
-- no nucleus, and two nuclei.
-
-**Outside the scope.**
-
-- **`highField=True`:** the factor should be 1, but the code divides by 2 (finding 4).
-- **S > 1/2, more than 2 nuclei, potentials:** the rule does not fire, and the plain general method
-  is used, as in EasySpin, whose `fast` builder rejects these systems.
-  - Without director tilt the symmetry still holds: S = 1 in Exp. 2, and a potential at
-    `GridSize=1` in Exp. 5b.
-  - Their default results depend on the plain-basis Lanczos converging, and no test checks that
-    (see Exp. 8).
-- **Director tilt (potential with `GridSize > 1`):** the symmetry is not exact. An explicit
-  `MpSymm=True` is wrong there (finding 5).
-- **EasySpin's old-style potential:** EasySpin's `fast` builder also accepts it. torchspin has no
-  old-style-potential input, so this case does not arise.
-- **Two nuclei in MATLAB:** the code comment records fast against general + MpSymm with an amplitude
-  ratio of 2.0024. That is 0.12 % beyond the identity, unexplained.
-
-Exp. 8: for S = 1 (D = 100 MHz, E = 20 MHz, τc = 100 ns, LLMK [10 5 2 4]), the automatic plain Lanczos result equals the direct solve (cosine 1.000000, amplitude 1.0007). The three-nucleus cases (¹⁴N + 2 ¹H) at [10 5 2 4] and [6 0 2 2] did not finish their direct solves within about 30 minutes and were stopped. Out-of-scope convergence remains untested for more than two nuclei.
-
-## Recommendation
-
-**Derivation.** No further derivation is needed for torchspin's side. The identity
-$I_{\rm plain}=\tfrac12 I_{\rm MpSymm}$ (no director tilt, pSmin = −1) is exact up to the
-negative-frequency term, and is confirmed numerically. What remains empirical is EasySpin's side: that
-the `fast` builder computes the converged $I_{\rm plain}$. That needs the MATLAB checks below. It
-should not be built into the code as an assumption.
-
-**Proposed code direction (input to the B114–B116 fix; not implemented on this branch).** Replace the empirical condition with the derived one:
-
-- Apply the M–pS–pI pruning whenever there is no director tilt, for any spin system.
-- Scale by 1/2 only when pSmin = −1. With `highField=True` the factor is 1.
-- Ignore or reject `MpSymm=True` at tilted orientations.
-
-This removes the rhombic/axial distinction, fixes finding 4, and shrinks the basis about 6× for every
-untilted system. Separately, make the Lanczos stopping rule robust: require the convergence test on
-two consecutive intervals, or flag a near-breakdown |β| and fall back to the direct solver for small
-bases. Otherwise `MpSymm=False` and the out-of-scope systems can silently return a truncated
-continued fraction.
-
-**Proposed tests (not written).**
-
-1. Identity: auto equals `MpSymm=False, Solver='\\'` (amplitude 1e-6, cosine 1 − 1e-9). Run it over
-   default, axial and odd-L bases, 0, 1 and 2 nuclei, and S = 1.
-2. `highField=True`: auto amplitude equals plain-direct. This fails on `main`, so add it as a strict
-   xfail or together with the fix.
-3. Lanczos against direct at 1e-6 for the slow-motion cases, including out-of-scope systems.
-4. `MpSymm=True` with `GridSize > 1` and a potential raises, or equals the plain basis.
-5. Tighten `simple_tc1e-07` only after the MATLAB check (c) below explains it.
-
-**MATLAB checks for the lead.** Each is one small `matlab -singleCompThread -batch` job. They use the
-nitroxide above, and each compares `max(abs(y))` and the cosine:
-
-- **(a)** General Lanczos vs general direct vs fast. Expected: `yd` equals `yf` (cosine ≈ 1, ratio 1),
-  and `yg` is off (0.937). This would confirm that EasySpin's general-method difference is its Lanczos
-  stop.
-
-  ```matlab
-  Sys = struct('g',[2.0089 2.0058 2.0021],'Nucs','14N','A',[16 16 100],'tcorr',1e-7,'lw',[0 0.05]);
-  Exp = struct('mwFreq',9.5,'Range',[328 352],'nPoints',2048,'Harmonic',1);
-  [~,yf] = chili(Sys,Exp);                                          % default = fast
-  [~,yg] = chili(Sys,Exp,struct('LiouvMethod','general'));          % plain, Lanczos
-  [~,yd] = chili(Sys,Exp,struct('LiouvMethod','general','Solver','\'));  % plain, direct
-  ```
-
-- **(b)** Fast vs general with `highField`. Expected ratio 1. That would confirm finding 4: torchspin
-  returns 0.5 of it.
-
-  ```matlab
-  [~,f] = chili(Sys,Exp,struct('highField',true));
-  [~,g] = chili(Sys,Exp,struct('highField',true,'LiouvMethod','general','Solver','\'));
-  ```
-
-- **(c)** For `simple_tc1e-07` (Sys/Exp in `tests/data/generate_chili_ext_refs.m`), compare fast with
-  general + `Solver='\'` (and `MpSymm=true`, output/2). This shows whether the 0.998 / 6.6 % residual
-  is in EasySpin's fast output.
-- **(d)** Optional: ¹⁵N + ¹H with LLMK [8 0 2 2], fast vs general direct, to explain the 2.0024 ratio.
+- **`simple_tc1e-07` loose entry.** It could be tightened against the converged EasySpin reference
+  (d), which torchspin matches at cosine 0.9999966. That decision is pending.
+- **Two nuclei in MATLAB.** A code comment records fast against general + MpSymm with an amplitude
+  ratio of 2.0024, 0.12 % beyond the identity. Unexplained; possibly another early stop.
+- **The S = 1 mirror residual** of 2e-8 at D = 500 MHz is unexplained.
+- **`Solver='E'`** (eigenvalue solver) depends on the LAPACK build for ill-conditioned cases, so the
+  tests do not use it as an exact reference.
+- **No converged-basis test**: every test runs at the LLMK chosen for it.
 
 ## Implementation claims vs the manuscript
 
 The manuscript (v0.2.2) describes the chili comparison as EasySpin's "specialized fast Liouvillian
 construction" against TorchSpin's "general Liouvillian pathway". That is true of the builder, but
-incomplete: v0.2.2 already applied the automatic rule to that system. The same holds for 0.9.31.
-torchspin's default therefore used the symmetry basis at half amplitude. By the identity above, that
-is the converged general-method answer.
+incomplete: v0.2.2 already applied the automatic rule to that system, as did every release up to
+0.9.37. torchspin's default therefore used the symmetry basis at half amplitude. By the identity
+above, that is the converged general-method answer to 1e-8.
 
 The manuscript's NRMSE of 7.23e-5 (τc = 3 ns) is in the regime where the plain Lanczos also
 converges (Exp. 1/2 at 1–10 ns), so the numbers are unaffected. Findings 4 and 5 lie outside every

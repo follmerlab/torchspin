@@ -63,7 +63,8 @@ for the field-swept mode.
 
 - The first-order path has a 0.3–1 % area error against EasySpin's matrix default, for |A| ≤ 16 MHz.
 - The absolute scale is EasySpin's output × Δx/(8π²). This is a documented convention.
-- Bins are reported at their lower edge, as in EasySpin. The pending B85 change centers them.
+- Projected spectra use centered bins (0.9.35, B85), not EasySpin's lower-edge bins; see the
+  [pepper page](pepper.md).
 
 **Weak check.** `test_endorfrq_matlab_validation.py` compares the field-swept mode against EasySpin's
 fixed-field references, at cosine > 0.92.

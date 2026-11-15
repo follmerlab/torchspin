@@ -1,15 +1,15 @@
 # Coverage gaps (developer notes)
 
 This page is for maintainers. It lists what the test suite does not cover, as of 0.9.31 (`main`
-80c782d). The user-facing evidence is on the [summary page](../physics_validation.md) and the
+80c782d). Items closed by 0.9.38 are marked **Closed** and kept for the record. The user-facing evidence is on the [summary page](../physics_validation.md) and the
 per-simulator pages.
 
 The gaps were identified from the evidence on those pages before any test was proposed. Each entry says what
 is untested, why it matters, and what test would close it. The tests are proposals only; none were
 written.
 
-1. **chili: no check of the Lanczos result against a direct solve.** Being fixed (B114–B116,
-   `fix/chili-mpsymm`).
+1. **chili: no check of the Lanczos result against a direct solve.** **Closed in 0.9.38** (B116,
+   `test_chili_lanczos.py`).
    - Untested: whether the continued fraction converged. On the plain general basis it stops early.
      The τc = 100 ns nitroxide stops at step 40 on a near-breakdown (|β| = 2.3e-3, median 0.25). The
      result has cosine 0.9375 against its own direct solution ([chili_empirical_rules.md](../chili_empirical_rules.md), Exp. 1/4).
@@ -17,7 +17,8 @@ written.
      may also be affected.
    - Proposed test: for each stored chili case and a set of slow-motion bases, compare Lanczos and
      `Solver='\\'` at 1e-6.
-2. **chili: `MpSymm=True` with director tilt.** Being fixed (B114–B116).
+2. **chili: `MpSymm=True` with director tilt.** **Closed in 0.9.38** (B115: raises;
+   `test_chili_mpsymm.py`).
    - Untested, and silently wrong: an explicit `MpSymm=True` with an orienting potential on a powder
      grid. The M–pS–pI pruning is exact only without director tilt. Measured cosine 0.726 against the
      plain basis at `GridSize=5` (Exp. 5).
@@ -26,7 +27,8 @@ written.
    - The automatic rule is not affected, because it excludes potentials.
    - Proposed test: `MpSymm=True` with `GridSize > 1` either raises or is ignored at tilted
      orientations, and equals the plain basis.
-3. **chili: automatic rule with `highField=True`.** Being fixed (B114–B116).
+3. **chili: automatic rule with `highField=True`.** **Closed in 0.9.38** (B114;
+   `test_chili_mpsymm.py`, with an EasySpin reference).
    - Untested: no stored case. The rule halves the amplitude (measured ratio 0.5000 against the plain
      direct solution), although nothing is pruned.
    - Proposed test: auto vs `MpSymm=False, Solver='\\'` amplitude ratio 1 to 1e-6, plus one EasySpin
@@ -36,15 +38,16 @@ written.
      with EasySpin passes.
    - Proposed test: spectra at LLMK and at (L+4, L+4, M+2, K+2) for the slow-motion cases, with the
      bound measured.
-5. **lft parity tests are skipped in CI.** Approved; frozen telser-tools references are being added
-   on a separate branch.
+5. **lft parity tests are skipped in CI.** **Closed in 0.9.38**: frozen telser-tools references
+   (`torchspin/tests/_telser_refs.py`); magnetometry parity stays live-only. The DLSD5 trigonal and
+   DIPOLE Fortran outputs below are still unread.
    - Untested in CI: telser-tools is not installed there, so the main reference evidence for ddn,
      ddnloop, ddnpow, ddpowh/ddpowj, dpn, dsoxf and tanabe_sugano never runs.
    - Proposed test: freeze telser-tools' exact-mode outputs for the golden inputs as fixtures in
      `torchspin/tests/data/telser/`, and compare against them without the package.
    - Also: use the stored DLSD5 trigonal and DIPOLE Fortran outputs, which are present but unread.
 6. **Shared-model defects need objective checks per option.**
-   - Covariance and converged references exist for B74, B82, B84 (pending), B85 (pending) and B90.
+   - Covariance and converged references exist for B74, B82, B84 (0.9.33), B85 (0.9.35) and B90.
    - There is no systematic rotation-covariance test (rotate tensors, frames and sample together;
      the spectrum must not change) for every strain and frame option.
    - B96 (AStrain mI labels not rotation-covariant, 7–20 %) is a candidate in this class.
@@ -85,7 +88,7 @@ written.
     - CUDA tests and the two expensive cupc cases never run in CI. (The full-suite job does set
       `TORCHSPIN_STRICT_REFS`, so a missing reference file fails it.)
     - Proposed: a periodic CUDA job.
-14. **After B85 (pending).**
+14. **After B85 (landed in 0.9.35).**
     - About 168 EasySpin comparisons become strict xfails. That removes positive R evidence for the
       projection-based paths (pepper, salt).
     - Proposed: before release, check that every xfailed comparison is paired with a passing check,

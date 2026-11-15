@@ -9,7 +9,8 @@ band energies, magnetometry, g values and EPR spectra. The user guide is [lft.md
 - Closed forms hold: 10Dq, 15B, Landé intervals, the Curie law, and Van Vleck TIP.
 - Gradients are exact through degeneracies.
 - Every golden input of Telser's programs matches telser-tools to 1e-10.
-- **That parity is not run in CI**, because CI does not install telser-tools.
+- That parity runs in CI against frozen telser-tools references, and live where telser-tools is
+  installed.
 
 Test files are in `torchspin/tests/`.
 
@@ -56,7 +57,9 @@ with exact field-point line shapes.
     inputs.
   - `test_lft_telser2torchspin.py::test_ddzhq_levels_and_probabilities`.
 
-  These tests skip when telser-tools is not installed.
+  Without telser-tools they compare against frozen references
+  (`torchspin/tests/data/telser/refs/`); `test_lft_telser_refs.py` checks that the frozen copies
+  still match live telser-tools. Only the magnetometry parity is live-only.
 - Stored Fortran printout is compared only by `test_lft_dtd.py::test_matches_dtd_fortran_printout`
   and part of DLSD5 (`test_lft_dlsd5.py::test_tetragonal_branches_reproduce_dlsd5_fortran_k`).
 - telser-tools "exact mode" is itself a corrected port. The parity therefore tests against corrected
