@@ -1339,10 +1339,12 @@ Line positions use EasySpin's algorithm exactly (per-nuclear-group
 Breit–Rabi fixed-point solver by default, or `Options.Method='perturbN'`),
 including sets of equivalent nuclei (`SpinSystem.n`), frequency sweeps
 (`Field` + `mwRange`), `CenterSweep`, field modulation (`ModAmp`), Boltzmann
-polarization and full g/A matrices. Not ported: automatic sweep ranging
-(`Experiment.Range` or `CenterSweep` is required), natural-abundance isotope
-mixtures and multi-component input (`compisoloop`), and `Opt.separate`.
-Equivalent nuclei are not allowed in the fast-motion regime (same as
+polarization, full g/A matrices, automatic sweep ranging (one component;
+with several components, including natural-abundance isotope mixtures,
+`Experiment.Range` or `CenterSweep` is required, as in EasySpin),
+natural-abundance isotope mixtures and multi-component input (`compisoloop`),
+and `Options.separate`. (Before the 0.9.38 docs this paragraph listed the last
+four as not ported; they had been ported earlier.) Equivalent nuclei are not allowed in the fast-motion regime (same as
 EasySpin). When no broadening is given, a requested derivative harmonic
 falls back to the absorption stick spectrum (EasySpin's auto-harmonic).
 
