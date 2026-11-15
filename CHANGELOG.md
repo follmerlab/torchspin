@@ -6,6 +6,61 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.9.38] — 2026-11-15
+
+### Added
+
+- **Documentation site** (https://follmerlab.github.io/torchspin/), built with Sphinx from `docs/`
+  (pydata-sphinx-theme, MyST Markdown, notebooks rendered without execution).
+  - Navigation, user-first: Getting started, a User guide of task pages with checked examples,
+    Tutorials, Installation, the API reference, and Troubleshooting and reference.
+  - The API reference documents every public name (198) at its public path. A local extension
+    adds repository links, the tutorial notebooks, a constants directive and a warning for any undocumented public
+    name.
+  - The `docs` workflow builds the site for every pull request and deploys it from `main` to
+    GitHub Pages. `pip install -e ".[docs]"` and `make -C docs html` build it locally.
+  - The development notes (roadmap, real-pulse plan, acceleration notes) stay in the repository
+    but are not published.
+- **Standardized docstrings** (NumPy style) for the core API (`SpinSystem`, `Experiment`,
+  `Options`, `pepper`, `garlic`, `esfit`/`FitOptions`/`FitResult`, `differentiable_spectrum`,
+  `grid_convergence`) and all 22 public `torchspin.lft` modules, with cross-references between
+  public names. Code is unchanged (checked file by file with docstrings stripped); some
+  docstrings that disagreed with the code were corrected (e.g. the `Harmonic` default, `ModAmp`
+  readers, `esfit` `target='auto'`, the claim that Euler frames carry no gradient). The site
+  builds with no warnings.
+- **Doctests in the default test suite:** `torchspin/tests/test_doctests.py` runs the docstring
+  examples of 29 modules.
+- **Physics and validation pages:** `docs/physics_validation.md` (one row per simulator: what
+  it computes, method, what it is validated against, strongest evidence, main caveat; the five
+  kinds of evidence) and one page per simulator in `docs/physics/` (model, method, validation
+  with the test files, limitations). `docs/chili_empirical_rules.md` derives chili's symmetry
+  basis. Developer pages, not on the site: `docs/physics/coverage_gaps.md`,
+  `docs/physics/manuscript_claims.md`.
+- **Installation guide** (`docs/installation.md`): pip and uv routes for CPU and CUDA builds of
+  PyTorch, keeping an existing PyTorch, conda, contributors, and platform notes. Every route
+  says whether it creates the environment for you. `docs/installation_validation.md` records
+  what was tested (macOS arm64, Python 3.10–3.13, pip and uv, all nine tutorial notebooks
+  executed); Linux, Windows and CUDA routes are not yet validated by hand.
+- **`notebooks` extra** (`pip install "torchspin[notebooks]"`): Jupyter plus everything the
+  shipped tutorials import (matplotlib, ipywidgets, ipympl, cloudpickle).
+- **`install-docs` workflow**: checks the documented installation routes against a wheel of the
+  commit in clean Linux, Windows and macOS environments (on pull requests that touch them, and
+  weekly). It cannot exercise CUDA.
+
+### Changed
+
+- **PyTorch floor raised to `torch>=2.3,<3`.** The published floor `torch>=2.0` was wrong:
+  torch 2.0.1 and 2.1.2 fail (`torch.any(dim=tuple)` in `resfields_batch`), and 2.2.2 works
+  only with numpy < 2. Intel Macs, whose last PyTorch is 2.2.2, are no longer supported.
+- `torchspin.__all__` lists `ham_ezho` once (it was listed twice); the public names are
+  unchanged.
+- README: links the documentation site; corrected accuracy claims (salt > 0.99 with orientation
+  selection, curry 0.5–1 %, the speed numbers measured on v0.2.2); a shorter install section;
+  an acknowledgment that torchspin was developed with help from Claude (Anthropic).
+- KNOWN_LIMITATIONS: the garlic paragraph listed automatic sweep ranging, isotope mixtures,
+  multi-component input and `separate` as not ported; they are ported.
+- "Joshua Telser" is now "Josh Telser" throughout the docs and docstrings.
+
 ### Fixed
 
 - **chili: the M–pS–pI symmetry basis is derived, exact, and no longer halves `highField`
