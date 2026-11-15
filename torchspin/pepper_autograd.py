@@ -4,7 +4,7 @@
 :func:`torchspin.pepper.pepper` for the matrix-diagonalization path without strain,
 using the *same* stages -- resonance-field search with transition tracking
 (:func:`torchspin.resfields_batch.resfields_batch`), EasySpin grid interpolation,
-SOPHE triangle/zone projection, and EasySpin's sampled-kernel convolution and
+SOPHE triangle/zone projection (centered hat bins, :mod:`torchspin._projection`), and EasySpin's sampled-kernel convolution and
 harmonic -- but with every stage after the search written in torch, so that
 ``torch.autograd`` propagates gradients from the spectrum to the spin-system
 tensors (``sys.g``, ``sys.A``, ``sys.D``, ``sys.lw`` ...) that ``requires_grad``.
@@ -35,8 +35,11 @@ leaves keeps Dinfh, but an axial g given as three independent numbers gets D2h, 
 isotropic one D2h, a differentiated frame Ci -- otherwise the gradient along the
 symmetry-breaking directions would be wrong.  Such a run's spectrum then differs from the
 forward-only spectrum (grad-free inputs) by the grid discretization error: 0.1 % for a
-Cu(II) case at GridSize [31, 4], but up to ~17 % for an isotropic system, whose lines the
-projection bins where O3 draws exact templates.  Set ``Options.GridSymmetry`` explicitly
+Cu(II) case at GridSize [31, 4]; for an isotropic system, whose lines the projection
+splits linearly between two axis points where O3 draws exact templates, 2-3 % at
+dx/sigma = 0.28 and 2-5e-4 at dx/sigma = 0.035 (up to 34 % before the centered bins of
+0.9.35, B85, which also give the isotropic-direction gradient: before, sub-bin facets were
+truncated into one bin and had no position derivative).  Set ``Options.GridSymmetry`` explicitly
 to compare a gradient run with a forward-only one, or parameterize the symmetry you mean
 (a scalar g, shared leaves).
 """
@@ -160,163 +163,9 @@ def _conv_t(spec, dx, fwhm_g, fwhm_l, deriv, phase):
 # SOPHE projection in torch (EasySpin projecttriangles.c / projectzones.c)
 # =============================================================================
 
-def _ramp_bins_t(n: int, base: torch.Tensor, a: torch.Tensor, b: torch.Tensor, delta: float, rising: bool) -> torch.Tensor:
-    """Accumulate the linear ramps of the tent functions on ``[a, b]`` (fractional bin
-    coordinates, ``a ≤ b``) into a length-``n`` spectrum.  Torch port of
-    ``pepper._ramp_bins`` with ``f0 = base / ((b − a)·delta)``.
-
-    Differentiable in ``base``, ``a`` and ``b``; the bin indices are detached.  A
-    ramp of zero width (tied vertices, generic for axial systems where the
-    resonance field does not depend on φ) contributes nothing to the value but
-    its weight ``base·(b − a)/(2·delta)`` grows linearly with the width, so that
-    term is kept on the graph instead of being masked away — otherwise the
-    gradient with respect to parameters that lift the tie (A_x vs A_y) is wrong.
-    """
-    dev = base.device
-    spec = torch.zeros(n, dtype=_F64, device=dev)
-    width = b - a
-    first = torch.trunc(a).detach().long()
-    last = torch.trunc(b).detach().long()
-    ok = (width.detach() >= 0.0) & (first < n) & (last >= 0)
-    if not bool(ok.any()):
-        return spec
-    base, a, b, width, first, last = base[ok], a[ok], b[ok], width[ok], first[ok], last[ok]
-    one = first == last
-    if bool(one.any()):
-        idx = first[one]
-        inr = (idx >= 0) & (idx < n)
-        # f0·width²/2 with f0 = base/(width·delta): linear in the width, defined at width = 0
-        spec = spec.index_add(0, idx[inr], (base[one] * width[one] / (2.0 * delta))[inr])
-    multi = ~one
-    if not bool(multi.any()):
-        return spec
-    base, a, b, width, first, last = base[multi], a[multi], b[multi], width[multi], first[multi], last[multi]
-    f0 = base / (width * delta)                      # width > 0 here (different bins)
-    firstf = first.to(_F64); lastf = last.to(_F64)
-    # Edge bins from the small overlaps c, d and the width only: differences of
-    # O(bin index) terms such as b − (a+first+1)/2 cancel catastrophically for
-    # near-zero widths straddling a bin edge (f0 ∝ 1/width²).
-    c = firstf + 1.0 - a                             # overlap with the first bin, 0 < c ≤ width
-    d = b - lastf                                    # overlap with the last bin, 0 ≤ d < width
-    if rising:
-        v_first = f0 * c * c / 2.0
-        v_last = f0 * d * (width - d / 2.0)
-    else:
-        v_first = f0 * c * (width - c / 2.0)
-        v_last = f0 * d * d / 2.0
-    m = first >= 0
-    spec = spec.index_add(0, first[m], v_first[m])
-    m = last < n
-    spec = spec.index_add(0, last[m], v_last[m])
-    # interior bins lo .. hi-1: value f0·(k − (a − ½)) rising, f0·((b − ½) − k) falling
-    lo = torch.clamp(first + 1, min=0)
-    hi = torch.clamp(last, max=n)
-    has_int = lo < hi
-    if bool(has_int.any()):
-        f0i, ai, bi, lo, hi = f0[has_int], a[has_int], b[has_int], lo[has_int], hi[has_int]
-        if rising:
-            s1, s0 = f0i, -f0i * (ai - 0.5)
-        else:
-            s1, s0 = -f0i, f0i * (bi - 0.5)
-        S1 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, lo, s1).index_add(0, hi, -s1)
-        S0 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, lo, s0).index_add(0, hi, -s0)
-        c1 = torch.cumsum(S1, 0)[:n]; c0 = torch.cumsum(S0, 0)[:n]
-        # Bins that no interior covers get nothing (pepper._ramp_bins): the
-        # running sums leave a roundoff residual there.  The coverage count is
-        # integer (no graph); covered bins keep the same arithmetic, so their
-        # values and gradients are unchanged.
-        cnt = torch.zeros(n + 1, dtype=torch.long, device=dev).index_add(0, lo, torch.ones_like(lo)).index_add(0, hi, -torch.ones_like(hi))
-        cov = torch.cumsum(cnt, 0)[:n] > 0
-        spec = torch.where(cov, spec + c1 * torch.arange(n, dtype=_F64, device=dev) + c0, spec)
-    return spec
-
-
-def projecttriangles_t(tri_idx: torch.Tensor, areas: torch.Tensor, fun: torch.Tensor, amp: torch.Tensor,
-                       x0: float, delta: float, n: int) -> torch.Tensor:
-    """Differentiable SOPHE triangle projection (EasySpin ``projecttriangles``).
-
-    ``fun``/``amp``: ``(n_slots, n_knots)`` positions and amplitudes (NaN = no
-    resonance); ``tri_idx`` ``(nTri, 3)`` knot indices; ``areas`` ``(nTri,)`` solid
-    angles.  Returns the spectral density on the ``n``-point axis starting at
-    ``x0`` with step ``delta``, summed over slots and triangles.  Every
-    triangle's tent function is piecewise-linear in its three vertex positions
-    and linear in the amplitudes, so gradients exist almost everywhere."""
-    dev = fun.device
-    P = fun[:, tri_idx].reshape(-1, 3)                       # (n_slots·nTri, 3)
-    A = amp[:, tri_idx].reshape(-1, 3)
-    area = areas.to(_F64).repeat(fun.shape[0])
-    ok = ~torch.isnan(P.detach()).any(dim=1)
-    spec = torch.zeros(n, dtype=_F64, device=dev)
-    if not bool(ok.any()):
-        return spec
-    P, A, area = P[ok], A[ok], area[ok]
-    P, _ = torch.sort(P, dim=1)
-    amplitude = A.mean(dim=1)
-    left_b = (P[:, 0] - x0) / delta
-    middle_b = (P[:, 1] - x0) / delta
-    right_b = (P[:, 2] - x0) / delta
-    width = right_b - left_b
-    w1 = middle_b - left_b
-    w2 = right_b - middle_b
-    zero = width.detach() == 0.0
-    if bool(zero.any()):
-        fi = torch.trunc(left_b[zero]).detach().long()
-        inr = (fi >= 0) & (fi < n)
-        spec = spec.index_add(0, fi[inr], (amplitude[zero] * area[zero] / delta)[inr])
-    nz = ~zero
-    if not bool(nz.any()):
-        return spec
-    amplitude, area, left_b, middle_b, right_b, width, w1, w2 = (
-        amplitude[nz], area[nz], left_b[nz], middle_b[nz], right_b[nz], width[nz], w1[nz], w2[nz])
-    base = 2.0 * amplitude * area / width
-    spec = spec + _ramp_bins_t(n, base, left_b, middle_b, delta, rising=True)
-    spec = spec + _ramp_bins_t(n, base, middle_b, right_b, delta, rising=False)
-    return spec
-
-
-def projectzones_t(pos: torch.Tensor, amp: torch.Tensor, seg_weights: torch.Tensor,
-                   x0: float, delta: float, n: int) -> torch.Tensor:
-    """Differentiable axial-grid projection (EasySpin ``projectzones``): each segment
-    between consecutive knots spreads a uniform density over its field interval.
-    ``pos``/``amp``: ``(n_slots, n_knots)``; ``seg_weights``: ``(n_knots-1,)``."""
-    dev = pos.device
-    nSeg = seg_weights.shape[0]
-    p0, p1 = pos[:, :nSeg], pos[:, 1:nSeg + 1]
-    left = torch.minimum(p0, p1).reshape(-1); right = torch.maximum(p0, p1).reshape(-1)
-    meanAmp = ((amp[:, :nSeg] + amp[:, 1:nSeg + 1]) / 2.0 / delta).reshape(-1)
-    sw = seg_weights.to(_F64).repeat(pos.shape[0])
-    spec = torch.zeros(n, dtype=_F64, device=dev)
-    ok = ~(torch.isnan(left.detach()) | torch.isnan(right.detach()))
-    left, right, meanAmp, sw = left[ok], right[ok], meanAmp[ok], sw[ok]
-    left_b = (left - x0) / delta; right_b = (right - x0) / delta
-    first = torch.trunc(left_b).detach().long(); last = torch.trunc(right_b).detach().long()
-    ok = (first < n) & (last >= 0)
-    left_b, right_b, meanAmp, sw, first, last = left_b[ok], right_b[ok], meanAmp[ok], sw[ok], first[ok], last[ok]
-    if left_b.numel() == 0:
-        return spec
-    one = first == last
-    if bool(one.any()):
-        idx = first[one]; inr = (idx >= 0) & (idx < n)
-        spec = spec.index_add(0, idx[inr], (meanAmp[one] * sw[one])[inr])
-    multi = ~one
-    if not bool(multi.any()):
-        return spec
-    left_b, right_b, meanAmp, sw, first, last = left_b[multi], right_b[multi], meanAmp[multi], sw[multi], first[multi], last[multi]
-    height = meanAmp * sw / (right_b - left_b)
-    m = first >= 0
-    spec = spec.index_add(0, first[m], (height * (first.to(_F64) + 1.0 - left_b))[m])
-    m = last < n
-    spec = spec.index_add(0, last[m], (height * (right_b - last.to(_F64)))[m])
-    lo = torch.clamp(first + 1, min=0); hi = torch.clamp(last, max=n)
-    has_int = lo < hi
-    if bool(has_int.any()):
-        S0 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, lo[has_int], height[has_int]).index_add(0, hi[has_int], -height[has_int])
-        # bins no interior covers stay exactly 0 (see _ramp_bins_t)
-        li, hj = lo[has_int], hi[has_int]
-        cnt = torch.zeros(n + 1, dtype=torch.long, device=dev).index_add(0, li, torch.ones_like(li)).index_add(0, hj, -torch.ones_like(hj))
-        c0 = torch.cumsum(S0, 0)[:n]
-        spec = spec + torch.where(torch.cumsum(cnt, 0)[:n] > 0, c0, torch.zeros_like(c0))
-    return spec
+# The projection (centered hat bins, continuous for every facet width; B85, 0.9.35) lives
+# in torchspin._projection and is shared with pepper's numpy front ends.
+from torchspin._projection import projecttriangles_t, projectzones_t  # noqa: E402,F401
 
 
 # =============================================================================

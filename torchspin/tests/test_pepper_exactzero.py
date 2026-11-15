@@ -21,8 +21,6 @@ integer coverage count built with the same lo/hi scatter now zeroes them.
 * Gradients of pepper_autograd through the masked sums vs central differences.
 """
 import importlib
-import inspect
-import re
 from pathlib import Path
 
 import numpy as np
@@ -134,181 +132,92 @@ def test_empty_bins_exactly_zero_vs_easyspin(cases, name, engine):
 
 
 # ---------------------------------------------------------------------------
-# Pre-fix helpers: the current source with the coverage mask removed
+# Running sums with an integer coverage mask (B47), centered hat bins (B85)
 # ---------------------------------------------------------------------------
+# Since 0.9.35 the projection lives in torchspin._projection.  Interiors of more
+# than _SHORT_INTERIOR bins go through running sums (c1·k + c0) with the B47
+# coverage mask; shorter ones are scattered bin by bin.  The pre-0.9.35 helpers
+# (pepper._ramp_bins, pepper_autograd._ramp_bins_t) and their source-patched
+# "pre-fix" twins are gone; the invariant is checked directly instead: bins
+# outside every facet's support are exactly 0, covered bins equal the
+# facet-by-facet reference loop (pepper._projecttriangles_loop / _projectzones_loop).
 
-_PREFIX = {
-    (pep, '_ramp_bins'): (
-        r"        # Past the last wide ramp.*?spec \+= np\.where\(cov, (c1 \* np\.arange\(nPoints, dtype=np\.float64\) \+ c0), 0\.0\)\n",
-        r"        spec += \1\n"),
-    (pep, '_projectzones'): (
-        r"        # bins no interior covers stay exactly 0 \(see _ramp_bins\)\n.*?"
-        r"spec \+= np\.where\(np\.cumsum\(cnt\)\[:nPoints\] > 0, (np\.cumsum\(S0\)\[:nPoints\]), 0\.0\)\n",
-        r"        spec += \1\n"),
-    (pag, '_ramp_bins_t'): (
-        r"        # Bins that no interior covers.*?"
-        r"spec = torch\.where\(cov, (spec \+ c1 \* torch\.arange\(n, dtype=_F64, device=dev\) \+ c0), spec\)\n",
-        r"        spec = \1\n"),
-    (pag, 'projectzones_t'): (
-        r"        # bins no interior covers stay exactly 0 \(see _ramp_bins_t\)\n.*?"
-        r"spec = spec \+ torch\.where\(torch\.cumsum\(cnt, 0\)\[:n\] > 0, c0, torch\.zeros_like\(c0\)\)\n",
-        r"        spec = spec + torch.cumsum(S0, 0)[:n]\n"),
-}
+from torchspin import _projection as _proj  # noqa: E402
 
 
-def _prefix(mod, name):
-    pattern, repl = _PREFIX[(mod, name)]
-    src = inspect.getsource(getattr(mod, name))
-    old, n = re.subn(pattern, repl, src, flags=re.S)
-    assert n == 1, f'pre-fix pattern for {name} no longer matches'
-    assert 'cnt' not in old
-    ns = dict(vars(mod))
-    exec(compile(old, f'<pre-fix {name}>', 'exec'), ns)
-    return ns[name]
+def _support(lo_b, hi_b, n):
+    """Axis points whose hat touches some interval [lo_b, hi_b] (axis coordinates)."""
+    cov = np.zeros(n, dtype=bool)
+    for a, b in zip(lo_b, hi_b):
+        k0 = max(int(np.floor(a)), 0)
+        k1 = min(int(np.floor(b)) + 1, n - 1)
+        cov[k0:k1 + 1] = True
+    return cov
 
 
-def _wide_ramps(seed, n, count=40, hi_bin=None):
-    """Ramps whose interiors span >= 3 bins, all inside [0, hi_bin)."""
+@pytest.mark.parametrize('seed', [1, 2])
+def test_long_ramps_uncovered_bins_exactly_zero(seed):
+    """Wide tents (interiors far above _SHORT_INTERIOR, so the running sums run) in
+    the lower half of the axis: every point beyond their support is exactly 0,
+    the rest matches the reference loop."""
     rng = np.random.default_rng(seed)
-    hi_bin = n if hi_bin is None else hi_bin
-    a = rng.uniform(1.0, hi_bin - 12.0, count)
-    b = np.minimum(a + rng.uniform(4.0, 40.0, count), hi_bin - 1e-3)
-    return a, b
-
-
-def _interior_and_edges(a, b, n):
-    first = np.trunc(a).astype(int); last = np.trunc(b).astype(int)
-    cov = np.zeros(n, dtype=bool); edge = np.zeros(n, dtype=bool)
-    for f, l in zip(first, last):
-        cov[f + 1:l] = True
-        edge[[f, l]] = True
-    return cov, edge
-
-
-@pytest.mark.parametrize('rising', [True, False])
-def test_ramp_bins_covered_bins_bit_identical(rising):
-    n = 400
-    a, b = _wide_ramps(1 if rising else 2, n, hi_bin=300)
-    f0 = np.random.default_rng(3).uniform(0.1, 10.0, a.size)
-    new = np.zeros(n); pep._ramp_bins(new, f0, a, b, rising)
-    old = np.zeros(n); _prefix(pep, '_ramp_bins')(old, f0, a, b, rising)
-    cov, edge = _interior_and_edges(a, b, n)
-    assert np.array_equal(new[cov], old[cov])
-    # an edge bin outside every interior lost only the residual
-    assert np.abs(new - old)[edge & ~cov].max() < 1e-13 * np.abs(old).max()
-    empty = ~cov & ~edge
-    assert np.all(new[empty] == 0.0)
-    assert np.any(old[empty] != 0.0)              # the residual the fix removes
-    assert np.abs(old[empty]).max() < 1e-13 * np.abs(old).max()
-
-
-@pytest.mark.parametrize('rising', [True, False])
-def test_ramp_bins_t_covered_bins_bit_identical(rising):
-    n = 400
-    a, b = _wide_ramps(4 if rising else 5, n, hi_bin=300)
-    base = np.random.default_rng(6).uniform(0.1, 10.0, a.size)
-    args = (n, torch.tensor(base), torch.tensor(a), torch.tensor(b), 0.01, rising)
-    new = pag._ramp_bins_t(*args).numpy()
-    old = _prefix(pag, '_ramp_bins_t')(*args).numpy()
-    cov, edge = _interior_and_edges(a, b, n)
-    assert np.array_equal(new[cov], old[cov])
-    # an edge bin outside every interior lost only the residual
-    assert np.abs(new - old)[edge & ~cov].max() < 1e-13 * np.abs(old).max()
-    empty = ~cov & ~edge
-    assert np.all(new[empty] == 0.0)
-    assert np.any(old[empty] != 0.0)
-    assert np.abs(old[empty]).max() < 1e-13 * np.abs(old).max()
-
-
-def _zones(seed, n):
-    rng = np.random.default_rng(seed)
+    n = 1200
     x = 300.0 + 0.05 * np.arange(n)
-    nseg = 60
-    pos = 300.0 + 0.05 * np.cumsum(rng.uniform(0.0, 6.0, nseg + 1)) + 0.1
-    pos = pos[pos < 300.0 + 0.05 * (n - 60)][:nseg + 1]
+    nt = 40
+    fun = 300.0 + 0.05 * rng.uniform(5, 550, 3 * nt)
+    tri = np.arange(3 * nt).reshape(nt, 3)
+    areas = rng.uniform(0.1, 1.0, nt)
+    amp = rng.uniform(0.5, 2.0, 3 * nt)
+    P = np.sort(fun[tri], axis=1)
+    assert ((P[:, 2] - P[:, 0]) / 0.05 > 4 * _proj._SHORT_INTERIOR).any()
+    new = pep._projecttriangles(tri, areas, fun, amp, x)
+    ref = pep._projecttriangles_loop(tri, areas, fun, amp, x)
+    cov = _support((P[:, 0] - 300.0) / 0.05, (P[:, 2] - 300.0) / 0.05, n)
+    assert np.all(new[~cov] == 0.0) and (~cov).sum() > 500
+    assert new.min() >= 0.0
+    assert np.abs(new - ref).max() < 1e-13 * np.abs(ref).max()
+
+
+def test_long_zones_uncovered_bins_exactly_zero():
+    rng = np.random.default_rng(7)
+    n = 1200
+    x = 300.0 + 0.05 * np.arange(n)
+    pos = 300.0 + 0.05 * np.cumsum(rng.uniform(0.0, 90.0, 9)) + 0.1
     rng.shuffle(pos)                                          # segments run both ways
     amp = rng.uniform(0.5, 2.0, pos.size)
     w = rng.uniform(0.1, 1.0, pos.size - 1)
-    return pos, amp, w, x
-
-
-def test_projectzones_covered_bins_bit_identical():
-    n = 600
-    pos, amp, w, x = _zones(7, n)
     new = pep._projectzones(pos, amp, w, x)
-    old = _prefix(pep, '_projectzones')(pos, amp, w, x)
     newt = pag.projectzones_t(torch.tensor(pos)[None], torch.tensor(amp)[None], torch.tensor(w),
                               float(x[0]), float(x[1] - x[0]), n).numpy()
-    oldt = _prefix(pag, 'projectzones_t')(torch.tensor(pos)[None], torch.tensor(amp)[None], torch.tensor(w),
-                                          float(x[0]), float(x[1] - x[0]), n).numpy()
-    lb = (np.minimum(pos[:-1], pos[1:]) - x[0]) / (x[1] - x[0])
-    rb = (np.maximum(pos[:-1], pos[1:]) - x[0]) / (x[1] - x[0])
-    cov, edge = _interior_and_edges(lb, rb, n)
-    for nw, od in ((new, old), (newt, oldt)):
-        assert np.array_equal(nw[cov], od[cov])
-        assert np.abs(nw - od)[edge & ~cov].max() < 1e-13 * np.abs(od).max()
-        empty = ~cov & ~edge
-        assert np.all(nw[empty] == 0.0)
-        assert np.any(od[empty] != 0.0)
-        assert np.abs(od[empty]).max() < 1e-13 * np.abs(od).max()
+    ref = pep._projectzones_loop(pos, amp, w, x)
+    lb = (np.minimum(pos[:-1], pos[1:]) - 300.0) / 0.05
+    rb = (np.maximum(pos[:-1], pos[1:]) - 300.0) / 0.05
+    cov = _support(lb, rb, n)
+    for spec in (new, newt):
+        assert np.all(spec[~cov] == 0.0) and (~cov).sum() > 100
+        assert np.abs(spec - ref).max() < 1e-13 * np.abs(ref).max()
 
-
-# ---------------------------------------------------------------------------
-# Whole spectra against the pre-fix helpers
-# ---------------------------------------------------------------------------
 
 _SPECTRA = {
-    # rhombic_stick spans the whole spectrum ([315 345] mT): its empty bins are real.
-    # On [325 337] the only empty bins were the range ends, which hold signal since
-    # 0.9.28 (B88/B75).  Measured on [315 345]: 277 empty bins, pre-fix residual in 113
-    # of them (<= 4.9e-14 of max), max |new - old| 2.1e-14 / 4.9e-14 (pepper / autograd).
     'rhombic_stick': (dict(S=0.5, g=[2.0, 2.05, 2.1]),
                       dict(mwFreq=9.5, Range=[315, 345], nPoints=601, Harmonic=0), dict(GridSize=[31, 1])),
-    'rhombic_lw_h1': (dict(S=0.5, g=[2.0, 2.05, 2.1], lw=1.5),
-                      dict(mwFreq=9.5, Range=[320, 345], nPoints=1024, Harmonic=1), dict()),
-    'cu_hyperfine': (dict(S=0.5, g=[2.05, 2.06, 2.25], Nucs='63Cu', A=[[60.0, 70.0, 550.0]], lwpp=1.0),
-                     dict(mwFreq=9.5, Range=[270, 345], nPoints=1024, Harmonic=1), dict()),
     'axial_stick': (dict(S=0.5, g=[2.0, 2.0, 2.1]),
                     dict(mwFreq=9.5, Range=[315, 345], nPoints=601, Harmonic=0), dict(GridSize=[31, 1])),
-    'triplet_freq': (dict(S=1, g=2.0, D=[[3000.0, 300.0]], lwpp=10.0),
-                     dict(Field=340, mwRange=[5, 15], nPoints=1024), dict()),
 }
 
 
-def _spectrum(fn, key):
-    s, e, o = _SPECTRA[key]
-    return fn(SpinSystem(**s), Experiment(**e), Options(Verbosity=0, **o))[1].detach().numpy().ravel()
-
-
-@pytest.mark.parametrize('key,engine', [(k, e) for k in _SPECTRA for e in ('pepper', 'pepper_autograd')
-                                         if not (e == 'pepper_autograd' and 'mwRange' in _SPECTRA[k][1])])
-def test_spectra_vs_prefix_helpers(monkeypatch, key, engine):
+@pytest.mark.parametrize('key,engine', [(k, e) for k in _SPECTRA for e in ('pepper', 'pepper_autograd')])
+def test_stick_spectra_empty_bins_exactly_zero(key, engine):
+    """Stick spectra spanning part of the range: no negative bins, and the points
+    beyond the spectrum's hat support are exactly 0 (B47 with centered bins)."""
     fn = pep.pepper if engine == 'pepper' else pag.pepper_autograd
-    new = _spectrum(fn, key)
-    with monkeypatch.context() as mp:
-        if engine == 'pepper':
-            mp.setattr(pep, '_ramp_bins', _prefix(pep, '_ramp_bins'))
-            mp.setattr(pep, '_projectzones', _prefix(pep, '_projectzones'))
-        else:
-            mp.setattr(pag, '_ramp_bins_t', _prefix(pag, '_ramp_bins_t'))
-            mp.setattr(pag, 'projectzones_t', _prefix(pag, 'projectzones_t'))
-        old = _spectrum(fn, key)
-    scale = np.abs(old).max()
-    diff = np.abs(new - old).max() / scale
-    print(f'{key} {engine}: max |new - old| / max = {diff:.2e}, bins changed {(new != old).sum()}')
-    if key.startswith('axial'):
-        assert np.array_equal(new, old)          # Dinfh zones: no residual before either
-        return
-    # measured: stick 5.3e-14 (pepper) / 4.7e-14 (autograd); after convolution
-    # <= 8.8e-14 (pepper) and 1.2e-13 / 5.2e-13 (autograd, rhombic / Cu);
-    # CI macOS torch 2.15: 1.0e-12 (rhombic_lw_h1, autograd)
-    assert diff < 2e-12, (key, diff)
-    if key == 'rhombic_stick':
-        # sign-independent: the residual's sign depends on grid roundoff
-        # (it is +7.8e-15 of max once sphgrid phi matches MATLAB's linspace)
-        assert new.min() >= 0.0
-        assert np.any(old[new == 0.0] != 0.0)    # the residual the fix removes
-        assert np.all(np.abs(old[new == 0.0]) < 1e-13 * scale)
+    s, e, o = _SPECTRA[key]
+    x, y = fn(SpinSystem(**s), Experiment(**e), Options(Verbosity=0, **o))
+    x = x.numpy(); y = y.detach().numpy().ravel()
+    assert y.min() >= 0.0
+    nz = np.nonzero(y)[0]
+    assert nz.size and nz[0] > 20 and nz[-1] < y.size - 20
+    assert np.all(y[:nz[0]] == 0.0) and np.all(y[nz[-1] + 1:] == 0.0)
 
 
 def test_autograd_gradient_vs_central_differences():

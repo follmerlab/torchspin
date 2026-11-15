@@ -14,6 +14,71 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.35] — 2026-11-14
+
+### Fixed
+
+- **Projected powder spectra sat half an increment low, and sub-bin facets had no position
+  derivative (pepper, pepper_autograd, salt; B85).** The SOPHE projection (EasySpin
+  `projecttriangles.c`/`projectzones.c` convention) integrated each facet over [x_k, x_k + dx)
+  and reported it at x_k, and dropped facets narrower than one bin into one bin by truncation.
+  Every projected spectrum was shifted by -dx/2 (best-fit shift +0.49 dx against a converged
+  reference), while the template paths (isotropic, crystal, `Exp.Orientations`) are centered;
+  and for an isotropic g on a D2h grid (the automatic grid for three g leaves on the graph) the
+  gradient along g = s[1 1 1] was +999.7 (equal to central differences of that spectrum)
+  against the true -13770. The projection is now `torchspin._projection`, shared by the numpy
+  (pepper) and torch (pepper_autograd, salt) paths: axis point k carries the facet density
+  integrated against the hat of half-width dx centered on x_k (a zero-width facet is split
+  linearly between the two nearest points). The result is continuous in every vertex position
+  for any facet width; the hat-weighted integral of each linear piece is exact (Simpson on each
+  half-hat, from overlaps and relative positions only), facets inside one axis interval are
+  deposited exactly as a point mass at their centroid, and uncovered bins stay exactly 0 (B47).
+  Numbers: rhombic S = 1/2, 512 points over 40 mT, lw 1 mT, max error against a converged
+  reference 9.4 % -> 0.65 % (lw 0.3 mT: 31 % -> 3.8 %); isotropic on a forced D2h grid vs the O3
+  template 2.8-5.5 % -> 2.3-5.2e-4 (4096 points) and 4.7-34 % -> 2.0-3.2 % (512 points);
+  isotropic-direction gradient -11452 at 512 points (O3 -13770; dx/sigma = 0.28) and within
+  3.2 % of the O3 gradient at 4096 points, equal to central differences to 1e-10; integrated
+  intensity conserved to 2.4e-14 (2.9e-12 before); pepper vs pepper_autograd 1.5e-12 as before;
+  `Exp.Orientations` (20000-point Fibonacci sphere) vs the powder 5.9e-5 without the former
+  -dx/2 axis shift, zero-field 0.077 % (0.74 %).
+- **Deliberate deviation from EasySpin** (KNOWN_LIMITATIONS.md § Centered projection bins):
+  every projected pepper/salt spectrum moves by dx/2 and is smoothed by the hat (variance dx²/6
+  against the box's dx²/12). pepper's unreachable stick-accumulation branches now split
+  linearly too; `int(frac)` there truncated toward zero for lines just below the range.
+
+### Tests
+
+- `test_projection_centered.py`: best-fit shift < 0.1 dx (0.9.34: +0.49), forced-D2h isotropic
+  vs O3, isotropic-direction gradient vs converged central differences and the O3 gradient,
+  zero-width triangle/zone linear split and gradient, continuity in width, intensity
+  conservation, numpy == torch, pepper vs pepper_autograd. 21 of its 24 tests fail on 0.9.34.
+- 168 EasySpin comparisons moved by the centered bins are strict xfail with their measured
+  numbers (`_b85.MOVED`, applied in conftest); `test_b85_easyspin_centered.py` re-runs them
+  against EasySpin mapped onto centered bins: 73 pass with their original tolerances, 95 (box-
+  binning-calibrated tolerances, stick spectra) are strict xfail there with both numbers.
+- `ref_missing_knots.npz` regenerated with the centered bins. The sixteen coarse- vs
+  converged-grid checks the centered bins moved (case3/d4h_d2hgrid_wide/s52_b4_D2h_h1,
+  s52_b4_C2h_h1, s52_rhombic_h1, b50_h1, b50_stick_wide, oh_auto; pepper and pepper_autograd) now
+  compare with `ref_converged_b85.npz` (`generate_converged_b85_refs.py`: field axis 16-32x finer,
+  GridSize [181 1], point values at x_k), bounds = measured x 1.05; 0.9.34 fails all of them
+  (e.g. case3 max deviation 0.337 vs bound 3.70e-2). The lw central-difference step in
+  `test_missing_knots.py` is 2.5e-5 (was 1e-4): case1's d/dlw is small (6.16) with the centered bins,
+  and the h^2 truncation error at 1e-4 was 1.07e-7 relative (7.7e-9 at 2.5e-5); bound 4e-8 unchanged.
+- `test_projection_accuracy.py`: rhombic lw 0.3 mT, 512 points vs a converged reference (max
+  error 3.73e-2, 0.9.34 0.321), d/dlw and d/dg_y vs converged values (1.1e-3 and 3.3e-5;
+  0.9.34 5.2e-2 and 3.3e-3), isotropic-direction gradient at 4096 points vs converged O3
+  (3.2e-2; 0.9.34 wrong sign). All four fail on 0.9.34.
+- Kernel choice: a centered box with a linear split below one bin (branch `dev/b85-box`, not
+  merged) was compared against converged references: 5-30 % lower forward error for narrow
+  lines, but d/dg_y 2.0e-3 (hat 3.3e-5) and a gradient kink at facet width dx; the hat was kept
+  (KNOWN_LIMITATIONS.md).
+- Rewritten for the new kernel: `test_projecttriangles_edge_bins.py` (exact rational hat
+  reference), the B47 helper tests of `test_pepper_exactzero.py` (the `_ramp_bins` source
+  patches are gone; uncovered bins exactly 0 vs the loop reference), the reference loops
+  `_projecttriangles_loop`/`_projectzones_loop` (two-point Gauss-Legendre per piece). The
+  -dx/2 compensations in `test_pepper_orientations.py`, `test_endor_enhancement.py` and
+  `test_lft_telser2torchspin.py` are removed (same tolerances).
+
 ## [0.9.34] — 2026-11-14
 
 ### Fixed

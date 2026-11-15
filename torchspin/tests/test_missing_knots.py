@@ -45,6 +45,7 @@ import pytest
 import torch
 
 import torchspin.pepper  # noqa: F401  (module, not the re-exported function)
+from torchspin.tests._b85 import converged_refs
 from torchspin import Experiment, Options, SpinSystem, pepper
 from torchspin.pepper_autograd import _interp_slots_t, pepper_autograd
 
@@ -60,7 +61,7 @@ _spec.loader.exec_module(gen)
 @pytest.fixture(scope='module')
 def ref():
     assert REF.exists(), f'reference file missing: {REF}'
-    return np.load(REF)
+    return converged_refs(REF)
 
 
 _metrics = gen.metrics
@@ -85,10 +86,12 @@ def research_calls(monkeypatch):
 
 # (case, GridSize): bounds on (1 - cosine, max|dev|/max) vs the converged
 # reference, interior; measured x 1.05 (see the module docstring)
+REF_KEY: dict = {('case3', (19, 4)): 'b85:case3'}
 REF_BOUNDS = {
     ('case1', (19, 4)): (0.0552, 0.345),
     ('case2', (19, 4)): (4.7e-6, 5.2e-3),
-    ('case3', (19, 4)): (1.01e-4, 1.42e-2),
+    # B85 (0.9.35): vs the converged reference (16-32x finer axis, [181 1], point values; ref_converged_b85.npz), measured x 1.05; 0.9.34: 1 - cos 3.67e-2, max dev 0.337
+    ('case3', (19, 4)): (3.49e-4, 3.70e-2),
 }
 
 
@@ -99,8 +102,9 @@ def test_vs_converged_reference(ref, research_calls, name, grid, func):
     fn = pepper if func == 'pepper' else pepper_autograd
     x, y = fn(s, e, Options(GridSize=list(grid), Verbosity=0, **okw))
     x = x.numpy(); y = y.detach().numpy().ravel()
-    assert np.allclose(x, ref[name + '_x'], rtol=0, atol=1e-9)
-    c, d = _metrics(y, ref[name], _interior(x, s))
+    rn = REF_KEY.get((name, grid), name)
+    assert np.allclose(x, ref[rn + '_x'], rtol=0, atol=1e-9)
+    c, d = _metrics(y, ref[rn], _interior(x, s))
     print(f'{name} {grid} {func}: 1 - cosine {c:.4e}, max dev {d:.4e}')
     assert research_calls, 'the range cuts transitions: the re-search must run'
     cmax, dmax = REF_BOUNDS[(name, grid)]
@@ -179,9 +183,12 @@ _GRAD_CASES = {
 # parameter.  Measured (case 1 / case 2): A 1.0e-6 / 9.9e-9 (h = 1e-6 A;
 # 1e-5: 7e-4, truncation), g 3.9e-8 / 1.9e-8 (h = 1e-7 g; 1e-6: 8e-4; 1e-8:
 # 1.7e-7, roundoff), lw 4.2e-9 / 1.2e-8 (h = 1e-4 lw)
-_GRAD_STEPS = {'A': (1e-6, 3e-6), 'g': (1e-7, 1.2e-7), 'lw': (1e-4, 4e-8)}
+_GRAD_STEPS = {'A': (1e-6, 3e-6), 'g': (1e-7, 1.2e-7), 'lw': (2.5e-5, 4e-8)}
 
 
+# lw step 2.5e-5 (B85, 0.9.35; was 1e-4): with the centered bins case1's d/dlw is small (6.16),
+# and the h^2 truncation error of the central difference at 1e-4 is 1.07e-7 relative; at 2.5e-5
+# it is 7.7e-9 (8.0e-9 at 8 threads); case2 1.8e-10.  Bound unchanged.
 @pytest.mark.parametrize('field', list(_GRAD_STEPS))
 @pytest.mark.parametrize('name', list(_GRAD_CASES))
 def test_gradient_vs_central_differences(research_calls, name, field):
