@@ -2,13 +2,13 @@
 
     m(n, B, T) = <-n.(k L + g_e S)>_T  (Bohr magnetons per ion along the field direction n)
 
-with H = H_LF(d^n) + mu_B |B| n.(k L + g_e S), the exact thermal average over every state of the
+with H = H_LF(d^n) + mu_B abs(B) n.(k L + g_e S), the exact thermal average over every state of the
 d^n configuration (Hellmann-Feynman), and powder averages as weighted sums over an
 :class:`torchspin.lft.grids.OrientationGrid`.  This is Telser's DDNMAG with ``method="exact"``;
 DDN's finite-difference schemes (Hendrickson, McGarvey, ...) approximate the same quantity and
 are not ported.
 
-The thermal average uses :func:`torchspin.lft._linalg.thermal_average`, whose derivative
+The thermal average uses ``torchspin.lft._linalg.thermal_average``, whose derivative
 (Daleckii-Krein) is exact through the degeneracies M always has (Kramers pairs, cubic levels,
 field-induced crossings), so every ligand-field parameter can carry gradients.
 
@@ -41,7 +41,25 @@ _F64, _C128 = torch.float64, torch.complex128
 
 
 class MagConstants(NamedTuple):
-    """mu_B/(hc) in cm^-1/mT, g_e, k_B/(hc) in cm^-1/K, Avogadro (1/mol), mu_B in J/T, mu_0 in H/m."""
+    """Physical constants of the magnetometry functions.
+
+    Attributes
+    ----------
+    mu_b : float
+        Bohr magneton over h c, in cm^-1 per mT.
+    g_e : float
+        Free-electron g value.
+    k_b : float
+        Boltzmann constant over h c, in cm^-1 per K.
+    N_A : float
+        Avogadro constant, 1/mol.
+    mu_b_SI : float
+        Bohr magneton in J/T.
+    mu0 : float
+        Vacuum permeability in H/m.
+    ddn : torchspin.lft.ddn.Constants
+        Property: the ``(mu_b, g_e, k_b)`` subset as :class:`torchspin.lft.ddn.Constants`.
+    """
 
     mu_b: float
     g_e: float
@@ -56,7 +74,7 @@ class MagConstants(NamedTuple):
         return Constants(self.mu_b, self.g_e, self.k_b)
 
 
-#: From :mod:`torchspin.constants` (CODATA 2022 mu_B and mu_0).
+#: From ``torchspin.constants`` (CODATA 2022 mu_B and mu_0).
 MAG_CONSTANTS = MagConstants(mu_b=TORCHSPIN_CONSTANTS.mu_b, g_e=TORCHSPIN_CONSTANTS.g_e, k_b=TORCHSPIN_CONSTANTS.k_b,
                              N_A=AVOGADRO, mu_b_SI=BMAGN, mu0=MU0)
 
@@ -83,7 +101,15 @@ def _chi_to_si(chi_units: str, c: MagConstants) -> float:
 
 
 class MagResult(NamedTuple):
-    """``per_direction`` (..., ndir, nB, nT) and ``powder`` (..., nB, nT)."""
+    """Magnetization (or susceptibility) per field direction and powder averaged.
+
+    Attributes
+    ----------
+    per_direction : torch.Tensor, shape (..., ndir, nB, nT)
+        Values for each grid direction, field and temperature.
+    powder : torch.Tensor, shape (..., nB, nT)
+        Grid-weighted average over the directions.
+    """
 
     per_direction: torch.Tensor
     powder: torch.Tensor
@@ -93,10 +119,21 @@ _MIRROR = torch.tensor([1.0, -1.0, 1.0, -1.0, 1.0], dtype=_F64)
 
 
 def mirror_y(V: torch.Tensor) -> torch.Tensor:
-    """Ligand field of the mirror image (y -> -y): P V P with P = diag(1, -1, 1, -1, 1).
+    """Ligand field of the mirror image (y -> -y), ``P V P`` with ``P = diag(1, -1, 1, -1, 1)``.
 
-    This is what DDNSUS/DDNMAG effectively compute (their internal field is conj(V_m)); pass
-    ``ddn_mirror=True`` to reproduce DDN's numbers for a general field direction.
+    This is what DDNSUS/DDNMAG effectively compute (their internal field is
+    ``conj(V_m)``); pass ``ddn_mirror=True`` to :func:`magnetization` to
+    reproduce DDN's numbers for a general field direction.
+
+    Parameters
+    ----------
+    V : torch.Tensor, shape (..., 5, 5)
+        Real-orbital ligand field (x2-y2, xy, xz, yz, z2), any energy unit.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 5, 5)
+        The mirrored field, same unit.
     """
     p = _MIRROR.to(V.device)
     return V * p[:, None] * p[None, :]
@@ -104,11 +141,38 @@ def mirror_y(V: torch.Tensor) -> torch.Tensor:
 
 def moment_core(H0: torch.Tensor, mu: torch.Tensor, field, T, directions, constants: MagConstants = MAG_CONSTANTS,
                 chunk: int | None = None) -> torch.Tensor:
-    """Moment along the field (Bohr magnetons per ion), shape (..., ndir, nB, nT).
+    """Thermal average of the moment along the field, in Bohr magnetons per ion.
 
-    H0: zero-field Hamiltonian (..., nd, nd) in cm^-1.  mu: (..., 3, nd, nd) = k L + g_e S.
-    field (nB,) in mT, T (nT,) in K, directions (ndir, 3) unit vectors.  ``chunk`` limits the
-    number of directions diagonalized at once (memory).
+    Low-level kernel of :func:`magnetization`: ``<-n.mu>_T`` for
+    ``H = H0 + mu_B B n.mu``, exact over every state.  The moment is set to 0
+    at B = 0 (time reversal).
+
+    Parameters
+    ----------
+    H0 : torch.Tensor, shape (..., nd, nd)
+        Zero-field Hamiltonian in cm^-1.
+    mu : torch.Tensor, shape (..., 3, nd, nd)
+        Moment operators ``k L + g_e S`` in mu_B.
+    field : array_like or torch.Tensor, shape (nB,)
+        Field magnitudes in mT.
+    T : array_like or torch.Tensor, shape (nT,)
+        Temperatures in K, all > 0.
+    directions : array_like, shape (ndir, 3)
+        Unit field directions.
+    constants : MagConstants, default MAG_CONSTANTS
+        mu_B and k_B.
+    chunk : int, optional
+        Directions diagonalized at once (memory); default automatic.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., ndir, nB, nT), float64
+        Moment in mu_B per ion.
+
+    Raises
+    ------
+    ValueError
+        If a temperature is not positive.
     """
     dev = H0.device
     B = torch.as_tensor(field, dtype=_F64, device=dev).reshape(-1)
@@ -147,13 +211,68 @@ def magnetization(n, field, T, *, grid: OrientationGrid | None = None, M_units: 
                   chi_units: str = "SI", units: str = "MHz", k=(1.0, 1.0, 1.0), ddn_mirror: bool = False,
                   constants: MagConstants = MAG_CONSTANTS, chunk: int | None = None, device="cpu",
                   **params) -> MagResult:
-    """Molar magnetization along the field, per direction and powder-averaged.
+    """Molar magnetization of a d^n ion along the field, per direction and powder averaged.
 
-    ``n``: electron count.  ``field`` (nB,) field magnitudes in mT; ``T`` (nT,) K.  ``grid``: an
-    OrientationGrid (see :mod:`torchspin.lft.grids`; default: field along z), or direction
-    vectors.  Ligand-field parameters as keywords, as in :func:`torchspin.lft.ddn.hamiltonian`
-    (``B`` and ``C`` are the Racah parameters), in ``units``; ``k`` dimensionless.  ``chi0``
-    (TIP) in ``chi_units`` adds chi0 * H.
+    Parameters
+    ----------
+    n : int or DnOperators
+        Number of d electrons (0 to 10) or cached operators.
+    field : array_like or torch.Tensor, shape (nB,)
+        Field magnitudes in mT.
+    T : array_like or torch.Tensor, shape (nT,)
+        Temperatures in K, all > 0.
+    grid : OrientationGrid or array_like, optional
+        Field directions and weights (:mod:`torchspin.lft.grids`), or direction
+        vectors (normalized, equal weights).  Default ``None``: the field
+        along z only.
+    M_units : {'muB', 'emu/mol', 'SI'}, default 'muB'
+        Unit of the result: Bohr magnetons per ion, emu/mol (DDNMAG's unit,
+        ``1 N_A mu_B = 5585 emu/mol``) or A m^2/mol.
+    chi0 : float or torch.Tensor, default 0.0
+        Temperature-independent paramagnetism in ``chi_units``; adds
+        ``chi0 * H``.
+    chi_units : {'SI', 'cgs'}, default 'SI'
+        Unit of ``chi0``: m^3/mol or cm^3/mol.
+    units : str, default 'MHz'
+        Energy unit of the ligand-field keywords.
+    k : array_like or torch.Tensor, shape (3,), default (1.0, 1.0, 1.0)
+        Orbital reduction factors.
+    ddn_mirror : bool, default False
+        Apply :func:`mirror_y` to ``V`` (DDN's convention).
+    constants : MagConstants, default MAG_CONSTANTS
+        Physical constants.
+    chunk : int, optional
+        Directions diagonalized at once (memory).
+    device : str or torch.device, default 'cpu'
+        Device.
+    **params
+        Ligand-field keywords of :func:`torchspin.lft.ddn.hamiltonian` (``B``,
+        ``C``, ``A``, ``zeta``, ``V``, ``alpha``, ``slater``) in ``units``;
+        may be batched and carry gradients.
+
+    Returns
+    -------
+    MagResult
+        ``per_direction`` (..., ndir, nB, nT) and ``powder`` (..., nB, nT) in
+        ``M_units``.
+
+    Raises
+    ------
+    ValueError
+        For a non-positive temperature, unknown ``M_units`` or (with a nonzero
+        ``chi0``) unknown ``chi_units``.
+    TypeError
+        For an unknown keyword.
+
+    Examples
+    --------
+    d^1 in a strong octahedral field (cm^-1), field along z:
+
+    >>> from torchspin import lft
+    >>> m = lft.ddnmag.magnetization(1, [1000.0, 5000.0], [2.0, 300.0],
+    ...                              V=lft.crystal_field(Dq=2000.0), zeta=500.0, units='cm^-1')
+    >>> m.per_direction.shape, m.powder.shape
+    (torch.Size([1, 2, 2]), torch.Size([2, 2]))
     """
     g = as_grid(grid)
     H0, mu = _pieces(n, units, k, ddn_mirror, constants, device, params)
@@ -175,7 +294,35 @@ def fit(n: int, parameters, model, field, T, values, sigma=0.01, *, M_units: str
     """DDNMAG fit: ligand-field parameters to powder M(field_i, T_i), with the exact Jacobian.
 
     Thin front end to :class:`torchspin.lft.fit.JointFit` with one
-    :class:`~torchspin.lft.fit.Magnetization` block (default grid: exact Gauss hemisphere, n = 6).
+    :class:`~torchspin.lft.fit.Magnetization` data set.
+
+    Parameters
+    ----------
+    n : int
+        Number of d electrons.
+    parameters : sequence of FitParameter
+        Fit parameters (:class:`torchspin.lft.fit.FitParameter`).
+    model : callable
+        Maps a dict of named scalar tensors to keywords of
+        :func:`torchspin.lft.ddn.hamiltonian` (in ``units``).
+    field, T, values : array_like
+        Data points: fields in mT, temperatures in K, magnetizations in
+        ``M_units`` (broadcast together).
+    sigma : float or array_like, default 0.01
+        Uncertainties of ``values`` (``M_units``).
+    M_units : {'muB', 'emu/mol', 'SI'}, default 'muB'
+        Unit of ``values``.
+    grid : OrientationGrid, optional
+        Powder grid; default the exact Gauss hemisphere, n = 6.
+    units : str, default 'MHz'
+        Energy unit of the model's keywords.
+    **kw
+        Passed to :meth:`torchspin.lft.fit.JointFit.fit` (and on to
+        :func:`scipy.optimize.least_squares`).
+
+    Returns
+    -------
+    torchspin.lft.fit.JointOutcome
     """
     from .fit import JointFit, Magnetization
     from .grids import gauss_hemisphere

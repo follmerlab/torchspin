@@ -1,18 +1,21 @@
-"""Top-level CW EPR powder spectrum simulator for torchspin.
+"""Solid-state CW EPR simulator (port of EasySpin's ``pepper``).
 
-Port of EasySpin's ``pepper`` (matrix method, field-swept powder average).
+The public entry point is :func:`pepper`; see its docstring for the
+supported inputs.  Outline of one component simulation::
 
-Pipeline::
+    ham(sys)                     -> H0, mux, muy, muz (MHz, MHz/mT)
+    sphgrid(GridSymmetry, N)     -> powder orientations and weights
+                                    (or crystal / Exp.Orientations directions)
+    resfields_batch / resfreqs   -> resonance positions, rates, strain widths
+                                    per orientation and transition
+    grid interpolation           -> fine grid ([N_coarse, N_interp])
+    projection / line templates  -> spectral density on the sweep axis
+    convolution with Sys.lw      -> line shape, harmonic, field modulation
 
-    ham(sys)          → H0, mux, muy, muz
-    sphgrid(...)      → phi, theta, weights
-    for each orient:
-        resfields(...)  → B_res, intensities, widths
-        makespec(...)   → stick spectrum
-        convspec(...)   → lineshape broadening (per-line if strain)
-        spec += stick * weight
-    convspec(...)     → lineshape broadening (global if no strain)
-    return x, spec
+Components and isotopologues are simulated separately and summed with
+``Sys.weight`` times abundance.  :func:`pepper` switches to the
+differentiable :func:`torchspin.pepper_autograd` when an
+input requires grad.
 """
 from __future__ import annotations
 
@@ -1230,71 +1233,159 @@ def _check_user_orientations(exp, opt) -> None:
 
 
 def pepper(sys_or_list, exp: Experiment, opt: Optional[Options] = None):
-    """Field-swept CW EPR powder spectrum.
+    """Solid-state CW EPR spectrum (EasySpin ``pepper``).
 
-    Accepts either a single :class:`SpinSystem` or a list/tuple of systems
-    (multi-component fit). When a list is given each component is simulated
-    independently and the results summed, weighted by ``sys.weight``
-    (default 1.0).
+    Simulates the field-swept or frequency-swept CW EPR spectrum of a powder
+    (SOPHE grid with interpolation and projection), a single crystal, a
+    partially ordered sample, or a user-given set of orientations, by
+    finding resonance fields (or frequencies) and transition rates for each
+    orientation and accumulating broadened lines.
+
+    A list of spin systems is simulated component by component and summed
+    with weights ``SpinSystem.weight``.  Every component is first expanded
+    into isotopologues (``Nucs`` given as elements such as ``'Cu'`` or
+    mixtures such as ``'(63,65)Cu'``), each weighted by its abundance and
+    dropped below ``Options.IsoCutoff``.
 
     Parameters
     ----------
     sys_or_list : SpinSystem or list of SpinSystem
-        Spin system(s). ``sys.lw = [fwhm_g, fwhm_l]`` (mT) sets the global
-        linewidth. Strain parameters (``HStrain``, ``gStrain``, ``AStrain``,
-        ``DStrain``) enable orientation-dependent broadening for each
-        transition. For multi-component, each ``sys.weight`` scales that
-        component's contribution.
+        Spin system(s).  pepper builds the full spin Hamiltonian with
+        :func:`torchspin.ham`, so every interaction field is used (``g``,
+        ``D``, ``B``, ``A``, ``Q``, ``ee``, ``nn``, ``sigma``, ``gnscale``,
+        frames, OAM and crystal-field terms, ``Ham``, ``H0Extra``).  Line
+        widths: ``lw``/``lwpp`` ``[GaussianFWHM, LorentzianFWHM]`` in mT for
+        field sweeps and in MHz for frequency sweeps, convolved after the
+        accumulation; ``HStrain``, ``gStrain``, ``AStrain``, ``DStrain``
+        (with ``gAStrainCorr``, ``DStrainCorr``) give orientation-dependent
+        Gaussian widths per line, ``HStrainL`` Lorentzian ones.  Also read:
+        ``weight``, ``Abund``, ``n`` (only ``Method='perturb*'``/``'hybrid'``;
+        the matrix method raises for ``n > 1``), ``initState`` (not with
+        perturbation theory), ``tdm`` (with ``Experiment.lightBeam``).
+        Dynamics, relaxation and pulse fields (``tcorr``, ``Diff``, ``T1``,
+        ``T2``, ``lwEndor``, ``Potential``, ...) are ignored.
     exp : Experiment
-        Experimental parameters. Field-swept mode requires ``mwFreq`` (GHz)
-        and ``Range`` (mT). Frequency-swept mode (``Field`` and ``mwRange``
-        both set) dispatches automatically. ``Harmonic`` sets derivative
-        order (0=absorption, 1=first derivative, 2=second derivative).
-        ``Temperature`` (K) enables Boltzmann populations.
+        Sweep and sample.  Field sweep: ``mwFreq`` (GHz) and ``Range`` or
+        ``CenterSweep`` (mT; ``None`` = automatic range for S = 1/2 systems).
+        Frequency sweep: ``Field`` (mT) with ``mwRange``/``mwCenterSweep``
+        (GHz; ``None`` = automatic range); ``Field`` alone is a frequency
+        sweep with automatic range.  Also read: ``nPoints``, ``Harmonic``,
+        ``ModAmp`` (field sweeps), ``mwPhase``, ``Temperature``,
+        ``Mode``/``mwMode``; single crystals: ``MolFrame`` and/or
+        ``CrystalSymmetry`` (either makes the sample a crystal),
+        ``SampleFrame``, ``SampleRotation``; ordered samples: ``Ordering``;
+        photoselection: ``lightBeam``, ``lightScatter``; explicit
+        orientations: ``Orientations``, ``OrientationWeights``.  ``SampleFrame``
+        or ``SampleRotation`` alone leave a powder unchanged.  ``ExciteWidth``
+        is ignored.
     opt : Options, optional
-        Computational options. Defaults to ``Options()`` if ``None``.
-        Key fields: ``GridSize`` (int or [N_coarse, N_interp]),
-        ``GridSymmetry`` (``'auto'`` by default), ``device``, ``Verbosity``.
+        Default ``None`` = ``Options()``.  Read: ``Method`` (``'matrix'``,
+        ``'exact'``, ``'perturb'``/``'perturb1'``/``'perturb2'``,
+        ``'hybrid'`` with ``HybridCoreNuclei``, ``HybridIntThreshold``),
+        ``GridSize``, ``GridSymmetry``, ``Threshold``, ``Transitions``,
+        ``separate``, ``Sites``, ``IsoCutoff``, ``ModellingAccuracy``,
+        ``QuadraticZeeman``, ``ZeroField``, ``PaddingMultiplier``,
+        ``BatchSize``, ``device``, ``Verbosity``.  garlic- and ENDOR-only
+        options are ignored.
 
     Returns
     -------
-    B : torch.Tensor, shape (nPoints,)
-        Field axis in mT.
-    spec : torch.Tensor, shape (nPoints,)
-        Spectrum in arbitrary units (consistent with EasySpin pepper).
+    x : torch.Tensor, shape (nPoints,)
+        Sweep axis, ``float64``: magnetic field in mT for a field sweep,
+        microwave frequency in GHz for a frequency sweep; equally spaced from
+        the first to the last point of the (possibly automatic) range.
+    spec : torch.Tensor, shape (nPoints,) or (nSpectra, nPoints)
+        Spectrum, ``float64``, on EasySpin's pepper intensity scale
+        (arbitrary units, comparable between simulations), at the detection
+        harmonic ``Experiment.Harmonic``.  With ``Options.separate`` set,
+        one row per component/isotopologue, transition, crystal orientation
+        or site, stacked along axis 0 (for a list of components the rows of
+        all components are concatenated).  When an input requires grad, the
+        result of :func:`~torchspin.pepper_autograd` on the
+        autograd graph.
 
-    Examples
+    Raises
+    ------
+    ValueError
+        For an unsupported combination of inputs, among others:
+        ``Method='perturb3'`` to ``'perturb5'``; ``n > 1`` with the matrix
+        method; ``Range`` missing for a system that is not a single S = 1/2
+        (or has a zero g value); ``ModAmp`` with a frequency sweep or with
+        ``Harmonic = 0``; ``Method='hybrid'`` with a frequency sweep, ``nn``
+        couplings, ``H0Extra`` or a core nucleus with ``n > 1``;
+        ``Transitions`` or ``initState`` with perturbation theory; an
+        invalid ``Transitions`` list; ``Field = 0`` without
+        ``ZeroField=True``, or ``ZeroField`` with ``initState``; ``Ordering``
+        with ``MolFrame``/``CrystalSymmetry``, several sample orientations or
+        a non-Ci grid; ``Orientations`` with crystal, ordering, ``Sites`` or
+        ``separate='transitions'``/``'sites'``; ``separate='transitions'``
+        for a crystal; ``lightBeam`` without ``tdm`` or with an unknown
+        string; ``HStrainL`` with the Gaussian strains; multi-electron
+        ``AStrain`` (or ``gStrain`` in a frequency sweep).
+    NotImplementedError
+        ``QuadraticZeeman=True`` with field-quadratic ``Ham`` terms and a
+        perturbation or hybrid method; a configuration the differentiable
+        path does not support when an input requires grad.
+
+    See Also
     --------
-    Nitroxide at X-band::
-
-        >>> from torchspin import SpinSystem, Experiment, Options, pepper
-        >>> sys = SpinSystem(S=[0.5], g=[[2.009, 2.006, 2.002]],
-        ...                  Nucs=['14N'], A=[[10, 10, 95]], lw=[1.0, 0.0])
-        >>> exp = Experiment(mwFreq=9.5, Range=[330, 350], nPoints=1024, Harmonic=1)
-        >>> B, spc = pepper(sys, exp, Options(GridSize=50))
-
-    Two-component mixture weighted 70:30::
-
-        >>> sys_a = SpinSystem(S=[0.5], g=[[2.0, 2.1, 2.2]], lw=[1.0, 0.0], weight=0.7)
-        >>> sys_b = SpinSystem(S=[0.5], g=2.0037, lw=[0.8, 0.0], weight=0.3)
-        >>> B, spc = pepper([sys_a, sys_b], exp)
+    torchspin.pepper_autograd.pepper_autograd : The differentiable path.
+    torchspin.garlic.garlic : Isotropic and fast-motion spectra.
+    torchspin.chili.chili : Slow-motion spectra.
+    torchspin.gridcheck.grid_convergence : Check ``Options.GridSize``.
+    SpinSystem, Experiment, Options
 
     Notes
     -----
-    * ``Options.Method``: ``'matrix'`` (default, exact diagonalization),
-      ``'perturb'``/``'perturb1'``/``'perturb2'`` or ``'hybrid'``. Second-order
-      perturbation theory is inaccurate when A is a sizable fraction of the
-      microwave frequency. For isotropic 91Zr with A = 780 MHz at 9.65 GHz
+    * Methods: ``'matrix'`` is exact.  Second-order perturbation theory is
+      inaccurate when a hyperfine coupling is a sizable fraction of the
+      microwave frequency: for isotropic 91Zr with A = 780 MHz at 9.65 GHz
       (A/nu = 0.08), ``'perturb'`` differs from ``'matrix'`` by 0.18 relative
-      L2. Use ``'matrix'`` there.
-    * If any SpinSystem/Experiment tensor requires grad, pepper runs
-      :func:`torchspin.pepper_autograd.pepper_autograd` and returns a spectrum
-      on the autograd graph.
-    * Powder averaging uses the SOPHE grid (Wang & Hanson, 1995).
-    * Lineshape convolution is FFT-based.
-    * Strain broadening adds per-transition widths in quadrature with
-      ``sys.lw``.
-    * MATLAB-validated to cosine similarity > 0.999 on standard test cases.
+      L2.  See KNOWN_LIMITATIONS.md, "Pepper — choosing a method, and what
+      each costs (2026-10-07)".
+    * If any ``SpinSystem``/``Experiment`` tensor requires grad, pepper runs
+      :func:`~torchspin.pepper_autograd` instead and returns
+      a spectrum on the autograd graph (KNOWN_LIMITATIONS.md, "Autograd —
+      differentiable pepper").
+    * With neither line width nor strain the spectrum is a stick/projection
+      absorption spectrum and ``Harmonic`` falls back to 0 (EasySpin raises
+      when a harmonic is requested explicitly).
+    * Line widths (``lw``) are applied by FFT convolution after accumulation,
+      with edge padding (``Options.PaddingMultiplier``); strain widths are
+      added per line.  See KNOWN_LIMITATIONS.md, "Pepper — final line-width
+      convolution (0.8.5)".
+    * Powder averaging uses the SOPHE grid (Wang & Hanson, 1995) with
+      EasySpin's grid interpolation and triangle/zone projection.
+    * Validated against EasySpin (MATLAB) reference spectra
+      (``torchspin/tests/test_pepper*_matlab_validation*.py``).
+
+    Examples
+    --------
+    A nitroxide at X band (first-derivative field sweep):
+
+    >>> from torchspin import SpinSystem, Experiment, Options, pepper
+    >>> sys = SpinSystem(S=0.5, g=[2.0088, 2.0061, 2.0027], Nucs='14N',
+    ...                  A=[20.0, 20.0, 95.0], lw=0.5)
+    >>> exp = Experiment(mwFreq=9.5, Range=[330.0, 345.0], nPoints=512)
+    >>> B, spc = pepper(sys, exp)
+    >>> B.shape, spc.shape, float(B[0]), float(B[-1])
+    (torch.Size([512]), torch.Size([512]), 330.0, 345.0)
+
+    Two components weighted 70:30, returned separately:
+
+    >>> sys_a = SpinSystem(S=0.5, g=[2.0, 2.1, 2.2], lw=1.0, weight=0.7)
+    >>> sys_b = SpinSystem(S=0.5, g=2.0037, lw=0.8, weight=0.3)
+    >>> exp = Experiment(mwFreq=9.5, Range=[300.0, 350.0], nPoints=256)
+    >>> B, spc = pepper([sys_a, sys_b], exp, Options(separate='components'))
+    >>> spc.shape
+    torch.Size([2, 256])
+
+    A frequency sweep at fixed field (``lw`` in MHz; absorption by default):
+
+    >>> exp = Experiment(Field=340.0, mwRange=[9.4, 9.7], nPoints=300)
+    >>> nu, spc = pepper(SpinSystem(S=0.5, g=[2.0, 2.0, 2.05], lw=10.0), exp)
+    >>> round(float(nu[0]), 2), round(float(nu[-1]), 2), exp.Harmonic
+    (9.4, 9.7, 0)
     """
     opt_ = opt if opt is not None else Options()
     from torchspin.experiment import require_positive_field
@@ -1366,38 +1457,14 @@ def _pepper_single(
     exp: Experiment,
     opt: Optional[Options] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Field-swept CW EPR powder spectrum.
+    """Simulate one spin system (one component, one isotopologue).
 
-    Parameters
-    ----------
-    sys:
-        Spin system.  ``sys.lw = [fwhm_g, fwhm_l]`` (mT) sets the global linewidth.
-        Strain parameters (``HStrain``, ``gStrain``, ``AStrain``, ``DStrain``) enable
-        orientation-dependent broadening for each transition.
-    exp:
-        Experimental parameters (mwFreq, Range, nPoints, Harmonic).
-    opt:
-        Computational options.  Defaults to ``Options()`` if ``None``.
-
-    Returns
-    -------
-    x:
-        Field axis in mT, shape ``(nPoints,)``.
-    spec:
-        Spectrum in a.u., shape ``(nPoints,)``.
-
-    Notes
-    -----
-    * Only the matrix diagonalization method is implemented.
-    * Powder averaging uses the SOPHE grid (Wang & Hanson 1995).
-    * Lineshape convolution is FFT-based.
-    * Temperature-dependent Boltzmann populations: set ``exp.Temperature`` (K).
-      If ``None`` or not provided, all levels have equal population (infinite T).
-    * Strain broadening: If any strain parameters are present, per-transition
-      broadening is applied. This is slower than global broadening but essential
-      for realistic spectra. sys.lw is added in quadrature with strain widths.
-    * ``Sys.HStrainL`` (Lorentzian strain): the widths come from the HStrain
-      code; every line is then drawn as a Lorentzian instead of a Gaussian.
+    Internal worker of :func:`pepper`, which expands components and
+    isotopologues, validates ``Options.Method`` and dispatches to the
+    differentiable path; call :func:`pepper` instead.  Arguments, returns
+    and units are those of :func:`pepper` for a single ``SpinSystem``
+    (``opt=None`` means ``Options()``); the returned spectrum is not yet
+    multiplied by ``sys.weight``.
     """
     if opt is None:
         opt = Options()

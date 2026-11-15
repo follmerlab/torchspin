@@ -1,7 +1,7 @@
 """Plots of ligand-field results: level, Tanabe-Sugano, Zeeman, angle and road-map diagrams,
 magnetometry (chi T, chi, mu_eff vs T; M vs B or B/T) with fits, and powder spectra.
 
-Every function returns ``(fig, ax)`` as :func:`torchspin.levelsplot.levelsplot` does (``ax`` is a
+Every function returns ``(fig, ax)`` as :func:`torchspin.levelsplot` does (``ax`` is a
 list ``[main, residuals]`` when a residual panel is drawn) and takes an optional ``ax`` to draw
 into.  matplotlib (torchspin's optional ``plot`` extra) is imported inside the functions.
 
@@ -24,12 +24,20 @@ Tanabe-Sugano labels are spread apart with leader lines (labels that cannot be p
 overlap are left out), resonance positions are tick labels on a secondary axis, and legends go
 into a corner checked to be free of data, or outside the axes.
 
-    >>> from torchspin import lft
-    >>> from torchspin.lft import plot
-    >>> fig, ax = plot.tanabe_sugano(lft.tanabe_sugano.tanabe_sugano(3))
-    >>> res = lft.ddnloop.field_scan(9, torch.linspace(0, 450, 451), theta=0.0, units='cm^-1', zeta=830.0,
-    ...                              k=(0.8,) * 3, V=V_cu, pairs=[(0, 1)])
-    >>> fig, ax = plot.zeeman(res, mw_freq=9.5)
+Example (``(fig, ax)`` is returned; the Agg backend draws without a display):
+
+>>> import matplotlib
+>>> matplotlib.use('Agg')
+>>> import matplotlib.pyplot as plt
+>>> import torch
+>>> from torchspin import lft
+>>> from torchspin.lft import plot
+>>> fig, ax = plot.tanabe_sugano(lft.tanabe_sugano.tanabe_sugano(3))
+>>> V = lft.crystal_field(1200.0, 2000.0, 300.0)                  # Cu(II), cm^-1
+>>> res = lft.ddnloop.field_scan(9, torch.linspace(0, 450, 91), theta=0.0, units='cm^-1',
+...                              zeta=830.0, k=(0.8,) * 3, V=V, pairs=[(0, 1)])
+>>> fig, ax = plot.zeeman(res, mw_freq=9.5)
+>>> plt.close('all')
 """
 
 from __future__ import annotations
@@ -220,8 +228,29 @@ _TERM = re.compile(r"^(\d+)([AETS-Z])(\d?)([gu]?)$")
 
 
 def term_label(label: str, parity: str | None = None, parent: str | None = None) -> str:
-    """Mathtext for a term / irrep label: ``'4T1'`` -> ^4T_1 (``parity='g'``: ^4T_1g); ``parent``
-    is appended in parentheses, e.g. ^4T_1g(P).  Labels of another form are returned unchanged."""
+    """Mathtext for a term or irrep label.
+
+    Parameters
+    ----------
+    label : str
+        Term label such as ``'4T1'``; labels of another form are returned
+        unchanged.
+    parity : {'g', 'u'}, optional
+        Subscript appended to the irrep (``'4T1'``, ``'g'`` -> ^4T_1g).
+    parent : str, optional
+        Free-ion parent appended in parentheses (^4T_1g(P)).
+
+    Returns
+    -------
+    str
+        matplotlib mathtext.
+
+    Examples
+    --------
+    >>> from torchspin.lft import plot
+    >>> plot.term_label('4T1', 'g', 'P')
+    '$^{4}$T$_{\\\\mathregular{1g}}$(P)'
+    """
     m = _TERM.match(label.replace(" ", ""))
     if not m:
         return label
@@ -432,17 +461,65 @@ def levels(energies, *, labels=None, from_units: str | None = None, units: str =
            title: str | None = None, fontsize: float = 8.5, ax=None, figsize=(3.8, 4.8)):
     """Energy-level diagram: each level a group of short horizontal bars, one bar per state.
 
-    ``energies``: a 1-D tensor / array of state energies (``lft.ddn.levels``, ``lft.dpn.levels``,
-    ``DsoxfSystem.levels``) in ``from_units`` (default ``'MHz'``); a :class:`torchspin.lft.dsoxf.Solution`
-    (its own units); or a list of :class:`torchspin.lft.tanabe_sugano.CubicLevel` (term labels and
-    degeneracies come with them).  States within ``tol`` (cm^-1) form one level.
-    ``labels``: None, ``'energy'`` (each level's energy), or one string per level (or per state; the
-    first state of a level names it); term labels such as ``'4T2'`` are typeset (^4T_2, with the
-    ``parity`` subscript 'g' or 'u' if given).  Labels sit right of the bars, spread apart with
-    leader lines; those that cannot be placed without overlap are left out (the lowest levels are kept).
-    ``units``: energy axis (default cm^-1).  ``relative``: ground level at 0.  ``emax`` (in ``units``):
-    upper limit of the axis.  A level of more than ``max_bars`` states is one bar, its degeneracy in
-    the label.
+    Parameters
+    ----------
+    energies : array_like, torch.Tensor, dsoxf.Solution or list of CubicLevel
+        A 1-D tensor/array of state energies (``lft.ddn.levels``,
+        ``lft.dpn.levels``, ``DsoxfSystem.levels``) in ``from_units``; a
+        :class:`torchspin.lft.dsoxf.Solution` (its own units); or a list of
+        :class:`torchspin.lft.tanabe_sugano.CubicLevel` (term labels and
+        degeneracies come with them).
+    labels : None, 'energy' or sequence of str, optional
+        ``'energy'`` labels each level with its energy; a sequence gives one
+        string per level (or per state: the first state of a level names
+        it).  Term labels such as ``'4T2'`` are typeset (^4T_2).  Labels sit
+        right of the bars, spread apart with leader lines; those that cannot
+        be placed without overlap are left out (the lowest levels are kept).
+    from_units : str, optional
+        Unit of plain energies; default ``'MHz'`` (the lft default).
+    units : str, default 'cm^-1'
+        Energy axis unit.
+    relative : bool, default True
+        Put the ground level at 0.
+    tol : float, default 1e-3
+        States within ``tol`` cm^-1 form one level.
+    emax : float, optional
+        Upper limit of the axis, in ``units``.
+    parity : {'g', 'u'}, optional
+        Subscript of the term labels.
+    max_bars : int, default 16
+        A level with more states is drawn as one bar with its degeneracy in
+        the label.
+    title : str, optional
+    fontsize : float, default 8.5
+        Label font size.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw into (default: a new figure).
+    figsize : tuple, default (3.8, 4.8)
+        Size of a new figure, inches.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes
+
+    Raises
+    ------
+    ValueError
+        If the energies are not 1-D, or ``labels`` has the wrong length.
+    ImportError
+        Without matplotlib.
+
+    Examples
+    --------
+    >>> import matplotlib
+    >>> matplotlib.use('Agg')
+    >>> import matplotlib.pyplot as plt
+    >>> from torchspin import lft
+    >>> from torchspin.lft import plot
+    >>> e = lft.ddn.levels(9, V=lft.crystal_field(1200.0, 2000.0, 300.0), zeta=830.0, units='cm^-1')
+    >>> fig, ax = plot.levels(e, from_units='cm^-1')
+    >>> plt.close(fig)
     """
     from .tanabe_sugano import CubicLevel
 
@@ -518,7 +595,24 @@ _L_LETTERS = "SPDFGHIKLMNOQ"
 
 
 def branching(L: int) -> dict[str, int]:
-    """Multiplicity of each O irrep in the free-ion L (S -> A1, P -> T1, ..., H -> E + 2 T1 + T2)."""
+    """Multiplicity of each O irrep in the free-ion term of orbital angular momentum L.
+
+    Parameters
+    ----------
+    L : int
+        Orbital angular momentum (S = 0, P = 1, ...).
+
+    Returns
+    -------
+    dict of str to int
+        ``{irrep: multiplicity}``, e.g. P -> T1, H -> E + 2 T1 + T2.
+
+    Examples
+    --------
+    >>> from torchspin.lft import plot
+    >>> plot.branching(3)                  # F
+    {'A2': 1, 'T1': 1, 'T2': 1}
+    """
     def chi_L(theta):
         if theta == 0.0:
             return 2 * L + 1
@@ -585,14 +679,34 @@ def _root_l2(n: int, c_over_b: float, geometry: str, eps: float) -> dict | None:
 
 
 def parent_terms(n: int, c_over_b: float, geometry: str = "Oh") -> dict:
-    """{(block label, root): free-ion parent letter} for every Tanabe-Sugano curve of d^n.
+    """Free-ion parent term of every Tanabe-Sugano curve of d^n.
 
-    The roots of a (2S+1)Gamma block that meet at one energy at Dq = 0 come from the free-ion terms
-    of that spin at that energy (several when terms are degenerate, e.g. 2P and 2H of d3/d7), each
-    contributing Gamma as often as the branching rule says.  Within such a cluster the roots are
-    ranked by <L^2> at small Dq/B (full determinant basis) and given the terms in order of L, so the
-    labels always follow the branching rules.  Where degenerate terms mix (2P/2H in a cubic field),
-    the parent is the dominant one in this ranking, not a pure state.
+    The roots of a (2S+1)Gamma block that meet at one energy at Dq = 0 come
+    from the free-ion terms of that spin at that energy (several when terms
+    are degenerate, e.g. 2P and 2H of d3/d7), each contributing Gamma as
+    often as the branching rule says.  Within such a cluster the roots are
+    ranked by <L^2> at small Dq/B (full determinant basis) and given the
+    terms in order of L, so the labels always follow the branching rules.
+    Where degenerate terms mix (2P/2H in a cubic field), the parent is the
+    dominant one in this ranking, not a pure state.
+
+    Parameters
+    ----------
+    n : int
+        Number of d electrons.
+    c_over_b : float
+        Racah C/B.
+    geometry : str, default 'Oh'
+
+    Returns
+    -------
+    dict
+        ``{(block label, root): parent letter}``.
+
+    Raises
+    ------
+    RuntimeError
+        If the roots cannot be matched to the free-ion terms.
     """
     from . import tanabe_sugano as ts
 
@@ -627,15 +741,47 @@ def parent_terms(n: int, c_over_b: float, geometry: str = "Oh") -> dict:
 @_styled
 def tanabe_sugano(diagram, *, units: str = _u.PLOT_ENERGY_UNITS, ymax=None, labels: bool = True,
                   parents: bool = True, title: str | None = None, fontsize: float = 8.0, ax=None, figsize=(5.2, 5.4)):
-    """Tanabe-Sugano diagram from :func:`torchspin.lft.tanabe_sugano.tanabe_sugano` data.
+    """Tanabe-Sugano diagram.
 
-    Conventional axes E/B vs Dq/B (dimensionless) by default; when the diagram carries Racah B
-    (``tanabe_sugano(..., B=...)`` or ``diagram.at(B)``) the axes are E and Dq in ``units``
-    (default cm^-1).  Curves are colored by spin multiplicity (legend above the axes); the term
-    label of every curve that ends inside the plot is placed in the right margin with a leader line
-    (spread apart; Oh labels carry the g subscript; ``parents=True`` adds the free-ion parent term
-    where a label occurs more than once, e.g. ^4T_1g(P)).  Ground-state crossovers are dashed
-    vertical lines.  ``ymax``: top of the energy axis (default E/B = 70, or 70 B).
+    Conventional axes E/B vs Dq/B (dimensionless) by default; when the
+    diagram carries Racah B (``tanabe_sugano(..., B=...)`` or
+    ``diagram.at(B)``) the axes are E and Dq in ``units``.  Curves are
+    colored by spin multiplicity (legend above the axes); the term label of
+    every curve that ends inside the plot is placed in the right margin with
+    a leader line (Oh labels carry the g subscript).  Ground-state crossovers
+    are dashed vertical lines.
+
+    Parameters
+    ----------
+    diagram : TanabeSuganoDiagram
+        From :func:`torchspin.lft.tanabe_sugano.tanabe_sugano`.
+    units : str, default 'cm^-1'
+        Axis unit when the diagram carries B.
+    ymax : float, optional
+        Top of the energy axis (default E/B = 70, or 70 B).
+    labels : bool, default True
+        Draw term labels.
+    parents : bool, default True
+        Add the free-ion parent term where a label occurs more than once,
+        e.g. ^4T_1g(P) (:func:`parent_terms`).
+    title : str, optional
+    fontsize : float, default 8.0
+    ax : matplotlib.axes.Axes, optional
+    figsize : tuple, default (5.2, 5.4)
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes
+
+    Examples
+    --------
+    >>> import matplotlib
+    >>> matplotlib.use('Agg')
+    >>> import matplotlib.pyplot as plt
+    >>> from torchspin import lft
+    >>> fig, ax = lft.plot.tanabe_sugano(lft.tanabe_sugano.tanabe_sugano(3))
+    >>> plt.close(fig)
     """
     d = diagram
     units = _u.canonical_energy_unit(units)
@@ -761,16 +907,47 @@ def _loop_arrays(result, units):
 @_styled
 def zeeman(result, *, states=None, units: str = _u.PLOT_ENERGY_UNITS, field_units: str = "mT", mw_freq=None,
            offset="ground", threshold: float = 1e-3, title: str | None = None, ax=None, figsize=(5.0, 4.0)):
-    """Zeeman diagram (energies vs field magnitude) from :func:`torchspin.lft.ddnloop.field_scan`.
+    """Zeeman diagram: energies vs field magnitude.
 
-    ``states``: indices of the states to draw (default: those within 10 mu_B B_max of the ground
-    state somewhere in the scan, i.e. the ground manifold an EPR experiment sees).  ``units``:
-    energy axis (default cm^-1).  ``field_units``: 'mT' (default), 'G' or 'T'.  ``offset``:
-    ``'ground'`` puts the lowest drawn state at the first field point at 0, a number (in ``units``)
-    is subtracted, None plots the energies as computed.  ``mw_freq`` (GHz): transitions with
-    E_j - E_i = h nu are drawn as vertical markers (red to grey by the level-summed probability
-    when the scan has ``pairs``; then only those pairs) and their fields become tick labels on the
-    top axis; markers below ``threshold`` x the strongest are omitted.
+    Parameters
+    ----------
+    result : LoopResult
+        From :func:`torchspin.lft.ddnloop.field_scan`.
+    states : sequence of int, optional
+        Indices of the states to draw; default those within 10 mu_B B_max of
+        the ground state somewhere in the scan (the ground manifold an EPR
+        experiment sees).
+    units : str, default 'cm^-1'
+        Energy axis unit.
+    field_units : {'mT', 'G', 'T'}, default 'mT'
+    mw_freq : float, optional
+        Microwave frequency in GHz: transitions with E_j - E_i = h nu are
+        drawn as vertical markers (red to gray by the level-summed
+        probability when the scan has ``pairs``; then only those pairs) and
+        their fields become tick labels on the top axis.
+    offset : 'ground', float or None, default 'ground'
+        ``'ground'`` puts the lowest drawn state at the first field point at
+        0; a number (in ``units``) is subtracted; ``None`` plots the
+        energies as computed.
+    threshold : float, default 1e-3
+        Markers below ``threshold`` times the strongest are omitted.
+    title : str, optional
+    ax : matplotlib.axes.Axes, optional
+    figsize : tuple, default (5.0, 4.0)
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes
+
+    Raises
+    ------
+    ValueError
+        If ``result`` is not a scan over field magnitude.
+
+    See Also
+    --------
+    angles, roadmap
     """
     units = _u.canonical_energy_unit(units)
     B = _np(result.fields).reshape(-1)
@@ -831,13 +1008,37 @@ _ANGLE_LABEL = {"theta": "θ (deg)", "phi": "φ (deg)"}
 @_styled
 def angles(result, *, angle: str | None = None, states=None, units: str = _u.PLOT_ENERGY_UNITS, mw_freq=None,
            offset="center", threshold: float = 1e-3, title: str | None = None, ax=None, figsize=(5.0, 4.0)):
-    """Angle (rotation) diagram: energies at fixed field vs theta or phi (degrees), from
-    :func:`torchspin.lft.ddnloop.angle_scan`.
+    """Angle (rotation) diagram: energies at fixed field vs theta or phi (degrees).
 
-    ``angle``: 'theta' or 'phi' (default: the one that varies).  ``offset='center'`` subtracts the
-    mean energy of the drawn states (a number in ``units``, or None, also work).  ``mw_freq`` (GHz):
-    orientations where E_j - E_i = h nu are drawn as vertical markers and their angles become top
-    tick labels.  Other keywords as :func:`zeeman`.  For resonance fields vs angle use :func:`roadmap`.
+    Parameters
+    ----------
+    result : LoopResult
+        From :func:`torchspin.lft.ddnloop.angle_scan`.
+    angle : {'theta', 'phi'}, optional
+        Default: the one that varies.
+    offset : 'center', float or None, default 'center'
+        ``'center'`` subtracts the mean energy of the drawn states; a number
+        (in ``units``) is subtracted; ``None``: as computed.
+    mw_freq : float, optional
+        GHz: orientations where E_j - E_i = h nu are drawn as vertical
+        markers and their angles become top tick labels.
+    states, units, threshold, title, ax, figsize
+        As :func:`zeeman`.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes
+
+    Raises
+    ------
+    ValueError
+        If the field varies in the scan, or ``angle`` is ambiguous or
+        unknown.
+
+    See Also
+    --------
+    roadmap : Resonance fields vs angle.
     """
     units = _u.canonical_energy_unit(units)
     angle, a = _which_angle(result, angle)
@@ -874,14 +1075,41 @@ def angles(result, *, angle: str | None = None, states=None, units: str = _u.PLO
 @_styled
 def roadmap(result, mw_freq, *, angle: str | None = None, states=None, field_units: str = "mT",
             threshold: float = 1e-3, title: str | None = None, ax=None, figsize=(5.0, 4.0)):
-    """Road map (rotation pattern): resonance fields at ``mw_freq`` (GHz) vs theta or phi.
+    """Road map (rotation pattern): resonance fields at ``mw_freq`` vs theta or phi.
 
-    ``result``: a :func:`torchspin.lft.ddnloop.scan` over angle x field (e.g. ``mesh=True`` with one
-    theta or phi value, or broadcast angles (n, 1) against fields (m,)); the field must be the
-    last scan axis.  Resonances are found by interpolation along the field; with ``pairs`` in the
-    scan only those pairs are used and the line width follows the level-summed probability
-    (markers below ``threshold`` x the strongest are dropped).  Field axis in ``field_units``
-    (default mT).  One line color per pair (legend when there is more than one).
+    Resonances are found by interpolation along the field; with ``pairs`` in
+    the scan only those pairs are used and the line width follows the
+    level-summed probability.  One line color per pair (legend when there is
+    more than one).
+
+    Parameters
+    ----------
+    result : LoopResult
+        A :func:`torchspin.lft.ddnloop.scan` over angle x field (e.g.
+        ``mesh=True`` with one theta or phi value, or angles (n, 1)
+        broadcast against fields (m,)); the field must be the last scan
+        axis.
+    mw_freq : float
+        Microwave frequency in GHz.
+    angle : {'theta', 'phi'}, optional
+        Default: the one that varies.
+    states : sequence of int, optional
+        States to consider (as :func:`zeeman`).
+    field_units : {'mT', 'G', 'T'}, default 'mT'
+    threshold : float, default 1e-3
+        Markers below ``threshold`` times the strongest are dropped.
+    title, ax, figsize
+        As :func:`zeeman`.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes
+
+    Raises
+    ------
+    ValueError
+        If the field is not the last, varying scan axis.
     """
     angle, a = _which_angle(result, angle)
     shp = tuple(result.energies.shape[:-1])
@@ -989,14 +1217,61 @@ def susceptibility(T, model=None, *, data=None, model_at_data=None, quantity: st
                    figsize=(4.6, 4.2)):
     """chi T (default), chi or mu_eff vs T, optionally with data, a fitted curve and a residual panel.
 
-    ``T`` (K) and ``model`` (a :class:`~torchspin.lft.ddnmag.MagResult` from ``lft.ddnsus.chi_T`` /
-    ``susceptibility`` (one measuring field), or values) are the calculated curve; ``given`` says
-    whether ``model`` is 'chiT' (default, as ``ddnsus.chi_T``) or 'chi', in ``model_chi_units``
-    (default 'SI', the ddnsus default).  ``quantity``: 'chiT', 'chi' or 'mu_eff' (Bohr magnetons),
-    plotted in ``chi_units`` ('cgs': cm^3/mol, default; 'SI': m^3/mol).  ``data``: (T_obs, y_obs)
-    already in the plotted quantity and ``chi_units``.  ``residuals`` (default: on with data and
-    model): obs - calc in a lower panel, calc at the data from ``model_at_data`` (same units as
-    ``model``) or interpolated from the curve.  See :func:`fit` to plot a ``lft.fit`` result directly.
+    Parameters
+    ----------
+    T : array_like, shape (nT,)
+        Temperatures of the calculated curve, K.
+    model : MagResult or array_like, optional
+        The calculated curve: a :class:`torchspin.lft.ddnmag.MagResult` from
+        ``lft.ddnsus.chi_T``/``susceptibility`` (one measuring field), or
+        values (nT,).
+    data : tuple of 2 array_like, optional
+        ``(T_obs, y_obs)``, already in the plotted ``quantity`` and
+        ``chi_units``.
+    model_at_data : array_like, optional
+        The model at the data temperatures (units of ``model``); otherwise
+        interpolated from the curve for the residuals.
+    quantity : {'chiT', 'chi', 'mu_eff'}, default 'chiT'
+        Plotted quantity (``mu_eff`` in Bohr magnetons).
+    given : {'chiT', 'chi'}, default 'chiT'
+        What ``model`` holds.
+    model_chi_units : {'SI', 'cgs'}, default 'SI'
+        Units of ``model`` (the ddnsus default is SI, m^3/mol).
+    chi_units : {'cgs', 'SI'}, default 'cgs'
+        Plotted units: cm^3/mol or m^3/mol.
+    residuals : bool, optional
+        Residual panel (obs - calc); default on with data and model.
+    model_label, data_label : str, default 'Calc.', 'Obs.'
+    title : str, optional
+    ax : matplotlib.axes.Axes, optional
+    figsize : tuple, default (4.6, 4.2)
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes or list of Axes
+        ``[main, residuals]`` when a residual panel is drawn.
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``given`` or ``quantity``, or a model with a
+        different number of values than temperatures.
+
+    See Also
+    --------
+    fit : Plot a :class:`torchspin.lft.fit.JointFit` result directly.
+
+    Examples
+    --------
+    >>> import matplotlib
+    >>> matplotlib.use('Agg')
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> from torchspin.lft import plot
+    >>> T = np.linspace(2.0, 300.0, 50)
+    >>> fig, ax = plot.susceptibility(T, np.full_like(T, 0.375), model_chi_units='cgs')
+    >>> plt.close(fig)
     """
     Tm = _np(T).reshape(-1)
     ym = None
@@ -1062,14 +1337,46 @@ def _m_convert(M, from_units: str, to_units: str):
 def magnetization(field, M, T=None, *, x: str = "B", field_units: str = "T", from_M_units: str = "muB",
                   M_units: str = "muB", data=None, model_at_data=None, residuals: bool | None = None,
                   title: str | None = None, ax=None, figsize=(4.8, 4.2)):
-    """M vs B (``x='B'``) or vs B/T (``x='B/T'``, T/K) for one or more temperatures.
+    """M vs B (``x='B'``) or vs B/T (``x='B/T'``) for one or more temperatures.
 
-    ``field`` (nB,) in mT (as ``lft.ddnmag``); ``M``: a :class:`~torchspin.lft.ddnmag.MagResult`
-    (its powder (nB, nT)) or values (nB,) / (nB, nT) in ``from_M_units`` ('muB' per ion, default;
-    'emu/mol'; 'SI'), plotted in ``M_units``.  ``T`` (nT,) K labels the curves (one color each;
-    legend in a free corner).  ``field_units``: field axis, default 'T'.  ``data``:
-    (field_obs mT, T_obs, M_obs in ``M_units``), markers colored by the matching temperature.
-    ``residuals`` (default: on when ``model_at_data`` (M at the data points, ``from_M_units``) is given).
+    Parameters
+    ----------
+    field : array_like, shape (nB,)
+        Fields in mT (as ``lft.ddnmag``).
+    M : MagResult or array_like
+        A :class:`torchspin.lft.ddnmag.MagResult` (its powder (nB, nT)) or
+        values (nB,) / (nB, nT) in ``from_M_units``.
+    T : array_like, shape (nT,), optional
+        Temperatures in K, one curve (color) each; required for
+        ``x='B/T'``.
+    x : {'B', 'B/T'}, default 'B'
+    field_units : {'T', 'mT', 'G'}, default 'T'
+        Field axis unit.
+    from_M_units, M_units : {'muB', 'emu/mol', 'SI'}, default 'muB'
+        Units of ``M`` and of the plot (Bohr magnetons per ion, emu/mol,
+        A m^2/mol).
+    data : tuple, optional
+        ``(field_obs in mT, T_obs, M_obs in M_units)``, markers colored by
+        the matching temperature.
+    model_at_data : array_like, optional
+        M at the data points (``from_M_units``); turns the residual panel on
+        by default.
+    residuals : bool, optional
+    title : str, optional
+    ax : matplotlib.axes.Axes, optional
+    figsize : tuple, default (4.8, 4.2)
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes or list of Axes
+        ``[main, residuals]`` with a residual panel.
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``x``, ``x='B/T'`` without ``T``, or a number of
+        curves different from the number of temperatures.
     """
     B = _np(field).reshape(-1)
     Mv = _powder_of(M)
@@ -1140,17 +1447,61 @@ def powder(result, *, mw_freq=None, field_units: str = "mT", kind: str = "field"
            units: str = _u.PLOT_ENERGY_UNITS, normalize: bool = True, data=None, label: str | None = None,
            overlay=None, ylabel: str = "Intensity (arb. u.)", title: str | None = None, ax=None,
            figsize=(5.0, 3.6)):
-    """Powder spectrum from :mod:`torchspin.lft.ddnpow`, :mod:`~torchspin.lft.ddpowh` or :mod:`~torchspin.lft.ddpowj`.
+    """Powder spectrum from :mod:`torchspin.lft.ddnpow`, :mod:`torchspin.lft.ddpowh` or :mod:`torchspin.lft.ddpowj`.
 
-    ``kind='field'``: field axis (``ddnpow.simulate``, ``ddpowh.epr``, ``ddpowj.epr``) in ``field_units``,
-    default mT.  ``kind='energy'``: FDMR axis (``ddnpow.fdmr``, ``ddpowh.fdmr``) in ``from_units`` (the
-    ``units`` of the run) -> ``units``, default cm^-1.  ``kind='rf'``: ENDOR/NMR axis in MHz
-    (``ddpowh.endor``, ``ddpowh.nmr``).
+    Parameters
+    ----------
+    result : torchspin.lft.ddpowh.PowderResult
+        The simulation result (``ddnpow`` results have the same fields).
+    mw_freq : float, optional
+        GHz; quoted in the legend.
+    field_units : {'mT', 'G', 'T'}, default 'mT'
+        Axis unit for ``kind='field'``.
+    kind : {'field', 'energy', 'rf'}, default 'field'
+        ``'field'``: field axis (``ddnpow.simulate``, ``ddpowh.epr``,
+        ``ddpowj.epr``); ``'energy'``: FDMR axis (``ddnpow.fdmr``,
+        ``ddpowh.fdmr``) in ``from_units`` converted to ``units``; ``'rf'``:
+        ENDOR/NMR axis in MHz (``ddpowh.endor``, ``ddpowh.nmr``).
+    from_units : str, default 'MHz'
+        The ``units`` of the FDMR run.
+    units : str, default 'cm^-1'
+        FDMR axis unit.
+    normalize : bool, default True
+        Scale to ``max(abs(y)) = 1`` (data too; each overlay to the main
+        spectrum's maximum, so relative heights are kept).
+    data : tuple of 2 array_like, optional
+        ``(axis, y)`` in the plotted axis unit, overlaid as a dark line.
+    label : str, optional
+    overlay : list of tuple, optional
+        ``[(result, label), ...]``: more simulations on the same axis kind,
+        drawn dashed.
+    ylabel : str, default 'Intensity (arb. u.)'
+    title : str, optional
+    ax : matplotlib.axes.Axes, optional
+    figsize : tuple, default (5.0, 3.6)
 
-    ``mw_freq`` (GHz) is quoted in the legend.  ``normalize`` (default): scale to max |y| = 1 (data too;
-    each overlay to the main spectrum's maximum, so relative heights are kept).  ``data``: (axis, y) in the
-    plotted axis unit, overlaid as a dark line.  ``overlay``: [(result, label), ...] more simulations on
-    the same axis kind (e.g. with and without strain), drawn dashed.
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``kind`` or field unit.
+
+    Examples
+    --------
+    >>> import matplotlib
+    >>> matplotlib.use('Agg')
+    >>> import matplotlib.pyplot as plt
+    >>> import torch
+    >>> from torchspin import SpinSystem
+    >>> from torchspin.lft import ddpowh, plot
+    >>> res = ddpowh.epr(SpinSystem(S=0.5, g=[2.0, 2.0, 2.2]), torch.linspace(300, 350, 101), 9.5,
+    ...                  width=50.0, igloo=6)
+    >>> fig, ax = plot.powder(res, mw_freq=9.5)
+    >>> plt.close(fig)
     """
     def axis_of(res):
         xx = _np(res.axis).reshape(-1)
@@ -1206,13 +1557,41 @@ def powder(result, *, mw_freq=None, field_units: str = "mT", kind: str = "field"
 @_styled
 def fit(joint, outcome, dataset=None, *, npts: int = 200, quantity: str | None = None, chi_units: str | None = None,
         x: str = "B", field_units: str = "T", title: str | None = None, ax=None):
-    """Plot a :class:`torchspin.lft.fit.JointFit` result on one magnetometry data set: the data, the
-    best-fit curve (``npts`` points, recomputed from the model at ``outcome.result.values``) and the
-    residual panel (obs - calc at the data points, exact).
+    """Plot a :class:`torchspin.lft.fit.JointFit` result on one magnetometry data set.
 
-    ``dataset``: name or index (default: the first Susceptibility or Magnetization block).
-    Susceptibility: ``quantity`` (default the block's) and ``chi_units`` (default the block's), see
-    :func:`susceptibility`.  Magnetization: ``x`` and ``field_units`` as :func:`magnetization`.
+    Draws the data, the best-fit curve (recomputed from the model at
+    ``outcome.result.values``) and the residual panel (obs - calc at the data
+    points, exact).
+
+    Parameters
+    ----------
+    joint : JointFit
+    outcome : JointOutcome
+        Result of ``joint.fit()``.
+    dataset : str or int, optional
+        Name or index of the data set; default the first
+        :class:`~torchspin.lft.fit.Susceptibility` or
+        :class:`~torchspin.lft.fit.Magnetization` block.
+    npts : int, default 200
+        Points of the best-fit curve.
+    quantity, chi_units : str, optional
+        Susceptibility: as :func:`susceptibility` (default the block's).
+    x, field_units : str, default 'B', 'T'
+        Magnetization: as :func:`magnetization`.
+    title : str, optional
+    ax : matplotlib.axes.Axes, optional
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : list of Axes
+        ``[main, residuals]``.
+
+    Raises
+    ------
+    ValueError
+        If there is no such data set, or it is not a Susceptibility or
+        Magnetization block.
     """
     import dataclasses
 

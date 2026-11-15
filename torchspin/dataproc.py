@@ -364,8 +364,8 @@ def rescaledata(y: np.ndarray, yref=None, mode: str = 'maxabs', region=None):
     mode : str, optional
         Scaling mode:
 
-        * ``'maxabs'`` — scale so that max(|y|) = 1 (or max(|yref|) if given)
-        * ``'lsq'``    — least-squares scale: a·y ≈ yref; requires *yref*
+        * ``'maxabs'`` — scale so that ``max(abs(y)) = 1`` (or ``max(abs(yref))`` if given)
+        * ``'lsq'``    — least-squares scale: ``a·y ≈ yref``; requires *yref*
         * ``'int'``    — normalize sum to 1
         * ``'dint'``   — normalize double integral (cumsum sum) to 1
         * ``'none'``   — no scaling (returns copy)

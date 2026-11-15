@@ -14,53 +14,69 @@ convention).  Multiply a ratio by xi in the unit you want, e.g.
 ``delta * lft.units.convert_energy(xi_cm, 'cm^-1', 'MHz')``.  Angles (the trigonal twist) are
 in radians; ``degrees=True`` takes Telser-style input.
 
-Forward, exact Hamiltonian
---------------------------
-``t2g_hamiltonian(cf, xi)`` (..., 6, 6): H = CF (x) 1 + xi L.S in (xy, xz, yz) x (alpha, beta).
-``solve_t2g_hole(cf, k, xi)`` -> :class:`HoleState`: |g| principal values, g g^T, det g, the
-three Kramers-doublet energies and the hole orbital populations.  The hole is the HIGHEST
-doublet, a projector computed with :func:`torchspin.lft._linalg.ground_manifold` on -H, so the
-derivative is exact at the Kramers degeneracy.  g g^T = 2 tr(P mu_i P mu_j) and
-det g = -4i tr(P mu_x P mu_y P mu_z) are gauge invariant.
-``tetragonal_cf(delta, v)``, ``trigonal_cf(delta)``.
+Contents
+--------
+Forward, exact Hamiltonian: :func:`t2g_hamiltonian` (``H = CF (x) 1 + xi L.S`` in
+(xy, xz, yz) x (alpha, beta)), :func:`solve_t2g_hole` (-> :class:`HoleState`: ``abs(g)``
+principal values, g g^T, det g, the three Kramers-doublet energies and the hole orbital
+populations), :func:`tetragonal_cf`, :func:`trigonal_cf`.  The hole is the HIGHEST doublet, a
+projector computed with ``torchspin.lft._linalg.ground_manifold`` on -H, so the derivative is
+exact at the Kramers degeneracy; ``g g^T = 2 tr(P mu_i P mu_j)`` and
+``det g = -4i tr(P mu_x P mu_y P mu_z)`` are gauge invariant.
 
-Forward, McGarvey closed forms
-------------------------------
-``g_from_abc``, ``ligand_field_from_abc``, ``abc_to_ABC``, ``ABC_to_abc``,
-``trigonal_g_from_coefficients``, ``trigonal_delta_from_coefficients``, ``epi_from_twist``,
-``from_complex_coefficients``, ``from_real_coefficients`` (both signs of the third coefficient;
-DLSD5's normalization and the axis relabeling are decided on detached values),
-``trigonal_from_coefficients``.
+Forward, McGarvey closed forms: :func:`g_from_abc`, :func:`ligand_field_from_abc`,
+:func:`abc_to_ABC`, :func:`ABC_to_abc`, :func:`trigonal_g_from_coefficients`,
+:func:`trigonal_delta_from_coefficients`, :func:`epi_from_twist`,
+:func:`from_complex_coefficients`, :func:`from_real_coefficients` (both signs of the third
+coefficient; DLSD5's normalization and the axis relabeling are decided on detached values),
+:func:`trigonal_from_coefficients`.
 
-Inverse (g -> ligand field), every branch
------------------------------------------
-:func:`tetragonal_from_g` and :func:`trigonal_from_g` run the NumPy solver (copied into
-:mod:`torchspin.lft._engines.dlsd5`) on DETACHED values; its discrete outcomes (which branches,
-which sign/permutation of g, which relabeling) are taken as given.  The derivative is attached to
-each converged branch by the implicit-function theorem (:func:`implicit_attach`): with unknowns
-x and data theta solving F(x, theta) = 0,
+Inverse (g -> ligand field), every branch: :func:`tetragonal_from_g` and
+:func:`trigonal_from_g` run the NumPy solver (copied into ``torchspin.lft._engines.dlsd5``) on
+DETACHED values; its discrete outcomes (which branches, which sign/permutation of g, which
+relabeling) are taken as given.  The derivative is attached to each converged branch by the
+implicit-function theorem (:func:`implicit_attach`): with unknowns x and data theta solving
+F(x, theta) = 0::
 
-    x = x* - J^-1 (F(x*, theta) - F(x*, theta).detach()),     J = dF/dx at x* (detached),
+    x = x* - J^-1 (F(x*, theta) - F(x*, theta).detach()),     J = dF/dx at x* (detached)
 
-which has the value x* exactly and the derivative dx/dtheta = -J^-1 dF/dtheta, in reverse and
-forward mode (``torch.autograd.forward_ad``; not under ``torch.func`` transforms, since the
+which has the value x* exactly and the derivative ``dx/dtheta = -J^-1 dF/dtheta``, in reverse
+and forward mode (``torch.autograd.forward_ad``; not under ``torch.func`` transforms, since the
 solver runs in NumPy).
 
-* tetragonal: x = (a, b, c, k), F = (g_from_abc(a, b, c, k) - s o P g, a^2 + b^2 + c^2 - 1), where
-  s o P g is the signed, permuted assignment of the input |g| that the branch reproduces.
-* trigonal: x = k (fix="beta") or beta (fix="k"), F = g_perp(at(x), bt(x), ...) + |g_perp|, with
-  at^2 from g_par.  theta = (g_par, g_perp, the fixed beta or k).
+* tetragonal: x = (a, b, c, k), F = (g_from_abc(a, b, c, k) - s o P g, a^2 + b^2 + c^2 - 1),
+  where s o P g is the signed, permuted assignment of the input ``abs(g)`` that the branch
+  reproduces.
+* trigonal: x = k (fix="beta") or beta (fix="k"), F = g_perp(at(x), bt(x), ...) +
+  ``abs(g_perp)``, with at^2 from g_par.  theta = (g_par, g_perp, the fixed beta or k).
 
 Derived quantities (Delta/xi, V/xi, E0/xi, weights, epi) follow by plain autograd.  At a branch
 where J is singular (a fold of the g map) no derivative exists: the result is inf/nan.
 
-Not ported: the DLSD5 CLI and reports.  ``HoleState.g_axes`` and the signed g matrix of the NumPy
-version are gauge dependent; use ``ggT`` and ``g_det``.
+Not ported: the DLSD5 CLI and reports.  ``HoleState.g_axes`` and the signed g matrix of the
+NumPy version are gauge dependent; use ``ggT`` and ``g_det``.
 
-    >>> from torchspin.lft import dlsd5
-    >>> for b in dlsd5.tetragonal_from_g(2.62, 2.38, 1.60):      # |g| largest first
-    ...     print(b.numpy.label, float(b.delta), float(b.v), float(b.k))
-    >>> st = dlsd5.solve_t2g_hole(dlsd5.tetragonal_cf(3.0, 1.0), k=0.9)
+Examples
+--------
+The two tetragonal/rhombic branches for g = 2.62, 2.38, 1.60 (telser-tools' DLSD5 quick
+start), with derivatives with respect to the g values:
+
+>>> import torch
+>>> from torchspin.lft import dlsd5
+>>> g = torch.tensor([2.62, 2.38, 1.60], dtype=torch.float64, requires_grad=True)
+>>> branches = dlsd5.tetragonal_from_g(*g)
+>>> for b in branches:
+...     print(b.numpy.label, round(b.delta.item(), 4), round(b.v.item(), 4), round(b.k.item(), 4))
+#1 (gz = -g3) 0.3069 0.0994 1.1689
+#2 (gz = +g3) 2.9743 0.9625 0.895
+>>> (dDelta_dg,) = torch.autograd.grad(branches[1].delta, g)
+
+The forward check: the exact t2g Hamiltonian of branch 2 (Delta = 3, V = 1, k = 0.9, in units
+of xi) gives g close to the input:
+
+>>> st = dlsd5.solve_t2g_hole(dlsd5.tetragonal_cf(3.0, 1.0), k=0.9)
+>>> [round(x, 3) for x in st.g_principal.tolist()]
+[1.605, 2.378, 2.624]
 """
 
 from __future__ import annotations
@@ -134,33 +150,82 @@ def _ops(device=None):
 
 
 def tetragonal_cf(delta, v) -> torch.Tensor:
-    """diag(Delta, V/2, -V/2) in (xy, xz, yz), shape (..., 3, 3); in the unit of ``delta`` and ``v``."""
+    """Tetragonal/rhombic t2g crystal field ``diag(Delta, V/2, -V/2)`` in (xy, xz, yz).
+
+    Parameters
+    ----------
+    delta, v : float or torch.Tensor
+        Delta = E(xy) relative to the xz/yz barycenter, V = E(xz) - E(yz); any one energy unit
+        (units of xi in DLSD5).  Broadcast against each other.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3), float64
+        In the unit of ``delta`` and ``v``.
+    """
     delta, v = torch.broadcast_tensors(_t(delta), _t(v))
     return torch.diag_embed(torch.stack([delta, v / 2.0, -v / 2.0], -1))
 
 
 def trigonal_cf(delta) -> torch.Tensor:
-    """Delta (|a1><a1| - 1/3), a1 = (xy + xz + yz)/sqrt3 (octahedral-beta trigonal field); E(a1) - E(e) = Delta."""
+    """Trigonal t2g crystal field ``Delta (|a1><a1| - 1/3)`` (octahedral beta).
+
+    ``a1 = (xy + xz + yz)/sqrt(3)``, so ``E(a1) - E(e) = Delta``.
+
+    Parameters
+    ----------
+    delta : float or torch.Tensor, shape (...)
+        Trigonal splitting in any energy unit.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3), float64
+        In (xy, xz, yz), in the unit of ``delta``.
+    """
     delta = _t(delta)
     a1 = torch.full((3,), 1.0 / math.sqrt(3.0), dtype=_F64, device=delta.device)
     return delta[..., None, None] * (torch.outer(a1, a1) - torch.eye(3, dtype=_F64, device=delta.device) / 3.0)
 
 
 def t2g_hamiltonian(cf, xi=1.0) -> torch.Tensor:
-    """H = CF (x) 1_2 + xi L.S in (xy, xz, yz) x (alpha, beta), shape (..., 6, 6), in the unit of ``cf`` and ``xi``."""
+    """t2g^5 Hamiltonian ``H = CF (x) 1_2 + xi L.S``.
+
+    Parameters
+    ----------
+    cf : array_like or torch.Tensor, shape (..., 3, 3)
+        Real symmetric crystal field in (xy, xz, yz).
+    xi : float or torch.Tensor, default 1.0
+        Spin-orbit constant in the unit of ``cf`` (1: DLSD5's units of xi).
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 6, 6), complex128
+        In (xy, xz, yz) x (alpha, beta), in the unit of ``cf`` and ``xi``.
+    """
     cf = _t(cf)
     LS, _, _, E = _ops(cf.device)
     return torch.einsum("...ab,abij->...ij", cf.to(_C128), E) + _t(xi, cf.device)[..., None, None].to(_C128) * LS
 
 
 class HoleState(NamedTuple):
-    """The t2g^5 hole (highest) Kramers doublet of CF + xi L.S.
+    """The t2g^5 hole (highest) Kramers doublet of ``CF + xi L.S`` (:func:`solve_t2g_hole`).
 
-    ``g_principal`` (..., 3) ascending |g|; ``ggT`` (..., 3, 3); ``g_det`` = det g (its sign is
-    ``g_sign_product``, the only g sign EPR can reach); ``doublet_energies`` (..., 3) ascending, in
-    the unit of the crystal field; ``hole_weights`` (..., 3) in (xy, xz, yz) order; ``projector``
-    (..., 6, 6) onto the hole doublet; ``gap`` from the hole doublet down to the next one (the
-    derivative scales as 1/gap).
+    Attributes
+    ----------
+    g_principal : torch.Tensor, shape (..., 3)
+        Principal values ``abs(g)``, ascending.
+    ggT : torch.Tensor, shape (..., 3, 3)
+        ``g g^T`` (gauge-invariant).
+    g_det : torch.Tensor, shape (...)
+        det g; its sign (:attr:`g_sign_product`) is the only g sign EPR can reach.
+    doublet_energies : torch.Tensor, shape (..., 3)
+        The three Kramers-doublet energies, ascending, in the unit of the crystal field.
+    hole_weights : torch.Tensor, shape (..., 3)
+        Hole populations of (xy, xz, yz).
+    projector : torch.Tensor, shape (..., 6, 6)
+        Projector onto the hole doublet.
+    gap : torch.Tensor, shape (...)
+        Gap from the hole doublet down to the next one (the derivative scales as 1/gap).
     """
 
     g_principal: torch.Tensor
@@ -173,18 +238,34 @@ class HoleState(NamedTuple):
 
     @property
     def g_sign_product(self) -> torch.Tensor:
+        """Sign of det g (detached)."""
         return torch.sign(self.g_det.detach())
 
     @property
     def hole_energy(self) -> torch.Tensor:
+        """Energy of the hole (highest) doublet, ``doublet_energies[..., -1]``."""
         return self.doublet_energies[..., -1]
 
 
 def solve_t2g_hole(cf, k=1.0, xi=1.0) -> HoleState:
-    """Exact hole (highest) Kramers doublet of CF + xi L.S and its g (mu = k L + 2 S).
+    """Exact hole (highest) Kramers doublet of ``CF + xi L.S`` and its g tensor.
 
-    ``cf`` (..., 3, 3) real symmetric in (xy, xz, yz); ``k`` the orbital reduction (Zeeman term
-    only); ``xi`` the spin-orbit constant in the unit of ``cf`` (1: DLSD5's units of xi).
+    The Zeeman operator is ``mu = k L + 2 S``.
+
+    Parameters
+    ----------
+    cf : array_like or torch.Tensor, shape (..., 3, 3)
+        Real symmetric crystal field in (xy, xz, yz) (:func:`tetragonal_cf`,
+        :func:`trigonal_cf`).
+    k : float or torch.Tensor, default 1.0
+        Orbital reduction factor (Zeeman term only).
+    xi : float or torch.Tensor, default 1.0
+        Spin-orbit constant in the unit of ``cf`` (1: DLSD5's units of xi).
+
+    Returns
+    -------
+    HoleState
+        Batched over the leading dimensions of ``cf``, ``k`` and ``xi``.
     """
     cf = _t(cf)
     H = t2g_hamiltonian(cf, xi)
@@ -205,17 +286,30 @@ def solve_t2g_hole(cf, k=1.0, xi=1.0) -> HoleState:
 
 # ------------------------------------------------------------------------------ McGarvey closed forms
 def abc_to_ABC(a, b, c):
-    """(d+1, xy, d-1) -> (xy, yz, xz)  (McGarvey eq. 10)."""
+    """Hole coefficients (d+1, xy, d-1) = (a, b, c) -> real-orbital (xy, yz, xz) = (A, B, C) (McGarvey eq. 10)."""
     return b, (a + c) / RT2, (a - c) / RT2
 
 
 def ABC_to_abc(A, B, C):
-    """(xy, yz, xz) -> (d+1, xy, d-1)."""
+    """Real-orbital coefficients (xy, yz, xz) = (A, B, C) -> (d+1, xy, d-1) = (a, b, c)."""
     return (B + C) / RT2, A, (B - C) / RT2
 
 
 def g_from_abc(a, b, c, k) -> torch.Tensor:
-    """Signed (gx, gy, gz) (..., 3), McGarvey eq. 4."""
+    """Signed g values from the hole coefficients (McGarvey eq. 4).
+
+    Parameters
+    ----------
+    a, b, c : float or torch.Tensor
+        Coefficients of d+1, xy and d-1 (normalized: ``a^2 + b^2 + c^2 = 1``).
+    k : float or torch.Tensor
+        Orbital reduction factor.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3)
+        Signed (gx, gy, gz).
+    """
     a, b, c, k = (_t(x) for x in (a, b, c, k))
     gx = 2.0 * (-b * b + 2.0 * a * c - RT2 * k * b * (a - c))
     gy = 2.0 * (-b * b - 2.0 * a * c - RT2 * k * b * (a + c))
@@ -224,7 +318,18 @@ def g_from_abc(a, b, c, k) -> torch.Tensor:
 
 
 def ligand_field_from_abc(a, b, c) -> torch.Tensor:
-    """(Delta/xi, V/xi, E0/xi) (..., 3) implied by the hole wavefunction (inf/nan where b = 0 or a^2 = c^2)."""
+    """Ligand field implied by the hole wavefunction.
+
+    Parameters
+    ----------
+    a, b, c : float or torch.Tensor
+        Coefficients of d+1, xy and d-1.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3)
+        (Delta/xi, V/xi, E0/xi); inf/nan where b = 0 or a^2 = c^2.
+    """
     a, b, c = (_t(x) for x in (a, b, c))
     denom = a * a - c * c
     delta = (b * (1.0 - b * b) + RT2 * a * (1.0 - 2.0 * a * a)) / (2.0 * b * denom)
@@ -234,7 +339,22 @@ def ligand_field_from_abc(a, b, c) -> torch.Tensor:
 
 
 def trigonal_g_from_coefficients(at, bt, k, beta) -> torch.Tensor:
-    """Signed (g_perp, g_par) (..., 2)."""
+    """Signed trigonal g values from the hole coefficients.
+
+    Parameters
+    ----------
+    at, bt : float or torch.Tensor
+        Hole coefficients of the trigonal basis (``at^2 + bt^2 = 1``).
+    k : float or torch.Tensor
+        Orbital reduction factor.
+    beta : float or torch.Tensor
+        t2g/eg mixing coefficient (``BETA_OCT`` = 1/sqrt(3): no mixing).
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 2)
+        Signed (g_perp, g_par).
+    """
     at, bt, k, beta = (_t(x) for x in (at, bt, k, beta))
     alpha2 = 1.0 - beta * beta
     g_perp = 2.0 * (-bt * bt - RT6 * k * at * bt * beta)
@@ -243,23 +363,40 @@ def trigonal_g_from_coefficients(at, bt, k, beta) -> torch.Tensor:
 
 
 def trigonal_delta_from_coefficients(at, bt, beta) -> torch.Tensor:
-    """Delta/xi = E(a1) - E(e)."""
+    """Trigonal splitting ``Delta/xi = E(a1) - E(e)`` from the hole coefficients ``at``, ``bt`` and ``beta``."""
     at, bt, beta = (_t(x) for x in (at, bt, beta))
     return 0.5 * (2.0 - 3.0 * beta * beta) + RT6 * beta * (bt * bt - at * at) / (2.0 * at * bt)
 
 
 def epi_from_twist(delta, phi, degrees: bool = False) -> torch.Tensor:
-    """E_pi/xi = Delta / (3 sin 2 phi) for the ligand twist angle phi (radians; Dolder et al. 2003)."""
+    """Pi-bonding parameter from the trigonal twist: ``E_pi/xi = Delta / (3 sin 2 phi)``.
+
+    ``delta`` is Delta/xi; ``phi`` the ligand twist angle in radians (degrees with
+    ``degrees=True``) (Dolder et al. 2003).
+    """
     return _t(delta) / (3.0 * torch.sin(2.0 * _angle(phi, degrees)))
 
 
 # ------------------------------------------------------------------------------ implicit derivative
 def implicit_attach(F: Callable[[torch.Tensor, torch.Tensor], torch.Tensor], x_star: torch.Tensor,
                     theta: torch.Tensor) -> torch.Tensor:
-    """Attach dx/dtheta = -(dF/dx)^-1 dF/dtheta to a root x* of F(x, theta) = 0 (the value stays x*).
+    """Attach implicit-function derivatives to a root of ``F(x, theta) = 0``.
 
-    ``F(x, theta)`` -> (n,) residuals for x (n,); x* is detached.  Works in reverse and forward
-    mode (only plain differentiable ops are applied to theta).
+    Parameters
+    ----------
+    F : callable
+        ``F(x, theta)`` -> residuals of shape (N,) for unknowns x of shape (N,); built from plain
+        differentiable torch operations.
+    x_star : torch.Tensor, shape (N,)
+        A root (detached here).
+    theta : torch.Tensor
+        The data the root depends on (may require grad).
+
+    Returns
+    -------
+    torch.Tensor, shape (N,)
+        Equal to ``x_star`` in value, with derivative ``dx/dtheta = -(dF/dx)^-1 dF/dtheta`` in
+        reverse and forward mode.  Singular ``dF/dx`` gives inf/nan derivatives.
     """
     x_star = x_star.detach()
     with torch.enable_grad():
@@ -270,11 +407,25 @@ def implicit_attach(F: Callable[[torch.Tensor, torch.Tensor], torch.Tensor], x_s
 
 # ------------------------------------------------------------------------------ tetragonal inverse
 class TetragonalBranch(NamedTuple):
-    """One solution of :func:`tetragonal_from_g` with tensors attached to the input g.
+    """One converged solution of :func:`tetragonal_from_g`, with tensors attached to the input g.
 
-    ``numpy`` is the NumPy ``TetragonalSolution`` (``label``, ``ground_doublet``, ``notes``, ...);
-    ``perm``, ``sign`` map the solution's (gx, gy, gz) to the input: g_sol[i] = sign[i] * |g_in[perm[i]]|.
-    ``delta``, ``v``, ``e0`` are in units of xi; ``weights`` (3,) = (xy, yz, xz) populations (A^2, B^2, C^2).
+    Attributes
+    ----------
+    a, b, c : torch.Tensor
+        Hole coefficients of (d+1, xy, d-1).
+    k : torch.Tensor
+        Orbital reduction factor.
+    g : torch.Tensor, shape (3,)
+        Signed (gx, gy, gz) of the solution.
+    delta, v, e0 : torch.Tensor
+        Delta/xi, V/xi and E0/xi (units of xi).
+    weights : torch.Tensor, shape (3,)
+        (xy, yz, xz) populations (A^2, B^2, C^2).
+    perm, sign : tuple
+        Map from the solution's (gx, gy, gz) to the input:
+        ``g_sol[i] = sign[i] * abs(g_in[perm[i]])``.
+    numpy : object
+        The NumPy ``TetragonalSolution`` (``label``, ``ground_doublet``, ``notes``, ...).
     """
 
     a: torch.Tensor
@@ -292,6 +443,7 @@ class TetragonalBranch(NamedTuple):
 
     @property
     def ABC(self):
+        """Real-orbital coefficients (xy, yz, xz) of the hole."""
         return abc_to_ABC(self.a, self.b, self.c)
 
 
@@ -320,13 +472,31 @@ def _mcgarvey_assignment(sol):
 
 def tetragonal_from_g(g1, g2, g3, mode: str = "mcgarvey", standardize: bool = True, max_iter: int = 2000
                       ) -> list[TetragonalBranch | object]:
-    """Every branch of DLSD5's tetragonal/rhombic inverse, differentiable in (g1, g2, g3).
+    """Every branch of DLSD5's tetragonal/rhombic inverse, differentiable in the g values.
 
-    ``mode="mcgarvey"`` (alias ``"dlsd5"``): McGarvey's two assignments (g1 >= g2 >= g3 required);
-    ``mode="all"``: every assignment and sign pattern.  ``standardize`` relabels axes so that
-    |V/Delta| <= 2/3.  Converged branches with a defined ligand field come back as
-    :class:`TetragonalBranch`; the others (no solution, b = 0, a^2 = c^2) as the bare NumPy
-    solution.  Scalar g only (the branch structure is per point).
+    Parameters
+    ----------
+    g1, g2, g3 : float or 0-d torch.Tensor
+        The three g values; only their magnitudes are used.
+    mode : {'mcgarvey', 'dlsd5', 'all'}, default 'mcgarvey'
+        ``'mcgarvey'`` (alias ``'dlsd5'``): McGarvey's two assignments (``g1 >= g2 >= g3``
+        required); ``'all'``: every assignment and sign pattern.
+    standardize : bool, default True
+        Relabel axes so that ``abs(V/Delta) <= 2/3``.
+    max_iter : int, default 2000
+        Iteration cap of the NumPy solver.
+
+    Returns
+    -------
+    list
+        One entry per branch: a :class:`TetragonalBranch` when it converged with a defined
+        ligand field, otherwise the bare NumPy solution (no solution, b = 0, a^2 = c^2).
+
+    Raises
+    ------
+    ValueError
+        If the g values are not scalars (the branch structure is per point), or as the NumPy
+        solver raises for invalid input.
     """
     gin = torch.stack(torch.broadcast_tensors(_t(g1), _t(g2), _t(g3)), -1)
     if gin.dim() != 1:
@@ -360,7 +530,23 @@ def tetragonal_from_g(g1, g2, g3, mode: str = "mcgarvey", standardize: bool = Tr
 
 # ------------------------------------------------------------------------------ trigonal inverse
 class TrigonalBranch(NamedTuple):
-    """One solution of :func:`trigonal_from_g`; ``delta``, ``epi`` in units of xi (``epi`` None without a twist)."""
+    """One converged solution of :func:`trigonal_from_g`.
+
+    Attributes
+    ----------
+    at, bt : torch.Tensor
+        Hole coefficients of the trigonal basis.
+    k, beta : torch.Tensor
+        Orbital reduction factor and t2g/eg mixing coefficient (one of them was fixed).
+    g_perp, g_par : torch.Tensor
+        Signed g values of the solution.
+    delta : torch.Tensor
+        Delta/xi.
+    epi : torch.Tensor or None
+        E_pi/xi, only with a nonzero ``twist``.
+    numpy : object
+        The NumPy solution (``label``, ...).
+    """
 
     at: torch.Tensor
     bt: torch.Tensor
@@ -379,12 +565,39 @@ def _at2(g_par_signed, k, beta):
 
 def trigonal_from_g(g_par, g_perp, *, fix: str = "beta", beta=BETA_OCT, k=1.0, twist=None, degrees: bool = False,
                     max_iter: int = 100) -> list[TrigonalBranch | object]:
-    """Both branches (g_par < 0, g_par > 0) of DLSD5's trigonal inverse, differentiable in g_par, g_perp,
-    the fixed parameter (``beta`` for fix="beta", ``k`` for fix="k") and the twist angle.
+    """Both branches (g_par < 0, g_par > 0) of DLSD5's trigonal inverse, differentiable.
 
-    ``twist`` is the ligand twist angle phi (radians; ``degrees=True`` for degrees); with it each
-    branch carries E_pi/xi (Dolder et al. 2003).  Branches that do not converge come back as the
-    bare NumPy solution.
+    Parameters
+    ----------
+    g_par, g_perp : float or 0-d torch.Tensor
+        Measured g values (magnitudes are used).
+    fix : {'beta', 'k'}, default 'beta'
+        Which parameter is held fixed; the other is solved for.
+    beta : float or torch.Tensor, default ``BETA_OCT``
+        t2g/eg mixing coefficient used when ``fix='beta'``.
+    k : float or torch.Tensor, default 1.0
+        Orbital reduction factor used when ``fix='k'``.
+    twist : float or torch.Tensor, optional
+        Ligand twist angle phi (radians; degrees with ``degrees=True``); with a nonzero twist each
+        branch carries E_pi/xi (Dolder et al. 2003).
+    degrees : bool, default False
+        Angle unit of ``twist``.
+    max_iter : int, default 100
+        Iteration cap of the NumPy solver.
+
+    Returns
+    -------
+    list
+        :class:`TrigonalBranch` per converged branch, differentiable in ``g_par``, ``g_perp``,
+        the fixed parameter and ``twist``; the bare NumPy solution otherwise.
+
+    Examples
+    --------
+    >>> from torchspin.lft import dlsd5
+    >>> for b in dlsd5.trigonal_from_g(1.75, 1.10):
+    ...     print(b.numpy.label, round(float(b.k), 3), round(float(b.delta), 3))
+    #1 (g_par < 0) 0.494 -0.324
+    #2 (g_par > 0) -0.8 2.332
     """
     gpar, gperp, beta_t, k_t = (_t(x) for x in (g_par, g_perp, beta, k))
     tw = None if twist is None else _angle(twist, degrees)
@@ -422,9 +635,21 @@ def trigonal_from_g(g_par, g_perp, *, fix: str = "beta", beta=BETA_OCT, k=1.0, t
 
 # ------------------------------------------------------------------------------ forward from coefficients
 class CoefficientSolution(NamedTuple):
-    """Forward result for one sign of the third coefficient (see :func:`from_complex_coefficients`).
+    """Forward result for one sign of the third coefficient (:func:`from_complex_coefficients`,
+    :func:`from_real_coefficients`).
 
-    ``g`` signed (gx, gy, gz); ``delta``, ``v``, ``e0`` in units of xi; ``numpy`` the NumPy solution.
+    Attributes
+    ----------
+    a, b, c : torch.Tensor
+        Hole coefficients of (d+1, xy, d-1) after normalization and relabeling.
+    k : torch.Tensor
+        Orbital reduction factor.
+    g : torch.Tensor, shape (3,)
+        Signed (gx, gy, gz).
+    delta, v, e0 : torch.Tensor
+        Delta/xi, V/xi, E0/xi.
+    numpy : object
+        The NumPy solution.
     """
 
     a: torch.Tensor
@@ -472,7 +697,13 @@ def _coefficient_solutions(abc_pairs, k, np_sols):
 
 
 def from_complex_coefficients(a, b, k, standardize: bool = True) -> tuple[CoefficientSolution, CoefficientSolution]:
-    """(+c, -c) solutions from the d+1 (a) and dxy (b) coefficients (scalar inputs; DLSD5 option G/tetragonal/a)."""
+    """The (+c, -c) solutions from the d+1 (``a``) and dxy (``b``) coefficients.
+
+    DLSD5 option G/tetragonal/a.  ``a``, ``b`` are normalized as DLSD5 does (the third
+    coefficient follows from normalization); ``k`` is the orbital reduction factor;
+    ``standardize`` relabels axes as :func:`tetragonal_from_g`.  Scalar inputs.  Returns a pair of
+    :class:`CoefficientSolution`.
+    """
     a, b, k = (_t(x) for x in (a, b, k))
     np_sols = _np.from_complex_coefficients(float(a.detach()), float(b.detach()), float(k.detach()), standardize)
     a2, b2, cabs = _normalize_pair(a, b)
@@ -480,7 +711,11 @@ def from_complex_coefficients(a, b, k, standardize: bool = True) -> tuple[Coeffi
 
 
 def from_real_coefficients(A, B, k, standardize: bool = True) -> tuple[CoefficientSolution, CoefficientSolution]:
-    """(+C, -C) solutions from the dxy (A) and dyz (B) coefficients (scalar inputs; DLSD5 option G/tetragonal/A)."""
+    """The (+C, -C) solutions from the dxy (``A``) and dyz (``B``) coefficients.
+
+    DLSD5 option G/tetragonal/A; otherwise as :func:`from_complex_coefficients`.  Returns a pair of
+    :class:`CoefficientSolution`.
+    """
     A, B, k = (_t(x) for x in (A, B, k))
     np_sols = _np.from_real_coefficients(float(A.detach()), float(B.detach()), float(k.detach()), standardize)
     A2, B2, Cabs = _normalize_pair(A, B)
@@ -488,7 +723,22 @@ def from_real_coefficients(A, B, k, standardize: bool = True) -> tuple[Coefficie
 
 
 def trigonal_from_coefficients(at, k, beta=BETA_OCT) -> torch.Tensor:
-    """(g_perp, g_par, Delta/xi) (..., 2, 3) for bt = +sqrt(1 - at^2) and -sqrt(1 - at^2)."""
+    """Trigonal g values and splitting for both signs of bt.
+
+    Parameters
+    ----------
+    at : float or torch.Tensor
+        Hole coefficient, ``abs(at) <= 1``; ``bt = +-sqrt(1 - at^2)``.
+    k : float or torch.Tensor
+        Orbital reduction factor.
+    beta : float or torch.Tensor, default ``BETA_OCT``
+        t2g/eg mixing coefficient.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 2, 3)
+        Rows for bt > 0 and bt < 0, columns (g_perp, g_par, Delta/xi).
+    """
     at, k, beta = (_t(x) for x in (at, k, beta))
     bt2 = 1.0 - at * at
     ok = bt2.detach() > 0

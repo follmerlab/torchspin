@@ -9,51 +9,66 @@ Units and axes
 --------------
 Couplings (hyperfine A, electron-electron D, point-dipole values) are energies and come back in
 ``units`` (default ``'MHz'``; ``'cm^-1'``, ``'GHz'``, ``'K'``, ``'eV'`` on request).  The
-dipolar tensor ``tensor_cm3`` is <(3 u u^T - u^2)/u^5> in cm^-3; the reduced tensors
+dipolar tensor ``tensor_cm3`` is ``<(3 u u^T - u^2)/u^5>`` in cm^-3; the reduced tensors
 (:func:`sto_tensor`, :func:`sto_tensor_full`) are dimensionless (R^3 T).  Distances are in
 Angstrom.  g, alpha1^2 (metal-orbital population) and g_N are dimensionless.  The per-axis
 outputs are on dipole.f's axes, ordered (y, x, z) = Fortran (3, 2, 1), z along the metal-point
 vector; ``g`` is given in the same order.  Physical constants are CGS-Gaussian (as dipole.f),
-derived from :mod:`torchspin.constants` (:data:`TORCHSPIN_CONSTANTS`); pass ``constants=``
+derived from ``torchspin.constants`` (:data:`TORCHSPIN_CONSTANTS`); pass ``constants=``
 (any object with the fields of :class:`Constants`, e.g. telser-tools' ``CODATA2018``) to
 override.
 
 The tensor, for any point direction and any real d orbital
 -----------------------------------------------------------
-The closed form R^3 T = P(A) exp(-4A/3) + Q(A) cancels its A^-4 ... A^-1 poles at small A
+The closed form ``R^3 T = P(A) exp(-4A/3) + Q(A)`` cancels its A^-4 ... A^-1 poles at small A
 (telser-tools evaluates it in 60-digit Decimal arithmetic).  This module uses the multipole
 expansion instead, which works for ANY point direction and ANY real d orbital
-Y(r) = r^T M r (M real symmetric, made traceless; d_xy is M = (e_x e_y^T + e_y e_x^T)/2):
+``Y(r) = r^T M r`` (M real symmetric, made traceless; d_xy is ``M = (e_x e_y^T + e_y e_x^T)/2``)::
 
     rho = N^2 Y(r)^2 exp(-2 zeta r),     Y^2 = h4 + r^2 h2 + r^4 h0   (harmonic h_L of degree L)
     V(P) = sum_L G_L(R) h_L(P),   T_ij(P) = d_i d_j V(P) + (4 pi/3) rho(P) delta_ij
 
-(zeta = 1 units, R = zeta |P| = 2A/3, A = Z* R/(2 a0)).  The radial functions are written
-through the lower incomplete gamma function, evaluated from its all-positive series below
-2R = ``SERIES_SWITCH`` and from its complement above, so no step cancels.  Agreement with the
-Decimal path from A = 1e-3 to 1e3: rel <= 3e-14 of max|t|.
+(zeta = 1 units, ``R = zeta abs(P) = 2A/3``, ``A = Z* R/(2 a0)``).  The radial functions are
+written through the lower incomplete gamma function, evaluated from its all-positive series
+below ``2R = SERIES_SWITCH`` and from its complement above, so no step cancels.  Agreement with
+the Decimal path from A = 1e-3 to 1e3: rel <= 3e-14 of ``max(abs(t))``.
 
-API
----
-``sto_tensor_full(A, direction, orbital=None)`` -> (..., 3, 3) R^3 T in the orbital frame
-``sto_tensor(A, geometry)``                    -> (..., 3) (t_y, t_x, t_z) for a dipole.f geometry
-``point_dipole_full(direction)``               -> (..., 3, 3) 3 n n^T - 1
-``slater_A(zstar, r)``, ``zstar(n_d, z)``, ``orbital_matrix(name)``, ``d_and_e(d_yxz)``
-``hyperfine(...)`` -> :class:`Hyperfine`; ``electron_electron(...)`` -> :class:`ElectronElectron`
+Contents
+--------
+* :func:`sto_tensor_full` -> (..., 3, 3) R^3 T in the orbital frame
+* :func:`sto_tensor` -> (..., 3) (t_y, t_x, t_z) for a dipole.f geometry
+* :func:`point_dipole_full` -> (..., 3, 3) ``3 n n^T - 1``
+* :func:`slater_A`, :func:`zstar`, :func:`orbital_matrix`, :func:`d_and_e`
+* :func:`hyperfine` -> :class:`Hyperfine`; :func:`electron_electron` -> :class:`ElectronElectron`
 
-Nuclear g values come from :func:`torchspin.nucdata.nucgval` (``nucleus='14N'``); ``g_n=``
-overrides it (and may carry gradients).  telser-tools' table (Weil & Bolton 2007) differs from
-torchspin's for some metal nuclides; pass ``g_n=`` to use a specific value.
+Nuclear g values come from :func:`torchspin.nucgval` (``nucleus='14N'``); ``g_n=`` overrides it
+(and may carry gradients).  telser-tools' table (Weil & Bolton 2007) differs from torchspin's
+for some metal nuclides; pass ``g_n=`` to use a specific value.
 
 Not ported: ``mode="fortran"`` / ``model="fortran"`` (dipole.f's polynomials, which are not the
 dipolar tensor of a 3d Slater orbital; they exist to reproduce the original), the alpha1^2
 clamping of that mode, nucleus lookup by bare mass number (use the isotope name), the CLI and
 the report.
 
-    >>> from torchspin.lft import dipole
-    >>> h = dipole.hyperfine(9, 29, "14N", 2.0, g=(2.05, 2.05, 2.25), alpha2=0.75)
-    >>> h.a_alpha, h.point_dipole                         # (y, x, z), MHz
-    >>> dipole.electron_electron(8, 28, 3.5, g=(2.2, 2.2, 2.0), units="cm^-1").ddip_edip
+Examples
+--------
+14N at 2.0 Angstrom from Cu(II) (d9) in the orbital plane, axial g, 75 % metal character
+(telser-tools' DIPOLE quick start); couplings on the (y, x, z) axes in MHz:
+
+>>> from torchspin.lft import dipole
+>>> h = dipole.hyperfine(9, 29, "14N", 2.0, g=(2.05, 2.05, 2.25), alpha2=0.75)
+>>> round(float(h.zstar), 4), round(float(h.A), 5)
+(13.201, 24.94627)
+>>> [round(x, 4) for x in h.a_alpha.tolist()]
+[-0.581, -0.5508, 1.2422]
+>>> [round(x, 4) for x in h.point_dipole.tolist()]
+[-0.5486, -0.5486, 1.2041]
+
+Electron-electron coupling of a Ni(II) d electron to a spin 3.5 Angstrom away, in cm^-1:
+
+>>> e = dipole.electron_electron(8, 28, 3.5, g=(2.2, 2.2, 2.0), units="cm^-1")
+>>> [round(x, 4) for x in e.ddip_edip.tolist()]      # (Ddip, Edip)
+[-0.123, -0.0004]
 """
 
 from __future__ import annotations
@@ -92,7 +107,23 @@ GEOMETRIES = ("in_plane", "out_of_plane", "in_plane_lobe")
 
 
 class Constants(NamedTuple):
-    """CGS-Gaussian constants of dipole.f (field names as telser-tools' ``dipole.constants.Constants``)."""
+    """CGS-Gaussian constants of dipole.f (field names as telser-tools' ``dipole.constants.Constants``).
+
+    Attributes
+    ----------
+    g_e : float
+        Free-electron g value.
+    beta_n, beta_e : float
+        Nuclear and Bohr magnetons in erg/G.
+    h : float
+        Planck constant in erg s.
+    a0_cm : float
+        Bohr radius in cm.
+    mhz_to_cm : float
+        1 MHz in cm^-1.
+    ee_point_cm : float
+        ``beta_e^2 / (h c)`` in cm^-1 cm^3 (point-dipole electron-electron prefactor).
+    """
 
     g_e: float              # free-electron g value
     beta_n: float           # nuclear magneton, erg/G
@@ -103,7 +134,7 @@ class Constants(NamedTuple):
     ee_point_cm: float      # beta_e^2 / (h c), cm^-1 cm^3 (point-dipole e-e prefactor)
 
 
-#: From :mod:`torchspin.constants` (J/T -> erg/G is 1e3, J s -> erg s is 1e7, m -> cm is 1e2).
+#: From ``torchspin.constants`` (J/T -> erg/G is 1e3, J s -> erg s is 1e7, m -> cm is 1e2).
 TORCHSPIN_CONSTANTS = Constants(
     g_e=GFREE, beta_n=NMAGN * 1e3, beta_e=BMAGN * 1e3, h=PLANCK * 1e7, a0_cm=BOHRRAD * 1e2,
     mhz_to_cm=1e6 / CLIGHT, ee_point_cm=(BMAGN * 1e3) ** 2 / (PLANCK * 1e7 * CLIGHT))
@@ -169,7 +200,23 @@ _ORBITALS = {"xy": D_XY, "xz": ((0, 0, 0.5), (0, 0, 0), (0.5, 0, 0)), "yz": ((0,
 
 
 def orbital_matrix(name: str = "xy") -> torch.Tensor:
-    """M of the real d orbital Y = r^T M r ('xy', 'xz', 'yz', 'x2-y2', 'z2'); the scale is irrelevant."""
+    """Matrix M of a real d orbital ``Y(r) = r^T M r``.
+
+    Parameters
+    ----------
+    name : {'xy', 'xz', 'yz', 'x2-y2', 'z2'}, default 'xy'
+        The orbital.
+
+    Returns
+    -------
+    torch.Tensor, shape (3, 3), float64
+        Symmetric; the overall scale is irrelevant.
+
+    Raises
+    ------
+    KeyError
+        For an unknown name.
+    """
     return torch.tensor(_ORBITALS[name], dtype=_F64)
 
 
@@ -179,12 +226,30 @@ def _shapes(*batch):
 
 
 def sto_tensor_full(A, direction, orbital=None) -> torch.Tensor:
-    """Reduced dipolar tensor t = R^3 <(3 u u^T - u^2)/u^5> (..., 3, 3) of a 3d Slater orbital (dimensionless).
+    """Reduced dipolar tensor of a 3d Slater orbital, ``t = R^3 <(3 u u^T - u^2)/u^5>``.
 
-    ``A`` = Z* R/(2 a0) (> 0); ``direction`` (..., 3): the metal -> point vector in the orbital
-    frame (normalized here, so it may carry gradients through angles); ``orbital``: real
-    symmetric (..., 3, 3) M of Y = r^T M r (default d_xy; made traceless here).  Point-dipole
-    limit (A -> inf): 3 n n^T - 1.
+    Parameters
+    ----------
+    A : float or torch.Tensor, shape (...)
+        Slater parameter ``A = Z* R/(2 a0)`` (> 0; :func:`slater_A`).
+    direction : array_like or torch.Tensor, shape (..., 3)
+        Metal -> point vector in the orbital frame (normalized here, so it may carry gradients
+        through angles).
+    orbital : array_like or torch.Tensor, shape (..., 3, 3), optional
+        Real symmetric M of ``Y = r^T M r`` (made traceless here); default d_xy.
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3, 3)
+        Dimensionless.  The point-dipole limit (A -> inf) is ``3 n n^T - 1``.
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torchspin.lft import dipole
+    >>> t = dipole.sto_tensor_full(1e3, [1.0, 0.0, 0.0])
+    >>> [round(x, 3) for x in torch.diagonal(t).tolist()]
+    [2.0, -1.0, -1.0]
     """
     A = _t(A)
     n = _t(direction, A.device)
@@ -242,10 +307,25 @@ _GEOM = {  # direction of the point in the d_xy frame; dipole.f axes (y, x, z) a
 
 
 def sto_tensor(A, geometry: str = "in_plane") -> torch.Tensor:
-    """(t_y, t_x, t_z) (..., 3) of d_xy for a dipole.f geometry.
+    """Reduced dipolar tensor of d_xy on dipole.f's axes for a dipole.f geometry.
 
-    ``'in_plane'`` (dipole.f 'I': the point on a d_xy nodal axis), ``'out_of_plane'`` ('O': on the
-    orbital's normal) or ``'in_plane_lobe'`` (along a lobe; telser-tools addition).
+    Parameters
+    ----------
+    A : float or torch.Tensor, shape (...)
+        Slater parameter (> 0).
+    geometry : {'in_plane', 'out_of_plane', 'in_plane_lobe'}, default 'in_plane'
+        ``'in_plane'`` (dipole.f 'I': the point on a d_xy nodal axis), ``'out_of_plane'`` ('O': on
+        the orbital's normal) or ``'in_plane_lobe'`` (along a lobe; telser-tools addition).
+
+    Returns
+    -------
+    torch.Tensor, shape (..., 3)
+        (t_y, t_x, t_z), dimensionless, z along the metal-point vector.
+
+    Raises
+    ------
+    ValueError
+        For an unknown geometry.
     """
     if geometry not in GEOMETRIES:
         raise ValueError(f"geometry must be one of {GEOMETRIES}, got {geometry!r}")
@@ -257,34 +337,58 @@ def sto_tensor(A, geometry: str = "in_plane") -> torch.Tensor:
 
 
 def point_dipole_full(direction) -> torch.Tensor:
-    """3 n n^T - 1 (..., 3, 3) for the metal -> point direction."""
+    """Point-dipole tensor ``3 n n^T - 1``, shape (..., 3, 3), for the metal -> point direction (normalized here)."""
     n = _t(direction)
     n = n / torch.linalg.vector_norm(n, dim=-1, keepdim=True)
     return 3.0 * n.unsqueeze(-1) * n.unsqueeze(-2) - torch.eye(3, dtype=_F64, device=n.device)
 
 
 def slater_A(zstar, r_angstrom, bohr_cm: float = TORCHSPIN_CONSTANTS.a0_cm) -> torch.Tensor:
-    """A = Z* R/(2 a0), R in Angstrom."""
+    """Slater parameter ``A = Z* R/(2 a0)``.
+
+    ``zstar`` is the effective nuclear charge Z*, ``r_angstrom`` the distance in Angstrom,
+    ``bohr_cm`` the Bohr radius in cm.  Float or tensor inputs; returns a float64 tensor.
+    """
     return _t(zstar) * _t(r_angstrom) * 1e-8 / (2.0 * bohr_cm)
 
 
 def zstar(n_d: int, z: int) -> torch.Tensor:
-    """Clementi-Raimondi Z* (dipole.f CLEMRAIM) as a float64 scalar tensor (integer inputs: no gradient)."""
+    """Clementi-Raimondi effective nuclear charge Z* of a 3d electron (dipole.f CLEMRAIM).
+
+    ``n_d`` is the number of d electrons and ``z`` the atomic number.  Returns a float64 scalar
+    tensor (integer inputs: no gradient).
+    """
     return torch.tensor(clementi_raimondi(n_d, z).value, dtype=_F64)
 
 
 def d_and_e(d_yxz: torch.Tensor) -> torch.Tensor:
-    """(Ddip, Edip) = (3/2 D_z, (D_x - D_y)/2) (..., 2) from (..., 3) = (D_y, D_x, D_z), same unit."""
+    """Axial and rhombic dipolar parameters ``(Ddip, Edip) = (3/2 D_z, (D_x - D_y)/2)``.
+
+    ``d_yxz`` is a tensor (..., 3) ordered (D_y, D_x, D_z); returns (..., 2) in the same unit.
+    """
     return torch.stack([1.5 * d_yxz[..., 2], 0.5 * (d_yxz[..., 1] - d_yxz[..., 0])], -1)
 
 
 # ------------------------------------------------------------------------------ couplings
 class Hyperfine(NamedTuple):
-    """Electron-nuclear dipolar coupling on axes (y, x, z); energies in the ``units`` asked for.
+    """Electron-nuclear dipolar coupling (:func:`hyperfine`) on the axes (y, x, z).
 
-    ``a``: no g correction; ``a_g``: times g_i/g_e; ``a_alpha``: also times alpha1^2;
-    ``point_dipole``: point-dipole value with g and alpha1^2.  ``tensor_cm3`` in cm^-3, ``A``
-    the Slater parameter, ``zstar`` Z*.
+    Attributes
+    ----------
+    A : torch.Tensor
+        Slater parameter.
+    zstar : torch.Tensor
+        Effective nuclear charge Z*.
+    tensor_cm3 : torch.Tensor, shape (..., 3)
+        ``<(3 u u^T - u^2)/u^5>`` in cm^-3.
+    a : torch.Tensor, shape (..., 3)
+        Coupling without g correction, in ``units``.
+    a_g : torch.Tensor, shape (..., 3)
+        Times ``g_i/g_e``.
+    a_alpha : torch.Tensor, shape (..., 3)
+        Also times alpha1^2.
+    point_dipole : torch.Tensor, shape (..., 3)
+        Point-dipole value with g and alpha1^2.
     """
 
     A: torch.Tensor
@@ -297,11 +401,23 @@ class Hyperfine(NamedTuple):
 
 
 class ElectronElectron(NamedTuple):
-    """Electron-electron dipolar coupling (H = S1.D.S2) on axes (y, x, z); energies in ``units``.
+    """Electron-electron dipolar coupling ``H = S1.D.S2`` (:func:`electron_electron`) on the axes (y, x, z).
 
-    ``d``: no g correction; ``d_g``: times g_i g'/g_e^2; ``d_alpha``: also times alpha1^2;
-    ``point_dipole``: point-dipole value with g (no alpha1^2, as dipole.f).  (Ddip, Edip) via the
-    ``ddip_edip*`` properties; for two spins 1/2 combined to a triplet, the triplet ZFS is half.
+    Energies in the ``units`` asked for.  For two spins 1/2 combined to a triplet, the triplet
+    zero-field splitting is half of these values.
+
+    Attributes
+    ----------
+    A, zstar, tensor_cm3 : torch.Tensor
+        As :class:`Hyperfine`.
+    d : torch.Tensor, shape (..., 3)
+        Coupling without g correction.
+    d_g : torch.Tensor, shape (..., 3)
+        Times ``g_i g' / g_e^2``.
+    d_alpha : torch.Tensor, shape (..., 3)
+        Also times alpha1^2.
+    point_dipole : torch.Tensor, shape (..., 3)
+        Point-dipole value with g (no alpha1^2, as dipole.f).
     """
 
     A: torch.Tensor
@@ -314,15 +430,17 @@ class ElectronElectron(NamedTuple):
 
     @property
     def ddip_edip(self) -> torch.Tensor:
-        """(Ddip, Edip) from the g-corrected tensor ``d_g``."""
+        """(Ddip, Edip) of the g-corrected tensor ``d_g``."""
         return d_and_e(self.d_g)
 
     @property
     def ddip_edip_point(self) -> torch.Tensor:
+        """(Ddip, Edip) of the point-dipole tensor."""
         return d_and_e(self.point_dipole)
 
     @property
     def ddip_edip_alpha(self) -> torch.Tensor:
+        """(Ddip, Edip) of ``d_alpha``."""
         return d_and_e(self.d_alpha)
 
 
@@ -360,11 +478,41 @@ def hyperfine(n_d: int, z: int, nucleus: str | None, r_angstrom, g=(2.0023, 2.00
               constants: Constants = TORCHSPIN_CONSTANTS) -> Hyperfine:
     """Electron-nuclear dipolar (hyperfine) coupling of a metal d electron to a ligand nucleus.
 
-    ``n_d`` d electrons on metal ``z`` (for Clementi-Raimondi Z*; ``zstar=`` overrides it, so the
-    orbital exponent may carry gradients); ``nucleus`` an isotope name for
-    :func:`torchspin.nucdata.nucgval` (``g_n=`` overrides it; then ``nucleus`` may be None);
-    ``r_angstrom`` the metal-nucleus distance (Angstrom); ``g`` (..., 3) = (g_y, g_x, g_z);
-    ``alpha2`` = alpha1^2 in [0, 1]; ``geometry`` as :func:`sto_tensor`.  Couplings in ``units``.
+    Parameters
+    ----------
+    n_d : int
+        Number of d electrons (for the Clementi-Raimondi Z*).
+    z : int
+        Atomic number of the metal.
+    nucleus : str or None
+        Isotope name for :func:`torchspin.nucgval` (e.g. ``'14N'``); may be None when ``g_n`` is
+        given.
+    r_angstrom : float or torch.Tensor
+        Metal-nucleus distance in Angstrom (> 0).
+    g : array_like or torch.Tensor, shape (..., 3), default (2.0023, 2.0023, 2.0023)
+        g values ordered (g_y, g_x, g_z).
+    alpha2 : float or torch.Tensor, default 1.0
+        alpha1^2, the metal-orbital population, in [0, 1].
+    geometry : str, default 'in_plane'
+        As :func:`sto_tensor`.
+    zstar : float or torch.Tensor, optional
+        Overrides the tabulated Z* (so the orbital exponent may carry gradients).
+    g_n : float or torch.Tensor, optional
+        Overrides the nuclear g value.
+    units : str, default 'MHz'
+        Energy unit of the couplings.
+    constants : Constants, optional
+        Default :data:`TORCHSPIN_CONSTANTS`.
+
+    Returns
+    -------
+    Hyperfine
+
+    Raises
+    ------
+    ValueError
+        For a distance <= 0, alpha2 outside [0, 1], an unknown geometry or energy unit, or
+        neither ``nucleus`` nor ``g_n``.
     """
     alpha2 = _t(alpha2)
     _check(_t(r_angstrom), alpha2)
@@ -386,8 +534,23 @@ def electron_electron(n_d: int, z: int, r_angstrom, g=(2.0023, 2.0023, 2.0023), 
                       constants: Constants = TORCHSPIN_CONSTANTS) -> ElectronElectron:
     """Electron-electron dipolar coupling between the metal d electron and a point spin.
 
-    Arguments as :func:`hyperfine`; ``partner_g`` is the g of the second (point) spin (default
-    g_e).  Couplings in ``units`` (dipole.f printed MHz and cm^-1: use ``units='cm^-1'``).
+    Parameters
+    ----------
+    n_d, z, r_angstrom, g, alpha2, geometry, zstar, constants
+        As :func:`hyperfine` (``r_angstrom`` is the distance to the point spin).
+    partner_g : float or torch.Tensor, optional
+        g of the second (point) spin; default g_e.
+    units : str, default 'MHz'
+        Energy unit of the couplings (dipole.f printed MHz and cm^-1: use ``units='cm^-1'``).
+
+    Returns
+    -------
+    ElectronElectron
+
+    Raises
+    ------
+    ValueError
+        For a distance <= 0, alpha2 outside [0, 1], or an unknown geometry or energy unit.
     """
     alpha2 = _t(alpha2)
     _check(_t(r_angstrom), alpha2)

@@ -27,7 +27,59 @@ _F64 = torch.float64
 def susceptibility(n, T, *, field=100.0, grid=None, chi_units: str = "SI", chi0=0.0, units: str = "MHz",
                    k=(1.0, 1.0, 1.0), ddn_mirror: bool = False, constants: MagConstants = MAG_CONSTANTS,
                    chunk: int | None = None, device="cpu", **params) -> MagResult:
-    """chi = M/H, per direction (..., ndir, nB, nT) and powder (..., nB, nT); ``chi0`` (TIP) in chi_units."""
+    """Molar susceptibility chi = M/H of a d^n ion, per direction and powder averaged.
+
+    Telser's DDNSUS definition at a finite measuring field (module docstring).
+
+    Parameters
+    ----------
+    n : int or DnOperators
+        Number of d electrons (0 to 10) or cached operators.
+    T : array_like or torch.Tensor, shape (nT,)
+        Temperatures in K, all > 0.
+    field : float or array_like, default 100.0
+        Measuring field(s) in mT (100 mT = DDN's 1000 G), all > 0.
+    grid : OrientationGrid or array_like, optional
+        Field directions (:mod:`torchspin.lft.grids`); default the field along z.
+    chi_units : {'SI', 'cgs'}, default 'SI'
+        m^3/mol (as :func:`torchspin.curry`) or cm^3/mol.
+    chi0 : float or torch.Tensor, default 0.0
+        Temperature-independent paramagnetism in ``chi_units``, added.
+    units : str, default 'MHz'
+        Energy unit of the ligand-field keywords.
+    k : array_like, shape (3,), default (1.0, 1.0, 1.0)
+        Orbital reduction factors.
+    ddn_mirror : bool, default False
+        Use DDN's mirror-image field (:func:`torchspin.lft.ddnmag.mirror_y`).
+    constants : MagConstants, default MAG_CONSTANTS
+        Physical constants.
+    chunk : int, optional
+        Directions diagonalized at once.
+    device : str or torch.device, default 'cpu'
+        Device.
+    **params
+        Ligand-field keywords of :func:`torchspin.lft.ddn.hamiltonian`.
+
+    Returns
+    -------
+    MagResult
+        ``per_direction`` (..., ndir, nB, nT) and ``powder`` (..., nB, nT) in
+        ``chi_units``.
+
+    Raises
+    ------
+    ValueError
+        If a field or temperature is not positive or ``chi_units`` is unknown.
+
+    Examples
+    --------
+    >>> from torchspin import lft
+    >>> chi = lft.ddnsus.susceptibility(1, [2.0, 300.0], grid=lft.grids.gauss_hemisphere(2),
+    ...                                 V=lft.crystal_field(Dq=2000.0), zeta=500.0,
+    ...                                 units='cm^-1', chi_units='cgs')
+    >>> chi.powder.shape
+    torch.Size([1, 2])
+    """
     Bt = torch.as_tensor(field, dtype=_F64).reshape(-1)
     if torch.any(Bt <= 0):
         raise ValueError("chi = M/H needs field > 0")
@@ -39,16 +91,49 @@ def susceptibility(n, T, *, field=100.0, grid=None, chi_units: str = "SI", chi0=
 
 
 def chi_T(n, T, **kw) -> MagResult:
-    """chi T (chi_units x K); keywords as :func:`susceptibility`."""
+    """chi T, per direction and powder averaged, in ``chi_units`` x K.
+
+    Parameters
+    ----------
+    n : int or DnOperators
+        Number of d electrons or cached operators.
+    T : array_like or torch.Tensor, shape (nT,)
+        Temperatures in K.
+    **kw
+        Keywords of :func:`susceptibility`.
+
+    Returns
+    -------
+    MagResult
+    """
     chi = susceptibility(n, T, **kw)
     Tt = torch.as_tensor(T, dtype=_F64, device=chi.powder.device).reshape(-1)
     return MagResult(chi.per_direction * Tt, chi.powder * Tt)
 
 
 def curie_constant(chi_units: str = "SI", constants: MagConstants = MAG_CONSTANTS) -> float:
-    """N_A mu_0 mu_B^2 / (3 k_B) in chi_units x K (SI: 1.5714e-6 m^3 K/mol; cgs: 0.12505 cm^3 K/mol).
+    """Curie constant ``N_A mu_0 mu_B^2 / (3 k_B)``.
 
-    chi T = curie_constant * g^2 S(S+1) for a free spin.
+    ``chi T = curie_constant * g^2 S(S+1)`` for a free spin.
+
+    Parameters
+    ----------
+    chi_units : {'SI', 'cgs'}, default 'SI'
+        Unit of chi.
+    constants : MagConstants, default MAG_CONSTANTS
+        Physical constants.
+
+    Returns
+    -------
+    float
+        In ``chi_units`` x K: about 1.5714e-6 m^3 K/mol (SI) or 0.12505
+        cm^3 K/mol (cgs).
+
+    Examples
+    --------
+    >>> from torchspin import lft
+    >>> round(lft.ddnsus.curie_constant('cgs'), 5)
+    0.12505
     """
     k_B = constants.k_b * 1.0 / (constants.mu_b / (constants.mu_b_SI * 1e-3))   # J/K from cm^-1/K
     c_si = constants.N_A * constants.mu0 * constants.mu_b_SI ** 2 / (3.0 * k_B)
@@ -56,7 +141,30 @@ def curie_constant(chi_units: str = "SI", constants: MagConstants = MAG_CONSTANT
 
 
 def mu_eff(chiT, chi_units: str = "SI", constants: MagConstants = MAG_CONSTANTS):
-    """Effective moment (Bohr magnetons) from chi T: sqrt(chi T / curie_constant) (2.828 sqrt(chi T) in cgs)."""
+    """Effective moment in Bohr magnetons from chi T, ``sqrt(chiT / curie_constant)``.
+
+    In cgs this is ``2.828 sqrt(chi T)``.
+
+    Parameters
+    ----------
+    chiT : float or torch.Tensor
+        chi T in ``chi_units`` x K.
+    chi_units : {'SI', 'cgs'}, default 'SI'
+        Unit of ``chiT``.
+    constants : MagConstants, default MAG_CONSTANTS
+        Physical constants.
+
+    Returns
+    -------
+    float or torch.Tensor
+        mu_eff in mu_B (a tensor for tensor input).
+
+    Examples
+    --------
+    >>> from torchspin import lft
+    >>> round(lft.ddnsus.mu_eff(0.375, 'cgs'), 3)
+    1.732
+    """
     c = curie_constant(chi_units, constants)
     if isinstance(chiT, torch.Tensor):
         return torch.sqrt(chiT / c)
@@ -68,7 +176,39 @@ def fit(n: int, parameters, model, T, values, sigma=0.01, *, quantity: str = "ch
     """DDNSUS fit: ligand-field parameters to powder chi(T) or chi T, with the exact Jacobian.
 
     Thin front end to :class:`torchspin.lft.fit.JointFit` with one
-    :class:`~torchspin.lft.fit.Susceptibility` block (default grid: exact Gauss hemisphere, n = 6).
+    :class:`~torchspin.lft.fit.Susceptibility` data set.
+
+    Parameters
+    ----------
+    n : int
+        Number of d electrons.
+    parameters : sequence of FitParameter
+        Fit parameters (:class:`torchspin.lft.fit.FitParameter`).
+    model : callable
+        Maps a dict of named scalar tensors to keywords of
+        :func:`torchspin.lft.ddn.hamiltonian` (in ``units``).
+    T, values : array_like
+        Temperatures in K and the measured chi or chi T.
+    sigma : float or array_like, default 0.01
+        Uncertainties of ``values``.
+    quantity : {'chiT', 'chi'}, default 'chiT'
+        What ``values`` are.
+    field : float, default 100.0
+        Measuring field in mT.
+    chi_units : {'SI', 'cgs'}, default 'cgs'
+        Unit of ``values`` (note: cgs here, SI in :func:`susceptibility`).
+    grid : OrientationGrid, optional
+        Powder grid; default the exact Gauss hemisphere, n = 6.
+    chi0 : float, default 0.0
+        Fixed temperature-independent paramagnetism in ``chi_units``.
+    units : str, default 'MHz'
+        Energy unit of the model's keywords.
+    **kw
+        Passed to :meth:`torchspin.lft.fit.JointFit.fit`.
+
+    Returns
+    -------
+    torchspin.lft.fit.JointOutcome
     """
     from .fit import JointFit, Susceptibility
     from .grids import gauss_hemisphere

@@ -178,7 +178,7 @@ def _wignerd_torch(k: int, angles: torch.Tensor) -> torch.Tensor:
     """Wigner D^k(alpha, beta, gamma) for integer ``k`` from torch operations.
 
     Same convention, basis order (m = +k ... -k) and Wigner sum as
-    :func:`torchspin.angmom.wignerd` (phase ``'-'``), but differentiable in the
+    :func:`torchspin.wignerd` (phase ``'-'``), but differentiable in the
     angles: every entry is a polynomial in cos(beta/2), sin(beta/2) times
     exp(-i m alpha) and exp(-i m' gamma), so the gradient is finite at
     beta = 0 and beta = pi too.

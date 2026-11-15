@@ -20,36 +20,36 @@ Inputs follow Telser:
 The outputs are torchspin's: MHz, mT, GHz, radians.  The SpinSystem's couplings are always in MHz.
 
 Map (checked numerically against telser-tools in ``tests/test_lft_telser2torchspin.py``)
----------------------------------------------------------------------------------------
-==========================================  ====================================================================
-Telser                                       torchspin
-==========================================  ====================================================================
-g = (gx, gy, gz), g frame = molecular frame  ``g = [gx, gy, gz]``
-(D/3) O20 + E O22                            ``D = [-D/3 + E, -D/3 - E, 2D/3]`` (MHz)
-B40 O40 + B42 O42 + B44 O44 (Stevens)        ``B = [None, [[B44, 0, B42, 0, B40, 0, 0, 0, 0]]]`` (q = 4 ... -4)
-a, F, b (cubic, axial, rhombic 4th order)    B40 = a/120 + F/180, B42 = b/3, B44 = a/24 (:func:`abf_to_stevens`)
-u: mu_B sum_k u_k B_k C_k (3rd-order Zeeman)  ``Ham = {'132': ..., '134': ...}`` (:func:`third_order_zeeman_ham`)
-A, Q principal values + Euler (deg)          ``A``, ``AFrame`` / ``Q``, ``QFrame`` in rad (same angles), or full
-                                             tensors R diag R^T with ``full_tensors=True``
-g_N of Telser's table                        ``gnscale = g_N / nucgval(isotope)``
-dimer: + J S1.S2 (J > 0 antiferromagnetic)    ``ee`` = J 1 + Ddip + [d]x (full 3x3, MHz); same sign as EasySpin
-dimer: j[(S1.S2)^2 - X1 X2/3]                ``ee2 = j``, levels shifted by -j X1 X2/3 (:func:`dimer_energy_offset`)
-dimer: 24 JQ T2(S1).T2(S2) (S1, S2 >= 1)      ``ee2 += 24 JQ``, ``ee += 12 JQ``, shift -8 JQ X1 X2
-dimer: site g2, D2 Euler angles               ``gFrame``/``DFrame`` (or full tensors)
-EPR half width W_k (MHz, HWHM, frequency)    ``HStrain = 2 W`` (FWHM, same sqrt(sum W_k^2 n_k^2) rule);
-                                             Lorentzian lines: ``HStrainL = 2 W`` (torchspin >= 0.7.7)
-ENDOR line half width w (MHz)                ``salt(..., lw_mhz=2 w)``
-H1 mode 0 / < 0                              ``Experiment.Mode = 'perpendicular' / 'parallel'``
-populations at T                             ``Experiment.Temperature = T`` (normalized Boltzmann, Telser exact mode)
-==========================================  ====================================================================
+----------------------------------------------------------------------------------------
+=============================================  =========================================================================
+Telser                                         torchspin
+=============================================  =========================================================================
+g = (gx, gy, gz), g frame = molecular frame    ``g = [gx, gy, gz]``
+(D/3) O20 + E O22                              ``D = [-D/3 + E, -D/3 - E, 2D/3]`` (MHz)
+B40 O40 + B42 O42 + B44 O44 (Stevens)          ``B = [None, [[B44, 0, B42, 0, B40, 0, 0, 0, 0]]]`` (q = 4 ... -4)
+a, F, b (cubic, axial, rhombic 4th order)      B40 = a/120 + F/180, B42 = b/3, B44 = a/24 (:func:`abf_to_stevens`)
+u: mu_B sum_k u_k B_k C_k (3rd-order Zeeman)   ``Ham = {'132': ..., '134': ...}`` (:func:`third_order_zeeman_ham`)
+A, Q principal values + Euler (deg)            ``A``, ``AFrame`` / ``Q``, ``QFrame`` in rad (same angles), or full
+                                               tensors R diag R^T with ``full_tensors=True``
+g_N of Telser's table                          ``gnscale = g_N / nucgval(isotope)``
+dimer: + J S1.S2 (J > 0 antiferromagnetic)     ``ee`` = J 1 + Ddip + [d]x (full 3x3, MHz); same sign as EasySpin
+dimer: j[(S1.S2)^2 - X1 X2/3]                  ``ee2 = j``, levels shifted by -j X1 X2/3 (:func:`dimer_energy_offset`)
+dimer: 24 JQ T2(S1).T2(S2) (S1, S2 >= 1)       ``ee2 += 24 JQ``, ``ee += 12 JQ``, shift -8 JQ X1 X2
+dimer: site g2, D2 Euler angles                ``gFrame``/``DFrame`` (or full tensors)
+EPR half width W_k (MHz, HWHM, frequency)      ``HStrain = 2 W`` (FWHM, same sqrt(sum W_k^2 n_k^2) rule);
+                                               Lorentzian lines: ``HStrainL = 2 W`` (torchspin >= 0.7.7)
+ENDOR line half width w (MHz)                  ``salt(..., lw_mhz=2 w)``
+H1 mode 0 / < 0                                ``Experiment.Mode = 'perpendicular' / 'parallel'``
+populations at T                               ``Experiment.Temperature = T`` (normalized Boltzmann, Telser exact mode)
+=============================================  =========================================================================
 
 Telser's exchange convention is EasySpin's (H = +J S1.S2).  Other conventions are converted with
 ``J_convention`` (:func:`telser_J`): H = -2J' S1.S2 (Heisenberg-Dirac-van Vleck, Bleaney-Bowers) is
 ``J_convention='-2J'``.
 
 Transition probabilities: Telser's (telser-tools exact mode) B1-averaged P is normalized so that S = 1/2,
-g = 2 gives 1.  torchspin's rate (|mu|^2 - |n.mu|^2)/2 is mu_B^2 P (with the nuclear moment, which Telser
-leaves out by default); ``resfields`` intensities are mu_B^2 P/(2I + 1)/|dE/dB|.
+g = 2 gives 1.  torchspin's rate (abs(mu)^2 - abs(n.mu)^2)/2 is mu_B^2 P (with the nuclear moment, which Telser
+leaves out by default); ``resfields`` intensities are mu_B^2 P/(2I + 1)/abs(dE/dB).
 
 w becomes ``Sys.Ham`` lB = 2 rows (run with ``Options(QuadraticZeeman=True)``; ``extras['options']``), U a
 ``Sys.H0Extra`` term, and a zero field a true ``Field = 0`` (``Options(ZeroField=True)``, per spectrum in
@@ -68,10 +68,11 @@ g, u and g_N are then rescaled so that torchspin's Hamiltonian equals Telser's a
 cm^-1 -> MHz uses its ``mu_b_mhz/mu_b_cm``).  This is for parity tests: the g values in the SpinSystem
 are then effective values, not the entered ones.
 
-Gradients: g, D, E, B4q, A, Q principal values, J, j, Ddip, Edip, d, JQ and the dipolar Euler angles may be
-tensors and keep their graph.  The other Euler angles keep it only with ``full_tensors=True`` (``gFrame``/``AFrame``/``DFrame`` are read
-with ``.tolist()`` inside torchspin, mol2g bug B3).  The third-order Zeeman ``Ham`` coefficients are
-detached inside ``ham_ezho``.
+Gradients: g, D, E, B4q, A, Q principal values, U, J, j, Ddip, Edip, d, JQ and all Euler angles may be
+tensors and keep their graph, with or without ``full_tensors`` (the frames ``gFrame``/``AFrame``/``DFrame``/
+``QFrame`` stay on the graph in torchspin's ``ham``).  The second- and third-order Zeeman coefficients w and
+u are converted to floats (detached) by :func:`second_order_zeeman_ham` and :func:`third_order_zeeman_ham`;
+:func:`second_order_zeeman_operator` keeps w on the graph.
 """
 
 from __future__ import annotations
@@ -100,7 +101,7 @@ __all__ = ["TelserConversion", "MU_B_MHZ_PER_MT", "MU_N_MHZ_PER_MT", "abf_to_ste
 
 _F64 = torch.float64
 
-#: mu_B/h and mu_N/h in MHz per mT, from :mod:`torchspin.constants` (what torchspin's Hamiltonian uses).
+#: mu_B/h and mu_N/h in MHz per mT, from ``torchspin.constants`` (what torchspin's Hamiltonian uses).
 MU_B_MHZ_PER_MT = BMAGN / PLANCK * 1e-9
 MU_N_MHZ_PER_MT = NMAGN / PLANCK * 1e-9
 
@@ -112,13 +113,22 @@ _J_CONVENTIONS = {"+J": 1.0, "J": 1.0, "-J": -1.0, "-2J": -2.0, "+2J": 2.0, "2J"
 
 
 class TelserConversion(NamedTuple):
-    """Result of a program converter: the SpinSystem, an Experiment (or None) and extra information.
+    """Result of a program converter (:func:`ddzhq2sys`, :func:`ddpowh2sys`, :func:`djdze2sys`, :func:`ddpowj2sys`).
 
-    ``extras`` keys (as present): ``'dropped'`` (features not mapped, strict=False), ``'notes'``,
-    ``'options'`` (``Options`` keywords the run needs, e.g. ``QuadraticZeeman=True`` for w, ``ZeroField=True``
-    per zero-field spectrum in ``'spectra'``),
-    ``'energy_offset'`` (MHz; Telser's levels = torchspin's + offset), ``'cycles'`` (DDZHQ/DJDZE field
-    points), ``'spectra'`` (DDPOWH per-spectrum experiments and ENDOR settings), ``'h1mode'``.
+    Attributes
+    ----------
+    sys : SpinSystem
+        The converted :class:`torchspin.SpinSystem` (couplings in MHz).
+    exp : Experiment or None
+        A :class:`torchspin.Experiment` where the input describes one.
+    extras : dict
+        As present: ``'dropped'`` (features not mapped, ``strict=False``),
+        ``'notes'``, ``'options'`` (:class:`torchspin.Options` keywords the
+        run needs, e.g. ``QuadraticZeeman=True`` for w; ``ZeroField=True``
+        per zero-field spectrum in ``'spectra'``), ``'energy_offset'`` (MHz;
+        Telser's levels = torchspin's + offset), ``'cycles'`` (DDZHQ/DJDZE
+        field points), ``'spectra'`` (DDPOWH/DDPOWJ per-spectrum
+        experiments and settings), ``'h1mode'``, ``'target'``.
     """
 
     sys: SpinSystem
@@ -145,21 +155,44 @@ def _nonzero(x) -> bool:
 
 
 def abf_to_stevens(a=0.0, F=0.0, b=0.0):
-    """(B40, B42, B44) from Telser's a (cubic, = 120 B4), F (axial, = 180 B40) and b (rhombic, = 3 B42).
+    """Stevens (B40, B42, B44) from Telser's a (cubic), F (axial) and b (rhombic) 4th-order parameters.
 
-    The cubic term is (a/120)(O40 + 5 O44), so B40 = a/120 + F/180, B42 = b/3, B44 = a/24
-    (``telser_tools.spin.SpinParameters.from_abf``; ddzhqea.f ll. 161-175).  Same units in and out.
+    The cubic term is (a/120)(O40 + 5 O44), so B40 = a/120 + F/180, B42 =
+    b/3, B44 = a/24 (``telser_tools.spin.SpinParameters.from_abf``;
+    ddzhqea.f ll. 161-175).  Same units in and out; tensors keep their graph.
+
+    Examples
+    --------
+    >>> from torchspin.lft import telser2torchspin as t2
+    >>> t2.abf_to_stevens(120.0, 180.0, 3.0)
+    (2.0, 1.0, 5.0)
     """
     return a / 120.0 + F / 180.0, b / 3.0, a / 24.0
 
 
 def stevens_to_abf(B40=0.0, B42=0.0, B44=0.0):
-    """Inverse of :func:`abf_to_stevens`: (a, F, b) = (24 B44, 180 (B40 - B44/5), 3 B42)."""
+    """Inverse of :func:`abf_to_stevens`: (a, F, b) = (24 B44, 180 (B40 - B44/5), 3 B42).
+
+    Examples
+    --------
+    >>> from torchspin.lft import telser2torchspin as t2
+    >>> t2.stevens_to_abf(2.0, 1.0, 5.0)
+    (120.0, 180.0, 3.0)
+    """
     return 24.0 * B44, 180.0 * (B40 - B44 / 5.0), 3.0 * B42
 
 
 def zfs_principal(D, E) -> torch.Tensor:
-    """(-D/3 + E, -D/3 - E, 2D/3): the principal values of (D/3) O20 + E O22 as S.D.S (same units)."""
+    """Principal values (-D/3 + E, -D/3 - E, 2D/3) of (D/3) O20 + E O22 written as S.D.S.
+
+    Same units in and out; returns a tensor of shape (3,) (graph-safe).
+
+    Examples
+    --------
+    >>> from torchspin.lft import telser2torchspin as t2
+    >>> t2.zfs_principal(3.0, 0.5).tolist()
+    [-0.5, -1.5, 2.0]
+    """
     D, E = _t(D), _t(E)
     return torch.stack([-D / 3 + E, -D / 3 - E, 2 * D / 3])
 
@@ -167,9 +200,19 @@ def zfs_principal(D, E) -> torch.Tensor:
 def euler_matrix(alpha, beta, gamma, *, degrees: bool = False) -> torch.Tensor:
     """McGavin z-y'-z'' rotation R = Rz(alpha) Ry(beta) Rz(gamma) of Telser's DEULER.F (graph-safe).
 
-    The columns of R are the rotated axes in the molecular frame; a tensor with principal values t is
-    R diag(t) R^T in the molecular frame.  EasySpin/torchspin frames (``AFrame``, ``gFrame``, ...) with the
-    same angles give the same tensor.
+    Parameters
+    ----------
+    alpha, beta, gamma : float or torch.Tensor
+        Euler angles, radians (degrees with ``degrees=True``).
+    degrees : bool, default False
+
+    Returns
+    -------
+    torch.Tensor, shape (3, 3)
+        R; its columns are the rotated axes in the molecular frame, and a
+        tensor with principal values t is ``R diag(t) R^T`` in the molecular
+        frame.  EasySpin/torchspin frames (``AFrame``, ``gFrame``, ...) with
+        the same angles give the same tensor.
     """
     a, b, g = (_t(x) for x in (alpha, beta, gamma))
     if degrees:
@@ -183,16 +226,52 @@ def euler_matrix(alpha, beta, gamma, *, degrees: bool = False) -> torch.Tensor:
 
 
 def rotate_tensor(principal, angles=(0.0, 0.0, 0.0), *, degrees: bool = False) -> torch.Tensor:
-    """R diag(principal) R^T with R = :func:`euler_matrix` (3x3, graph-safe)."""
+    """Molecular-frame tensor ``R diag(principal) R^T`` with R = :func:`euler_matrix` (graph-safe).
+
+    Parameters
+    ----------
+    principal : float or array_like, shape (3,)
+        Principal values (a scalar is isotropic).
+    angles : array_like, shape (3,), default (0, 0, 0)
+        Euler angles, radians (degrees with ``degrees=True``).
+    degrees : bool, default False
+
+    Returns
+    -------
+    torch.Tensor, shape (3, 3)
+    """
     r = euler_matrix(*_vec3(angles), degrees=degrees)
     return r @ torch.diag(_vec3(principal)) @ r.T
 
 
 def telser_J(J, convention: str = "+J"):
-    """J in Telser's (and EasySpin's) convention H = +J S1.S2, from J given in ``convention``.
+    """Exchange J in Telser's (and EasySpin's) convention H = +J S1.S2.
 
-    ``'+J'`` (H = +J S1.S2), ``'-J'`` (H = -J S1.S2), ``'-2J'`` (H = -2J S1.S2, Heisenberg-Dirac-van Vleck,
-    Bleaney-Bowers), ``'+2J'``.  For example, J' = -10 cm^-1 in -2J' S1.S2 (ferromagnetic) is +20 cm^-1 here.
+    Parameters
+    ----------
+    J : float or torch.Tensor
+        Exchange constant in ``convention``.
+    convention : {'+J', 'J', '-J', '-2J', '+2J', '2J'}, default '+J'
+        Hamiltonian convention of ``J``: H = +J S1.S2, -J S1.S2, -2J S1.S2
+        (Heisenberg-Dirac-van Vleck, Bleaney-Bowers) or +2J S1.S2.
+
+    Returns
+    -------
+    float or torch.Tensor
+        J in the +J convention, same units.
+
+    Raises
+    ------
+    ValueError
+        For an unknown convention.
+
+    Examples
+    --------
+    J' = -10 cm^-1 in -2J' S1.S2 (ferromagnetic) is +20 cm^-1 here:
+
+    >>> from torchspin.lft import telser2torchspin as t2
+    >>> t2.telser_J(-10.0, '-2J')
+    20.0
     """
     try:
         return _J_CONVENTIONS[convention.replace(" ", "")] * J
@@ -201,7 +280,17 @@ def telser_J(J, convention: str = "+J"):
 
 
 def antisymmetric_tensor(d) -> torch.Tensor:
-    """The 3x3 tensor T with S1.T.S2 = d.(S1 x S2) (antisymmetric, Dzyaloshinskii-Moriya)."""
+    """3x3 tensor T with S1.T.S2 = d.(S1 x S2) (antisymmetric, Dzyaloshinskii-Moriya).
+
+    Parameters
+    ----------
+    d : array_like, shape (3,)
+        The vector d, in any energy unit (graph-safe).
+
+    Returns
+    -------
+    torch.Tensor, shape (3, 3)
+    """
     dx, dy, dz = _vec3(d)
     z = torch.zeros((), dtype=_F64)
     return torch.stack([torch.stack([z, dz, -dy]), torch.stack([-dz, z, dx]), torch.stack([dy, -dx, z])])
@@ -209,9 +298,25 @@ def antisymmetric_tensor(d) -> torch.Tensor:
 
 def exchange_tensor(J=0.0, Ddip=0.0, Edip=0.0, dip_euler=(0.0, 0.0, 0.0), d=(0.0, 0.0, 0.0), *,
                     degrees: bool = True) -> torch.Tensor:
-    """Full 3x3 coupling S1.T.S2 = J S1.S2 + S1.Ddip.S2 + d.(S1 x S2) (Telser's DJDZE/DDPOWJ terms; same units).
+    """Full 3x3 coupling S1.T.S2 = J S1.S2 + S1.Ddip.S2 + d.(S1 x S2) (Telser's DJDZE/DDPOWJ terms).
 
-    Ddip = R diag(-Ddip/3 + Edip, -Ddip/3 - Edip, 2Ddip/3) R^T with R from ``dip_euler``.
+    Parameters
+    ----------
+    J : float or torch.Tensor, default 0.0
+        Isotropic exchange (+J convention).
+    Ddip, Edip : float or torch.Tensor, default 0.0
+        Anisotropic (dipolar) coupling: ``R diag(-Ddip/3 + Edip, -Ddip/3 -
+        Edip, 2Ddip/3) R^T``.
+    dip_euler : array_like, shape (3,), default (0, 0, 0)
+        Euler angles of R, in degrees (radians with ``degrees=False``).
+    d : array_like, shape (3,), default (0, 0, 0)
+        Antisymmetric exchange vector.
+    degrees : bool, default True
+
+    Returns
+    -------
+    torch.Tensor, shape (3, 3)
+        In the units of the inputs (graph-safe).
     """
     t = _t(J) * torch.eye(3, dtype=_F64)
     if _nonzero(Ddip) or _nonzero(Edip):
@@ -270,7 +375,7 @@ def _cubic_third_order(s: float) -> list[torch.Tensor]:
 def _u_coefficients(s: float) -> tuple[tuple[tuple[float, ...], tuple[float, ...]], ...]:
     """For k = x, y, z: the ('132', '134') Ham rows whose linear-in-B part of torchspin's H is B_k C_k (MHz/mT).
 
-    Found by projection through :func:`torchspin.ham.ham` (the (H0, mu) path that ``levels``,
+    Found by projection through :func:`torchspin.ham` (the (H0, mu) path that ``levels``,
     ``resfields`` and ``pepper`` use), so the map follows whatever sign that path applies. Since torchspin
     0.6.7 that path and ``ham(sys, B0)`` agree (bug B11 in the gap analysis).
     """
@@ -307,11 +412,33 @@ def third_order_zeeman_ham(s, u, *, mu_b: float = MU_B_MHZ_PER_MT, electron: int
                            n_electrons: int = 1) -> dict:
     """``SpinSystem.Ham`` entries for Telser's third-order Zeeman term mu_B sum_k u_k B_k C_k.
 
-    C_k = S_k^3 - (3X - 1)/5 S_k (X = S(S+1)); ``u`` is dimensionless (one value, or (ux, uy, uz)), S >= 3/2.
-    ``mu_b`` is mu_B/h in MHz/mT.  For a multi-electron system, ``electron`` (0-based) selects the row and
-    ``n_electrons`` sets the number of rows (other rows zero).  The term is linear in B, with spin rank 3
-    and coupling ranks l = 2 and 4 (``'132'``, ``'134'``; for ux = uy = uz only l = 4, the cubic invariant).
-    The coefficients are detached (``ham_ezho`` reads them with ``.detach()``).
+    C_k = S_k^3 - (3X - 1)/5 S_k (X = S(S+1)).  The term is linear in B, with
+    spin rank 3 and coupling ranks l = 2 and 4 (``'132'``, ``'134'``; for
+    ux = uy = uz only l = 4, the cubic invariant).
+
+    Parameters
+    ----------
+    s : float
+        Electron spin, S >= 3/2.
+    u : float or array_like, shape (3,)
+        Dimensionless (ux, uy, uz), or one value.  Converted to floats
+        (detached).
+    mu_b : float, default MU_B_MHZ_PER_MT
+        mu_B/h in MHz/mT.
+    electron : int, default 0
+        0-based row of a multi-electron system.
+    n_electrons : int, default 1
+        Number of rows (the other rows are zero).
+
+    Returns
+    -------
+    dict
+        ``{'132': rows, '134': rows}`` (lists of ``n_electrons`` rows).
+
+    Raises
+    ------
+    ValueError
+        If ``s < 3/2``.
     """
     s = float(s)
     if s < 1.5:
@@ -333,7 +460,7 @@ def _w_coefficients(s: float) -> tuple[tuple[float, ...], tuple[float, ...], tup
     (B.S)^2 = B_k B_l (S_k S_l + S_l S_k)/2; the part B^2 X/3 (X = S(S+1), proportional to the identity) is
     not representable in ``Sys.Ham`` (a rank-lB field tensor needs l >= |lB - lS|) and shifts every level
     equally, so it is left out (see :func:`second_order_zeeman_ham`).  Found by projection through
-    :func:`torchspin.ham_ezho.field_nonlinear_zeeman_ops` (unit mu_B here; the caller scales).
+    ``torchspin.ham_ezho.field_nonlinear_zeeman_ops`` (unit mu_B here; the caller scales).
     """
     from torchspin.ham_ezho import field_nonlinear_zeeman_ops
 
@@ -375,12 +502,37 @@ def second_order_zeeman_ham(s, w, *, mu_b: float = MU_B_MHZ_PER_MT, units: str =
                             electron: int = 0, n_electrons: int = 1) -> dict:
     """``SpinSystem.Ham`` entries (lB = 2) for Telser's second-order Zeeman term w (mu_B B.S)^2.
 
-    ``w`` in 1/``units`` (Telser: 1/cm^-1); ``mu_b`` is mu_B/h in MHz/mT.  The returned rows reproduce
-    w mu_B^2 [(B.S)^2 - B^2 X/3] (X = S(S+1)): the dropped part is proportional to the identity, shifts
-    all levels by w mu_B^2 B^2 X/3 and leaves transitions unchanged (Telser's levels = torchspin's +
-    :func:`second_order_zeeman_offset`).  ``levels``/``resfields``/``pepper`` include the term only with
-    ``Options(QuadraticZeeman=True)`` (``levels(..., quadratic_zeeman=True)``); ``ham(sys, B0)`` always does.
-    The coefficients are detached (``ham_ezho`` reads ``Sys.Ham`` with ``.detach()``).
+    The returned rows reproduce w mu_B^2 [(B.S)^2 - B^2 X/3] (X = S(S+1)):
+    the dropped part is proportional to the identity, shifts all levels by
+    w mu_B^2 B^2 X/3 and leaves transitions unchanged (Telser's levels =
+    torchspin's + :func:`second_order_zeeman_offset`).  ``levels``,
+    ``resfields`` and ``pepper`` include the term only with
+    ``Options(QuadraticZeeman=True)``; ``ham(sys, B0)`` always does.
+
+    Parameters
+    ----------
+    s : float
+        Electron spin, S >= 1.
+    w : float or torch.Tensor
+        w in 1/``units`` (Telser: 1/cm^-1); converted to a float (detached;
+        use :func:`second_order_zeeman_operator` for gradients in w).
+    mu_b : float, default MU_B_MHZ_PER_MT
+        mu_B/h in MHz/mT.
+    units : str, default 'cm^-1'
+    constants : object, optional
+        telser-tools ``Constants`` for the cm^-1 -> MHz factor.
+    electron, n_electrons : int, default 0, 1
+        Row selection, as :func:`third_order_zeeman_ham`.
+
+    Returns
+    -------
+    dict
+        ``{'220': rows, '222': rows, '224': rows}``.
+
+    Raises
+    ------
+    ValueError
+        If ``s < 1``.
     """
     s = float(s)
     if s < 1:
@@ -398,7 +550,11 @@ def second_order_zeeman_ham(s, w, *, mu_b: float = MU_B_MHZ_PER_MT, units: str =
 
 def second_order_zeeman_offset(s, w, field_mT, *, mu_b: float = MU_B_MHZ_PER_MT, units: str = "cm^-1",
                                constants=None):
-    """w mu_B^2 B^2 X/3 (MHz): Telser's levels minus torchspin's for the w term of :func:`second_order_zeeman_ham`."""
+    """Level shift w mu_B^2 B^2 X/3 in MHz: Telser's levels minus torchspin's for :func:`second_order_zeeman_ham`.
+
+    ``field_mT`` in mT; other arguments as :func:`second_order_zeeman_ham`.
+    Graph-safe in ``w``.
+    """
     s = float(s)
     return _t(w) * mu_b * mu_b / _energy_to_mhz(units, constants) * float(field_mT) ** 2 * s * (s + 1) / 3.0
 
@@ -414,10 +570,32 @@ def _merge_ham(a: dict | None, b: dict) -> dict:
 
 # ----------------------------------------------------------------------------- nuclei
 def isotope_for(spin: float, label: str | None = None) -> str:
-    """A torchspin isotope name for a nucleus of spin I given by Telser's label (``'14N'``, ``'2H (D)'``, ...).
+    """torchspin isotope name for a nucleus of spin I given by Telser's label.
 
-    The label is used when torchspin knows it with the same spin; otherwise a representative isotope with
-    spin I is returned (the nuclear g value is then set through ``gnscale``).
+    Parameters
+    ----------
+    spin : float
+        Nuclear spin I.
+    label : str, optional
+        Telser's label (``'14N'``, ``'2H (D)'``, ...); used when torchspin
+        knows that isotope with the same spin.
+
+    Returns
+    -------
+    str
+        The labeled isotope, or a representative isotope with spin I (the
+        nuclear g value is then set through ``gnscale``).
+
+    Raises
+    ------
+    ValueError
+        If no stand-in isotope with spin I exists.
+
+    Examples
+    --------
+    >>> from torchspin.lft import telser2torchspin as t2
+    >>> t2.isotope_for(1.0, '14N'), t2.isotope_for(2.5)
+    ('14N', '17O')
     """
     if label:
         mt = re.match(r"\s*(\d+)\s*([A-Z][a-z]?)", label)
@@ -453,20 +631,89 @@ def spin2sys(params: Any = None, *, s=None, g=None, w=None, u=None, D=None, E=No
              full_tensors: bool = False, strict: bool = True, dropped: list | None = None, **sys_kwargs) -> SpinSystem:
     """SpinSystem of one electron spin S (and at most one nucleus) in Telser's DDZHQ/DDPOWH parameterization.
 
-    ``params`` is a telser-tools ``spin.SpinParameters`` (or any object/dict with ``s, g, w, u, D, E, B40, B42,
-    B44, nucleus``; the nucleus with ``spin, g_n, A, A_euler, U, Q, Q_euler, label``).  Keywords override it
-    and may be tensors.  ``a, F, b`` (Telser's 4th-order form) are added to B40, B42, B44.
+    Parameters
+    ----------
+    params : object or dict, optional
+        A telser-tools ``spin.SpinParameters`` or any object/dict with
+        ``s, g, w, u, D, E, B40, B42, B44, nucleus``; the nucleus with
+        ``spin, g_n, A, A_euler, U, Q, Q_euler, label``.  The keywords below
+        override it.
+    s : float, optional
+        Electron spin (default 0.5).  ``s = 0`` gives a nuclear spin system
+        (``S=[]``: quadrupole and nuclear Zeeman), DDPOWH's NMR/NQR case.
+    g : array_like, shape (3,), optional
+        Principal g values in the molecular frame (default (2, 2, 2)).
+    w : float or torch.Tensor, optional
+        Second-order Zeeman w (1/``units``), S >= 1; becomes ``Sys.Ham`` lB
+        = 2 rows (:func:`second_order_zeeman_ham`, detached); pepper,
+        resfields and levels need ``Options(QuadraticZeeman=True)``
+        (:func:`quadratic_zeeman_options`).
+    u : array_like, shape (3,), optional
+        Third-order Zeeman u (dimensionless), S >= 3/2
+        (:func:`third_order_zeeman_ham`).
+    D, E : float or torch.Tensor, optional
+        Zero-field splitting in ``units``, S >= 1.
+    B40, B42, B44 : float or torch.Tensor, optional
+        4th-order Stevens coefficients in ``units``, S >= 2.
+    a, F, b : float or torch.Tensor, optional
+        Telser's 4th-order form (``units``), added to B40, B42, B44
+        (:func:`abf_to_stevens`).
+    nucleus : object or dict, optional
+        The nucleus (overrides ``params.nucleus``).
+    I : float, optional
+        Nuclear spin (overrides ``nucleus.spin``).
+    g_n : float or torch.Tensor, optional
+        Nuclear g value; set through ``gnscale``.
+    A : array_like, shape (3,), optional
+        Hyperfine principal values in MHz.
+    A_euler, Q_euler : array_like, shape (3,), optional
+        Euler angles of A and Q (degrees unless ``degrees=False``).
+    U : float or torch.Tensor, optional
+        I.S^3 hyperfine U in MHz (S >= 3/2): becomes a ``Sys.H0Extra`` term
+        (:func:`u_term_operator`, differentiable in U).
+    Q : array_like, shape (3,), optional
+        Quadrupole principal values in MHz (I >= 1).
+    isotope : str, optional
+        torchspin isotope name; default from the label (:func:`isotope_for`).
+    units : str, default 'cm^-1'
+        Unit of D, E, B4q, a, F, b and 1/w.
+    degrees : bool, default True
+        Euler angles in degrees.
+    constants : object, optional
+        telser-tools ``Constants`` (parity tests; module docstring).
+    full_tensors : bool, default False
+        Pass A and Q as full 3x3 tensors instead of principal values and
+        frames.
+    strict, dropped
+        Accepted for the program converters; ``dropped`` collects dropped
+        features.
+    **sys_kwargs
+        Passed to :class:`torchspin.SpinSystem` (``HStrain``, ``lw``, ...);
+        ``Ham`` is merged with the generated entries.
 
-    Units: D, E, B4q, a, F, b in ``units`` (default cm^-1); A, U, Q in MHz; angles in degrees unless
-    ``degrees=False``.  ``isotope``: torchspin name of the nucleus (default from the label, see
-    :func:`isotope_for`).  ``full_tensors=True`` passes A and Q as full 3x3 tensors (Euler angles stay on
-    the autograd graph).  ``sys_kwargs`` go to :class:`SpinSystem` (``HStrain``, ``lw``, ...).
+    Returns
+    -------
+    SpinSystem
+        Couplings in MHz, angles in radians.  Tensor inputs keep their graph
+        (except w and u).
 
-    S = 0 gives a nuclear spin system (``S=[]``: quadrupole and nuclear Zeeman), DDPOWH's NMR/NQR case.
+    Raises
+    ------
+    ValueError
+        If ``s = 0`` without a nucleus of I >= 1/2, or a 3-vector input has
+        the wrong shape.
+    TypeError
+        If ``sys_kwargs`` sets a field this function sets.
 
-    w (second-order Zeeman) becomes ``Sys.Ham`` lB = 2 rows (:func:`second_order_zeeman_ham`; pepper,
-    resfields and levels need ``Options(QuadraticZeeman=True)``, see :func:`quadratic_zeeman_options`) and U
-    (I.S^3 hyperfine) a ``Sys.H0Extra`` term (:func:`u_term_operator`, differentiable in U).
+    Examples
+    --------
+    An S = 3/2 system with D = 1 cm^-1, E = 0.1 cm^-1 (couplings converted
+    to MHz):
+
+    >>> from torchspin.lft import telser2torchspin as t2
+    >>> sys = t2.spin2sys(s=1.5, g=(2.0, 2.0, 2.0), D=1.0, E=0.1)
+    >>> sys.S, [round(v) for v in sys.D[0].tolist()]
+    ([1.5], [-6995, -12991, 19986])
     """
     dropped = [] if dropped is None else dropped
     s = float(_pick(s, params, "s", 0.5))
@@ -546,7 +793,7 @@ def spin2sys(params: Any = None, *, s=None, g=None, w=None, u=None, D=None, E=No
 
 
 def quadratic_zeeman_options(sys: SpinSystem) -> dict:
-    """``Options`` keywords a converted system needs: ``QuadraticZeeman=True`` if it carries a w term."""
+    """``Options`` keywords a converted system needs: ``{'QuadraticZeeman': True}`` if it carries a w term, else ``{}``."""
     from torchspin.ham_ezho import has_field_nonlinear_zeeman
 
     return {"QuadraticZeeman": True} if sys.Ham is not None and has_field_nonlinear_zeeman(sys) else {}
@@ -554,10 +801,27 @@ def quadratic_zeeman_options(sys: SpinSystem) -> dict:
 
 # ----------------------------------------------------------------------------- dimers
 def dimer_energy_offset(s1: float, s2: float, j=0.0, JQ=0.0, *, units: str = "cm^-1", constants=None):
-    """Telser's dimer levels minus torchspin's (MHz): -(j + 24 JQ) X1 X2/3 (JQ only for S1, S2 >= 1).
+    """Telser's dimer levels minus torchspin's, in MHz: -(j + 24 JQ) X1 X2/3.
 
-    Telser's biquadratic term is j[(S1.S2)^2 - X1 X2/3] (X = S(S+1)); torchspin's ``ee2`` has no constant.
-    The isotropic quadrupole term 24 JQ T2(S1).T2(S2) = 24 JQ [(S1.S2)^2 + S1.S2/2 - X1 X2/3].
+    Telser's biquadratic term is j[(S1.S2)^2 - X1 X2/3] (X = S(S+1));
+    torchspin's ``ee2`` has no constant.  The isotropic quadrupole term
+    24 JQ T2(S1).T2(S2) = 24 JQ [(S1.S2)^2 + S1.S2/2 - X1 X2/3] counts only
+    for S1, S2 >= 1.
+
+    Parameters
+    ----------
+    s1, s2 : float
+        Site spins.
+    j, JQ : float, default 0.0
+        Biquadratic and quadrupole exchange in ``units``.
+    units : str, default 'cm^-1'
+    constants : object, optional
+        telser-tools ``Constants`` for cm^-1 -> MHz.
+
+    Returns
+    -------
+    float
+        Offset in MHz.
     """
     x1, x2 = s1 * (s1 + 1), s2 * (s2 + 1)
     jq = JQ if (s1 >= 1 and s2 >= 1) else 0.0
@@ -575,16 +839,63 @@ def dimer2sys(params: Any = None, *, site1: Any = None, site2: Any = None, J=Non
               constants=None, full_tensors: bool = False, **sys_kwargs) -> SpinSystem:
     """SpinSystem of Telser's exchange-coupled dimer (DJDZE, DDPOWJ): two electron spins S1, S2.
 
-    ``params``: a telser-tools ``dimer.DimerParameters`` (``site1``, ``site2``, ``coupling``) or anything with
-    those attributes.  A site has ``s, g, g_euler, D, E, D_euler, B40, B42, B44, mu``; the coupling ``J, j,
-    Ddip, Edip, dip_euler, d, JQ``.  ``site1``/``site2`` (objects or dicts) and the coupling keywords
-    override it; values may be tensors.
+    H = sum_i [mu_B B.g_i.S_i + S_i.D_i.S_i + B4q_i O4q + mu_i mu_B sum_k B_k
+    C_k(S_i)] + J S1.S2 + S1.Ddip.S2 + d.(S1 x S2) + j[(S1.S2)^2 - X1X2/3] +
+    24 JQ T2(S1).T2(S2), all tensors in the site-1 frame.  The coupling
+    becomes the full 3x3 ``ee`` (MHz) and ``ee2``; levels differ from
+    Telser's by the constant :func:`dimer_energy_offset`.  A site with S = 0
+    is left out (a one-electron SpinSystem).
 
-    H = sum_i [mu_B B.g_i.S_i + S_i.D_i.S_i + B4q_i O4q + mu_i mu_B sum_k B_k C_k(S_i)] + J S1.S2
-    + S1.Ddip.S2 + d.(S1 x S2) + j[(S1.S2)^2 - X1X2/3] + 24 JQ T2(S1).T2(S2), all tensors in the site-1 frame.
-    ``J`` is in ``J_convention`` (default Telser's/EasySpin's +J; ``'-2J'`` for H = -2J S1.S2).  The
-    coupling becomes the full 3x3 ``ee`` (MHz) and ``ee2``; levels differ from Telser's by the constant
-    :func:`dimer_energy_offset`.  A site with S = 0 is left out (a one-electron SpinSystem).
+    Parameters
+    ----------
+    params : object or dict, optional
+        A telser-tools ``dimer.DimerParameters`` (``site1``, ``site2``,
+        ``coupling``) or anything with those attributes.
+    site1, site2 : object or dict, optional
+        Sites with ``s, g, g_euler, D, E, D_euler, B40, B42, B44, mu``
+        (energies in ``units``, angles in degrees unless ``degrees=False``;
+        ``mu`` is the third-order Zeeman u of the site, S >= 3/2).
+    J, j, Ddip, Edip, JQ : float or torch.Tensor, optional
+        Coupling (``units``); ``J`` in ``J_convention``.
+    dip_euler : array_like, shape (3,), optional
+        Euler angles of Ddip.
+    d : array_like, shape (3,), optional
+        Antisymmetric exchange vector (``units``).
+    J_convention : str, default '+J'
+        See :func:`telser_J` (``'-2J'`` for H = -2J S1.S2).
+    units : str, default 'cm^-1'
+    degrees : bool, default True
+    constants : object, optional
+        telser-tools ``Constants`` (parity tests).
+    full_tensors : bool, default False
+        Pass g and D as full 3x3 tensors instead of principal values and
+        frames.
+    **sys_kwargs
+        Passed to :class:`torchspin.SpinSystem`.
+
+    Returns
+    -------
+    SpinSystem
+        Couplings in MHz.  Tensor inputs keep their graph.
+
+    Raises
+    ------
+    ValueError
+        If both sites have S = 0.
+    NotImplementedError
+        For 4th-order terms on a site with a nonzero ``D_euler``.
+    TypeError
+        If ``sys_kwargs`` sets a field this function sets.
+
+    Examples
+    --------
+    Two S = 1/2 sites with J' = -10 cm^-1 in -2J' S1.S2:
+
+    >>> from torchspin.lft import telser2torchspin as t2
+    >>> site = dict(s=0.5, g=(2.0, 2.0, 2.0))
+    >>> dimer = t2.dimer2sys(site1=site, site2=site, J=-10.0, J_convention='-2J')
+    >>> round(float(dimer.ee[0, 0]))          # +20 cm^-1 in MHz
+    599585
     """
     cp = _get(params, "coupling", None)
     sites_in = [site1 if site1 is not None else _get(params, "site1", None),
@@ -684,10 +995,45 @@ def _mode(h1mode: float, strict: bool, dropped: list) -> str:
 def epr_experiment(freq_ghz: float, field_range, npts: int, *, field_units: str = "G", deriv: int = 0,
                    temperature: float | None = None, h1mode: float = 0.0, strict: bool = True,
                    dropped: list | None = None) -> Experiment:
-    """Experiment of a Telser field sweep: ``npts`` intervals (npts + 1 points, as DDPOWH/DDPOWJ write them).
+    """:class:`torchspin.Experiment` of a Telser field sweep.
 
-    ``field_range`` (Bmin, Bmax) in ``field_units`` (Telser: G or T); ``deriv`` 0/1 -> ``Harmonic``.
-    The exact-mode derivative of telser-tools (d/dB) is pepper's ``Harmonic=1``.
+    Parameters
+    ----------
+    freq_ghz : float
+        Microwave frequency in GHz.
+    field_range : sequence of 2 float
+        (Bmin, Bmax) in ``field_units``.
+    npts : int
+        Number of intervals; the Experiment has ``npts + 1`` points, as
+        DDPOWH/DDPOWJ write them.
+    field_units : {'G', 'mT', 'T'}, default 'G'
+    deriv : int, default 0
+        Derivative flag -> ``Harmonic`` (the exact-mode d/dB of telser-tools
+        is pepper's ``Harmonic=1``).
+    temperature : float, optional
+        K; sets ``Temperature``.
+    h1mode : float, default 0.0
+        0 perpendicular, ``< 0`` parallel; ``> 0`` (mixed) is not mapped.
+    strict : bool, default True
+        Raise for a mixed mode (``False``: drop it with a warning).
+    dropped : list, optional
+        Collects dropped features.
+
+    Returns
+    -------
+    Experiment
+
+    Raises
+    ------
+    NotImplementedError
+        For ``h1mode > 0`` with ``strict=True``.
+
+    Examples
+    --------
+    >>> from torchspin.lft import telser2torchspin as t2
+    >>> exp = t2.epr_experiment(9.5, (3000, 4000), 400)
+    >>> exp.Range, exp.nPoints, exp.Mode
+    ([300.0, 400.0], 401, 'perpendicular')
     """
     dropped = [] if dropped is None else dropped
     fm = _field_to_mt(field_units)
@@ -699,11 +1045,24 @@ def epr_experiment(freq_ghz: float, field_range, npts: int, *, field_units: str 
 
 
 def ordering(lam_x: float, lam_z: float):
-    """``Experiment.Ordering`` callable for DDPOWH's partial orientation ORFACT = exp(lam_x cos^2 phi + lam_z cos^2 theta).
+    """``Experiment.Ordering`` callable for DDPOWH's partial orientation ORFACT.
 
-    (theta, phi) is the field direction in the molecular frame.  With the field along the lab z axis, the
-    molecular frame at EasySpin Euler angles (alpha, beta, gamma) sees it at theta = beta, phi = pi - gamma,
-    so the weight is exp(lam_x cos^2 gamma + lam_z cos^2 beta) (independent of alpha, the rotation about B0).
+    ORFACT = exp(lam_x cos^2(phi) + lam_z cos^2(theta)) with (theta, phi) the
+    field direction in the molecular frame.  With the field along the lab z
+    axis, the molecular frame at EasySpin Euler angles (alpha, beta, gamma)
+    sees it at theta = beta, phi = pi - gamma, so the weight is
+    exp(lam_x cos^2(gamma) + lam_z cos^2(beta)), independent of alpha.
+
+    Parameters
+    ----------
+    lam_x, lam_z : float
+        Telser's ordering parameters.
+
+    Returns
+    -------
+    callable
+        ``f(alpha, beta, gamma)`` (radians, arrays) for
+        :class:`torchspin.Experiment` ``Ordering``.
     """
     import numpy as np
 
@@ -771,14 +1130,35 @@ def _direction(theta: float, phi: float) -> torch.Tensor:
 
 
 def ddzhq2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool = True, **sys_kwargs) -> TelserConversion:
-    """A DDZHQ input (telser-tools ``ddzhq.DdzhqInput``, read by attribute) as SpinSystem + field points.
+    """A DDZHQ input as SpinSystem + field points.
 
-    ``extras['cycles']``: one dict per computed cycle, in input order: ``field_mT``, ``theta``/``phi``
-    (radians, the field direction in the molecular frame), ``direction`` (unit 3-vector), ``g_eff`` and
-    ``zero_field``.  A g-value entry is converted to the field nu/(mu_B g) (with ``constants`` if given).
-    ``exp`` is an Experiment at the input's frequency (``Mode`` from the H1 mode; ``Temperature`` if
-    populations are on), for :func:`torchspin.resfields`.  Exact-mode semantics of telser-tools: the
-    Bnm-form B44 is the Stevens coefficient (finding DDZHQ-06), zero field is a real zero field.
+    Exact-mode semantics of telser-tools: the Bnm-form B44 is the Stevens
+    coefficient (finding DDZHQ-06), and zero field is a real zero field.
+
+    Parameters
+    ----------
+    inp : object
+        A telser-tools ``ddzhq.DdzhqInput`` (read by attribute).
+    constants : object, optional
+        telser-tools ``Constants`` (parity tests; module docstring).
+    full_tensors : bool, default False
+        Full 3x3 A and Q tensors instead of principal values and frames.
+    strict : bool, default True
+        Raise ``NotImplementedError`` for unmapped features (``False``:
+        drop them with a warning, listed in ``extras['dropped']``).
+    **sys_kwargs
+        Passed to :class:`torchspin.SpinSystem`.
+
+    Returns
+    -------
+    TelserConversion
+        ``sys``; ``exp``, an Experiment at the input's frequency (``Mode``
+        from the H1 mode, ``Temperature`` if populations are on) for
+        ``torchspin.resfields``; ``extras['cycles']``, one dict per
+        computed cycle in input order with ``field_mT``, ``theta``/``phi``
+        (radians, field direction in the molecular frame), ``direction``
+        (unit 3-vector), ``g_eff`` and ``zero_field``.  A g-value entry is
+        converted to the field nu/(mu_B g).
     """
     dropped: list = []
     sy = spin2sys(_single_spin_params(inp), units="cm^-1", constants=constants, full_tensors=full_tensors,
@@ -831,29 +1211,61 @@ _LORENTZ_CUTOFF_NOTE = ("Lorentzian EPR line -> SpinSystem.HStrainL = 2 W (torch
 
 def ddpowh2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool = True, target: str = "pepper",
                **sys_kwargs) -> TelserConversion:
-    """A DDPOWH input (telser-tools ``ddpowh.DdpowhInput``) as SpinSystem + Experiment for pepper/salt.
+    """A DDPOWH input as SpinSystem + Experiment(s), for pepper/salt or for :mod:`torchspin.lft.ddpowh`.
 
-    * Field-swept EPR (kind ``'E'``): ``exp`` for :func:`torchspin.pepper` (Range in mT, npts + 1 points,
-      Harmonic = derivative flag, Temperature with populations).
-    * FDMR (``'F'``): one frequency-swept Experiment per spectrum (``Field`` in mT, ``mwRange`` in GHz),
-      in ``extras['spectra']``; ``exp`` is the first.
-    * ENDOR (``'N'``): one fixed-field Experiment per spectrum (``Field``, ``mwFreq``, ``ExciteWidth=1e-3``)
-      and the :func:`torchspin.salt` keywords ``freq_range`` (MHz, absolute; for a centered axis the Larmor
-      frequency is added) and ``lw_mhz`` = 2 w (Telser's NMR half width w), in ``extras['spectra']``.
-      Telser selects orientations with the EPR line itself (``HStrain`` = 2 W here and ExciteWidth ~ 0 in
-      salt, as telser-tools' docs map it).
+    With ``target='pepper'`` (default):
 
-    The EPR half widths W (MHz, HWHM) become ``HStrain = 2 W``, or ``HStrainL = 2 W`` for Telser's Lorentzian
-    frequency-domain line in EPR and FDMR (``extras['notes']``: Telser cuts the line at ICUTOFF half widths,
-    pepper does not).  The Lorentzian line for ENDOR (salt's selection is Gaussian), the Flygare nu factors (compare with telser-tools' ``frequency_factor=False``), the DDPOWH strain model,
-    ORFACT (use :func:`ordering`), the <g^2> normalization (a constant) and NMR/NQR spectra (S = 0) are not mapped.
+    * Field-swept EPR (kind ``'E'``): ``exp`` for :func:`torchspin.pepper`
+      (Range in mT, npts + 1 points, Harmonic = derivative flag, Temperature
+      with populations).
+    * FDMR (``'F'``): one frequency-swept Experiment per spectrum (``Field``
+      in mT, ``mwRange`` in GHz) in ``extras['spectra']``; ``exp`` is the
+      first.
+    * ENDOR (``'N'``): one fixed-field Experiment per spectrum (``Field``,
+      ``mwFreq``, ``ExciteWidth=1e-3``) and the :func:`torchspin.salt`
+      keywords ``freq_range`` (MHz, absolute; for a centered axis the Larmor
+      frequency is added) and ``lw_mhz`` = 2 w (Telser's NMR half width w),
+      in ``extras['spectra']``.  Telser selects orientations with the EPR
+      line itself (``HStrain`` = 2 W here, ExciteWidth ~ 0 in salt).
 
-    ``target='lft'`` maps every feature instead, for :mod:`torchspin.lft.ddpowh` (Telser's own field-point
-    model): the strain model, Lorentzian lines, w, U, the Flygare factor, the cutoff, m_S-manifold pair
-    selection, ORFACT, <g^2>, mixed H1 modes, zero-field FDMR/ENDOR and S = 0 NMR/NQR.  Nothing is dropped.
-    ``extras['spectra']`` then holds, per spectrum, ``func`` (``'epr'``, ``'fdmr'``, ``'endor'``, ``'nmr'``),
-    ``kwargs`` (everything but the SpinSystem), ``x`` (Telser's axis as entered) and ``x_unit``; run them with
+    The EPR half widths W (MHz, HWHM) become ``HStrain = 2 W``, or
+    ``HStrainL = 2 W`` for Telser's Lorentzian frequency-domain line in EPR
+    and FDMR (``extras['notes']``: Telser cuts the line at ICUTOFF half
+    widths, pepper does not).  Not mapped for pepper: the Lorentzian line
+    for ENDOR (salt's selection is Gaussian), the Flygare frequency factor
+    (compare with telser-tools' ``frequency_factor=False``), the DDPOWH
+    strain model, ORFACT (use :func:`ordering`), the <g^2> normalization (a
+    constant) and NMR/NQR spectra (S = 0).
+
+    ``target='lft'`` maps every feature instead, for
+    :mod:`torchspin.lft.ddpowh` (Telser's own field-point model): strain,
+    Lorentzian lines, w, U, the Flygare factor, the cutoff, m_S-manifold
+    pair selection, ORFACT, <g^2>, mixed H1 modes, zero-field FDMR/ENDOR and
+    S = 0 NMR/NQR; nothing is dropped.  ``extras['spectra']`` then holds,
+    per spectrum, ``func`` (``'epr'``, ``'fdmr'``, ``'endor'``, ``'nmr'``),
+    ``kwargs`` (everything but the SpinSystem), ``x`` (Telser's axis as
+    entered) and ``x_unit``; run them with
     :func:`torchspin.lft.ddpowh.simulate`.
+
+    Parameters
+    ----------
+    inp : object
+        A telser-tools ``ddpowh.DdpowhInput`` (read by attribute).
+    constants, full_tensors, strict, **sys_kwargs
+        As :func:`ddzhq2sys`.
+    target : {'pepper', 'lft'}, default 'pepper'
+
+    Returns
+    -------
+    TelserConversion
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``target``.
+    NotImplementedError
+        With ``strict=True`` and ``target='pepper'``, for a feature that
+        cannot be mapped (listed above).
     """
     if target == "lft":
         return _ddpowh_lft(inp, constants=constants, full_tensors=full_tensors, **sys_kwargs)
@@ -965,11 +1377,26 @@ def _offset_for(p: dict, constants) -> float:
 
 
 def djdze2sys(inp, *, constants=None, full_tensors: bool = False, **sys_kwargs) -> TelserConversion:
-    """A DJDZE input (telser-tools ``djdze.DjdzeInput``) as a two-electron SpinSystem + field points.
+    """A DJDZE input as a two-electron SpinSystem + field points.
 
-    Site 2's g and D are rotated by the same Euler angles (DJDZE).  ``extras['energy_offset']`` (MHz) is
-    added to torchspin's levels to get Telser's; ``extras['cycles']`` lists the field points (``field_mT``,
-    ``theta``, ``phi``, ``direction``) as DJDZE visits them (a zero field keeps the previous orientation).
+    Site 2's g and D are rotated by the same Euler angles (DJDZE).
+
+    Parameters
+    ----------
+    inp : object
+        A telser-tools ``djdze.DjdzeInput`` (read by attribute).
+    constants, full_tensors, **sys_kwargs
+        As :func:`dimer2sys`.
+
+    Returns
+    -------
+    TelserConversion
+        ``exp``: an Experiment if the input sets up EPR, else ``None``;
+        ``extras['energy_offset']`` (MHz) is added to torchspin's levels to
+        get Telser's; ``extras['cycles']`` lists the field points
+        (``field_mT``, ``theta``, ``phi`` in radians, ``direction``,
+        ``zero_field``) as DJDZE visits them (a zero field keeps the
+        previous orientation).
     """
     p = _dimer_params(inp, separate_d_euler=False)
     sy = dimer2sys(p, constants=constants, full_tensors=full_tensors, **sys_kwargs)
@@ -999,17 +1426,41 @@ def djdze2sys(inp, *, constants=None, full_tensors: bool = False, **sys_kwargs) 
 
 def ddpowj2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool = True, target: str = "pepper",
                s12_strain_weight: float = 0.0, **sys_kwargs) -> TelserConversion:
-    """A DDPOWJ input (telser-tools ``ddpowj.DdpowjInput``) as a two-electron SpinSystem + pepper Experiment.
+    """A DDPOWJ input as a two-electron SpinSystem + pepper Experiment, or for :mod:`torchspin.lft.ddpowj`.
 
-    Site 2's g and D have separate Euler angles (DDPOWJ v5.0).  W (MHz, HWHM) -> ``HStrain = 2 W``.  Use
-    ``Options(Threshold=0)`` in pepper: its default transition pruning drops weak singlet-triplet lines.
-    Lorentzian lines become ``HStrainL = 2 W`` (Telser's ICUTOFF truncation is listed in ``extras['notes']``).
-    The DDPOWJ strain model (WMS1 x WMS2 basis weights, (H/Hset)^b) is not mapped.
+    Site 2's g and D have separate Euler angles (DDPOWJ v5.0).  With
+    ``target='pepper'``: W (MHz, HWHM) -> ``HStrain = 2 W`` (Lorentzian lines:
+    ``HStrainL = 2 W``, Telser's ICUTOFF truncation listed in
+    ``extras['notes']``); the DDPOWJ strain model is not mapped.  Use
+    ``Options(Threshold=0)`` in pepper: its default transition pruning drops
+    weak singlet-triplet lines.  ``target='lft'`` maps everything (strain,
+    Lorentzian lines, level ranges, Flygare factor, cutoff, mixed H1 modes);
+    ``extras['spectra'][0]`` holds ``func='epr'`` and its ``kwargs``.
 
-    ``target='lft'`` maps everything for :mod:`torchspin.lft.ddpowj` (strain, Lorentzian lines, level ranges,
-    Flygare factor, cutoff, mixed H1 modes); ``extras['spectra'][0]`` holds ``func='epr'`` and its ``kwargs``.
-    ``s12_strain_weight`` is the strain weight of S = 1/2 (and S = 0) sites: 0.0 (exact) or 1.0 (the
-    Fortran, DDPOWJ-10; open question to J. Telser, see :mod:`torchspin.lft.ddpowj`).
+    Parameters
+    ----------
+    inp : object
+        A telser-tools ``ddpowj.DdpowjInput`` (read by attribute).
+    constants, full_tensors, strict, **sys_kwargs
+        As :func:`ddzhq2sys` / :func:`dimer2sys`.
+    target : {'pepper', 'lft'}, default 'pepper'
+    s12_strain_weight : float, default 0.0
+        ``target='lft'``: strain weight of S = 1/2 (and S = 0) sites, 0.0
+        (exact) or 1.0 (the Fortran, DDPOWJ-10; see
+        :mod:`torchspin.lft.ddpowj`).
+
+    Returns
+    -------
+    TelserConversion
+        With ``extras['energy_offset']`` (MHz).
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``target``.
+    NotImplementedError
+        With ``strict=True`` and ``target='pepper'``, for the strain model
+        or a mixed H1 mode.
     """
     if target == "lft":
         return _ddpowj_lft(inp, constants=constants, full_tensors=full_tensors, s12_strain_weight=s12_strain_weight,
@@ -1037,7 +1488,17 @@ def ddpowj2sys(inp, *, constants=None, full_tensors: bool = False, strict: bool 
 
 # ----------------------------------------------------------------------------- small gaps filled here
 class QuadrupoleEcho(NamedTuple):
-    """DDZHQ's quadrupole echo: P_par = 3/2 Q_zz, eta = (Q_xx - Q_yy)/Q_zz, e^2qQ/h = 2I(2I - 1) Q_zz (MHz)."""
+    """DDZHQ's quadrupole echo (MHz, tensors).
+
+    Attributes
+    ----------
+    p_par : torch.Tensor
+        P_par = 3/2 Q_zz.
+    eta : torch.Tensor
+        Asymmetry (Q_xx - Q_yy)/Q_zz, between 0 and 1.
+    e2qQ : torch.Tensor
+        e^2qQ/h = 2I(2I - 1) Q_zz.
+    """
 
     p_par: torch.Tensor
     eta: torch.Tensor
@@ -1045,11 +1506,35 @@ class QuadrupoleEcho(NamedTuple):
 
 
 def quadrupole_echo(Q, I: float) -> QuadrupoleEcho | None:
-    """P_par, eta and e^2qQ/h (MHz) of traceless principal values ``Q`` (MHz) for nuclear spin ``I`` >= 1.
+    """P_par, eta and e^2qQ/h of traceless quadrupole principal values.
 
-    The axes are relabeled so that |Q_zz| >= |Q_yy| >= |Q_xx| (0 <= eta <= 1), the standard definition that
-    telser-tools' exact mode prints (the Fortran's echo has eta <= 0, finding DDZHQ-08).  ``[e2qQ, eta]`` is
-    EasySpin's/torchspin's two-value ``SpinSystem.Q`` form.  ``None`` if Q = 0.  Graph-safe in Q.
+    The axes are relabeled so that ``abs(Q_zz) >= abs(Q_yy) >= abs(Q_xx)``
+    (0 <= eta <= 1), the standard definition that telser-tools' exact mode
+    prints (the Fortran's echo has eta <= 0, finding DDZHQ-08).
+    ``[e2qQ, eta]`` is torchspin's two-value ``SpinSystem.Q`` form.
+
+    Parameters
+    ----------
+    Q : array_like or torch.Tensor, shape (3,)
+        Traceless principal values in MHz (graph-safe).
+    I : float
+        Nuclear spin, >= 1.
+
+    Returns
+    -------
+    QuadrupoleEcho or None
+        ``None`` if Q = 0.
+
+    Raises
+    ------
+    ValueError
+        If ``I < 1``.
+
+    Examples
+    --------
+    >>> from torchspin.lft import telser2torchspin as t2
+    >>> [round(float(x), 3) for x in t2.quadrupole_echo([-0.3, -0.7, 1.0], 1.0)]
+    [1.5, 0.4, 2.0]
     """
     if float(I) < 1:
         raise ValueError("a quadrupole coupling needs I >= 1")
@@ -1063,12 +1548,25 @@ def quadrupole_echo(Q, I: float) -> QuadrupoleEcho | None:
 
 
 def spin_projections(sys: SpinSystem, field_mT: float, direction) -> torch.Tensor:
-    """<k|S_i|k>.n for every eigenstate k (ascending energy) and electron i: shape (nStates, nElectrons).
+    """Spin projections <k|S_i|k>.n of every eigenstate k and electron i (DJDZE's spin magnitudes).
 
-    DJDZE's "spin magnitudes" in telser-tools' exact form (the projection of each site's spin on the field
-    direction n; the Fortran's sum_k <S_k> n_k^2 is finding DJDZE-07).  ``field_mT`` along the unit vector
-    ``direction`` (molecular frame), with torchspin's Hamiltonian H0 - B.mu.  Within a degenerate level only
+    telser-tools' exact form (the projection of each site's spin on the
+    field direction n; the Fortran's sum_k <S_k> n_k^2 is finding DJDZE-07),
+    with torchspin's Hamiltonian H0 - B.mu.  Within a degenerate level only
     the sum over the level is basis-free.
+
+    Parameters
+    ----------
+    sys : SpinSystem
+    field_mT : float
+        Field magnitude in mT.
+    direction : array_like, shape (3,)
+        Unit field direction in the molecular frame.
+
+    Returns
+    -------
+    torch.Tensor, shape (nStates, nElectrons)
+        Rows in ascending energy.
     """
     from torchspin.ham import ham
     from torchspin.spinops import sop
@@ -1093,12 +1591,28 @@ def _spin_vector(sys: SpinSystem, k: int) -> list[torch.Tensor]:
 
 def second_order_zeeman_operator(sys: SpinSystem, w, *, electron: int = 0, units: str = "cm^-1",
                                  constants=None) -> torch.Tensor:
-    """Z2 (3, 3, n, n) in MHz/mT^2 with H += B^2 n.Z2.n = w (mu_B B.S)^2 for electron ``electron`` of ``sys``.
+    """Second-order Zeeman operator Z2 with H += B^2 n.Z2.n = w (mu_B B.S)^2, for :mod:`torchspin.lft.ddpowh`.
 
-    ``w`` in 1/``units`` (Telser: w in 1/cm^-1, so that w (mu_B B.S)^2 is in cm^-1).  ``constants``: a
-    telser-tools ``Constants`` (mu_B and cm^-1 -> MHz from it), as in :func:`spin2sys`.  For
-    :mod:`torchspin.lft.ddpowh` (``zeeman2=``): torchspin's ``levels``, ``resfields`` and ``pepper`` carry
-    only the part of H linear in B.  Graph-safe in ``w``.
+    torchspin's ``levels``, ``resfields`` and ``pepper`` carry only the part
+    of H linear in B; pass this as ``zeeman2=`` to
+    :func:`torchspin.lft.ddpowh.epr` and friends.  Graph-safe in ``w``.
+
+    Parameters
+    ----------
+    sys : SpinSystem
+    w : float or torch.Tensor
+        w in 1/``units`` (Telser: 1/cm^-1, so that w (mu_B B.S)^2 is in
+        cm^-1).
+    electron : int, default 0
+        0-based electron.
+    units : str, default 'cm^-1'
+    constants : object, optional
+        telser-tools ``Constants`` (mu_B and cm^-1 -> MHz from it).
+
+    Returns
+    -------
+    torch.Tensor, shape (3, 3, n, n)
+        Complex, MHz/mT^2.
     """
     mub = MU_B_MHZ_PER_MT if constants is None else float(constants.mu_b_mhz) * 10.0
     f = _energy_to_mhz(units, constants)                       # units -> MHz
@@ -1108,10 +1622,28 @@ def second_order_zeeman_operator(sys: SpinSystem, w, *, electron: int = 0, units
 
 
 def u_term_operator(sys: SpinSystem, U, *, electron: int = 0, nucleus: int = 0) -> torch.Tensor:
-    """U sum_k C_k(S) I_k (n, n) in MHz (``U`` in MHz; C_k = S_k^3 - (3X - 1)/5 S_k): Telser's I.S^3 hyperfine.
+    """Telser's I.S^3 hyperfine term U sum_k C_k(S) I_k, for :mod:`torchspin.lft.ddpowh` (``h0_extra=``).
 
-    For :mod:`torchspin.lft.ddpowh` (``h0_extra=``); torchspin's SpinSystem has no such term.  Needs
-    S >= 3/2.  Graph-safe in ``U``.
+    C_k = S_k^3 - (3X - 1)/5 S_k, X = S(S+1).  :func:`spin2sys` adds it to
+    ``SpinSystem.H0Extra``.  Graph-safe in ``U``.
+
+    Parameters
+    ----------
+    sys : SpinSystem
+    U : float or torch.Tensor
+        U in MHz.
+    electron, nucleus : int, default 0
+        0-based electron (S >= 3/2) and nucleus.
+
+    Returns
+    -------
+    torch.Tensor, shape (n, n)
+        Complex, MHz.
+
+    Raises
+    ------
+    ValueError
+        If the electron has S < 3/2.
     """
     spins = [float(x) for x in sys.Spins]
     ne = int(sys.nElectrons)

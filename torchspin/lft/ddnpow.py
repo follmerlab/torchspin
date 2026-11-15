@@ -10,7 +10,7 @@ pair (i, j) adds (Flygare eqs. 7-38 and 7-8)::
     y(B) += P_ij pop_ij nu_ij^3/nu_mw^2 f(nu_ij(B) - nu_mw; W(n))    Lorentzian
 
 with f Telser's DLINE.F line, the HWHM W(n)^2 = sum_k W_k^2 n_k^2, P the B1-averaged
-|<i|B1 . (k L + g_e S)|j>|^2, pop_ij = p_i - p_j (Boltzmann, normalized) and nu_ij in cm^-1.
+``abs(<i|B1.(k L + g_e S)|j>)**2``, pop_ij = p_i - p_j (Boltzmann, normalized) and nu_ij in cm^-1.
 :func:`fdmr` is the frequency-domain counterpart (one field, y(nu) += P pop nu_ij f(nu - nu_ij)).
 
 Every Hamiltonian parameter, the line widths, the microwave frequency, the temperature and
@@ -32,7 +32,8 @@ mT (10x DDNPOW's per-gauss values).
     >>> res = lft.ddnpow.simulate(9, torch.linspace(250, 380, 261), 9.5, V=V, zeta=830.0,
     ...                           k=(0.8, 0.8, 0.8), width=(1.0e-3, 1.0e-3, 2.0e-3), units='cm^-1',
     ...                           igloo=10, derivative=True)
-    >>> res.spectrum.shape                                     # (261,)
+    >>> res.spectrum.shape
+    torch.Size([261])
 
 With ``units='cm^-1'`` the widths are in cm^-1 too (30 MHz = 1.0e-3 cm^-1).
 
@@ -47,7 +48,7 @@ of their zero-field cluster) are accurate eigenpairs; the other directions of Q 
 of higher states.  With a parameter on the graph (reverse or forward mode), the Ritz pairs are
 taken as values and their derivatives come from first-order perturbation theory, as zero-valued
 graph terms: energies by Hellmann-Feynman on the low Ritz vectors (level mean at degeneracies, as
-:func:`torchspin.lft._linalg.eigh_gauge`), eigenvectors from the couplings inside that cluster
+``torchspin.lft._linalg.eigh_gauge``), eigenvectors from the couplings inside that cluster
 plus the reduced-resolvent solve (P (H - lambda) P + W W^H)^-1 P dH v in its complement
 (P = 1 - W W^H, W the cluster), done only at the (orientation, field) points that enter the
 spectrum.  The derivative is exact up to the Ritz residual.  Before 0.9.30 the eigenvectors were
@@ -66,7 +67,7 @@ kept, the (orientation, field) points inside the line cutoff and the FDMR line w
 
 Accuracy.  The levels lie at 10^4-10^5 cm^-1, each transition is a difference of two of them,
 and the lines are 10^-3-10^-2 cm^-1 wide, so the spectrum is only defined to about
-2 N eps max|E| / W relative to its peak: telser-tools' NumPy DDNPOW itself moves by 2e-9 to 1e-8
+2 N eps max(abs(E)) / W relative to its peak: telser-tools' NumPy DDNPOW itself moves by 2e-9 to 1e-8
 when the energy origin is shifted.  Parity with it is therefore ~1e-8, not 1e-10.
 
 Not ported (Fortran reproduction): DDN's hole problem and constants (``ddn_model``), the mirror
@@ -102,9 +103,24 @@ _FORTRAN_ONLY = ("mode", "ddn_model", "mirror", "probabilities", "zero_field", "
 
 
 class PowderResult(NamedTuple):
-    """``axis``: fields (mT) for :func:`simulate`, energies (``units``) for :func:`fdmr`;
-    ``spectrum`` (len(axis),); ``subspace_used``: the Rayleigh-Ritz path was taken; ``grid``: the
-    orientations (:class:`torchspin.lft._powder.Grid`, radians, weights)."""
+    """Powder spectrum returned by :func:`simulate` and :func:`fdmr`.
+
+    Attributes
+    ----------
+    axis : torch.Tensor, shape (npts,), float64
+        Field axis in mT (:func:`simulate`) or energy axis in ``units``
+        (:func:`fdmr`).
+    spectrum : torch.Tensor, shape (npts,), float64
+        Intensity in DDNPOW's arbitrary units (module docstring).
+    n_orientations : int
+        Number of grid orientations.
+    subspace_used : bool
+        Whether the Rayleigh-Ritz subspace path was taken (always False for
+        :func:`fdmr`).
+    grid : torchspin.lft._powder.Grid
+        The orientations (``theta``, ``phi`` in radians, ``weight``,
+        ``directions``).
+    """
 
     axis: torch.Tensor
     spectrum: torch.Tensor
@@ -124,7 +140,28 @@ def _det(x):
 
 
 def is_d2h(V, tol: float = 1e-9) -> bool:
-    """True if the real-orbital ligand field V has D2h symmetry about x, y, z (only x2-y2 / z2 mix)."""
+    """Whether a real-orbital d ligand field has D2h symmetry about x, y, z.
+
+    True when the only off-diagonal elements are the x2-y2 / z2 pair.  Used by
+    ``extent='auto'`` to choose the octant grid.
+
+    Parameters
+    ----------
+    V : array_like or torch.Tensor, shape (5, 5), or None
+        Ligand field (x2-y2, xy, xz, yz, z2); ``None`` counts as symmetric.
+    tol : float, default 1e-9
+        Tolerance relative to ``max(1, max(abs(V)))``.
+
+    Returns
+    -------
+    bool
+
+    Examples
+    --------
+    >>> from torchspin import lft
+    >>> lft.ddnpow.is_d2h(lft.crystal_field(Dq=1000.0, Ds=200.0))
+    True
+    """
     if V is None:
         return True
     v = np.asarray(_det(V), float)
@@ -474,20 +511,101 @@ def simulate(n, fields, mw_freq, *, width, pairs=((0, 1),), shape: str = "gaussi
              device="cpu", **params) -> PowderResult:
     """Field-swept powder (or partial-orientation) EPR spectrum of d^n from the full model.
 
-    ``fields`` (mT, 1-D, not differentiated; DDNPOW's axis is ``linspace(B_min, B_max, npts + 1)``),
-    ``mw_freq`` (GHz).  ``width`` (Wx, Wy, Wz) HWHM in ``units``.  ``params``: keywords of
-    :func:`torchspin.lft.ddn.hamiltonian` (``B``, ``C``, ``A``, ``zeta``, ``V``, ``k``, ``alpha``,
-    ``slater``) in ``units``.
+    For every grid orientation and every field of the sweep the full d^n
+    Hamiltonian is diagonalized and each requested pair adds a line with
+    DDNPOW's Flygare intensity factor (module docstring).
 
-    ``pairs``: 0-based (i, j), i < j (DDNPOW: i in [NSIMIN, NSIMAX], j in [NSJMIN, NSJMAX]).
-    ``shape``: ``'gaussian'`` or ``'lorentzian'``; ``derivative``: first derivative;
-    ``cutoff``: lines cut at ``cutoff`` half widths.  ``temperature`` (K): Boltzmann population
-    differences.  ``h1mode``: 0 perpendicular, < 0 parallel, > 0 perpendicular + h1mode parallel.
-    ``igloo``: grid size (rings per 90 degrees).  ``angle_range`` (theta_min, theta_max, phi_min,
-    phi_max): a partial orientation range instead of the powder (radians unless ``degrees``).
-    ``grid``, ``extent``, ``field_derivative``, ``normalized_populations``, ``exact_cutoff``,
-    ``frequency_factor`` (off: no Flygare nu factor, as EasySpin/torchspin), ``subspace``: see the
-    module docstring.  ``scale`` multiplies the spectrum.
+    Parameters
+    ----------
+    n : int
+        Number of d electrons, 0 to 10.
+    fields : array_like or torch.Tensor, shape (npts,)
+        Field axis in mT (not differentiated).  DDNPOW's own axis is
+        ``linspace(B_min, B_max, npts + 1)``.
+    mw_freq : float or torch.Tensor
+        Microwave frequency in GHz (may carry gradients).
+    width : array_like or torch.Tensor, shape (3,)
+        Line half widths at half maximum ``(Wx, Wy, Wz)`` in ``units``; the
+        width at direction n is ``sqrt(sum_k W_k**2 n_k**2)``.
+    pairs : sequence of (int, int), default ((0, 1),)
+        0-based state pairs (i, j), i < j (DDNPOW: i in [NSIMIN, NSIMAX], j in
+        [NSJMIN, NSJMAX]).
+    shape : {'gaussian', 'lorentzian'}, default 'gaussian'
+        Line shape (also ``'G'``/``'L'``).
+    derivative : bool, default False
+        First-derivative spectrum.
+    cutoff : int, default 8
+        Lines are cut at ``cutoff`` half widths.
+    temperature : float or torch.Tensor, optional
+        Temperature in K for Boltzmann population differences.  Default
+        ``None``: no population factor.
+    h1mode : float, default 0.0
+        Excitation mode: 0 perpendicular, < 0 parallel, > 0 perpendicular +
+        ``h1mode`` times parallel.
+    igloo : int, default 10
+        Grid size (rings per 90 degrees).
+    angle_range : sequence of 4 float, optional
+        ``(theta_min, theta_max, phi_min, phi_max)``: a partial orientation
+        range instead of the powder (radians unless ``degrees``).
+    degrees : bool, default False
+        ``angle_range`` is in degrees.
+    grid : {'exact', 'fortran'}, default 'exact'
+        Exact grid or DDNPOW's (DDNPOW-04).
+    extent : {'auto', 'octant', 'hemisphere'}, default 'auto'
+        Part of the sphere sampled; ``'auto'`` uses the octant when the
+        (detached) ``V`` has D2h symmetry (:func:`is_d2h`).
+    field_derivative : bool, default True
+        With ``derivative``: d/dB per mT (True) or DDNPOW's d/dnu (False,
+        DDNPOW-06).
+    normalized_populations : bool, default True
+        Normalize the Boltzmann factors (False: DDNPOW-07).
+    exact_cutoff : bool, default True
+        Exact cutoff radius (False: DDNPOW's sqrt(ICUTOFF), DDNPOW-08).
+    frequency_factor : bool, default True
+        Include the Flygare nu factor (False: none, as EasySpin/torchspin).
+    subspace : bool, default True
+        Allow the Rayleigh-Ritz subspace path (module docstring); it is used
+        only when the system is large enough.
+    scale : float or torch.Tensor, default 1.0
+        Multiplies the spectrum.
+    units : str, default 'MHz'
+        Energy unit of ``width`` and of the Hamiltonian keywords.
+    constants : torchspin.lft.ddn.Constants, default TORCHSPIN_CONSTANTS
+        mu_B, g_e, k_B.
+    device : str or torch.device, default 'cpu'
+        Device.
+    **params
+        One (unbatched) parameter set of :func:`torchspin.lft.ddn.hamiltonian`:
+        ``B``, ``C``, ``A``, ``zeta``, ``V``, ``k``, ``alpha``, ``slater``.
+
+    Returns
+    -------
+    PowderResult
+        ``axis`` is ``fields`` (mT).
+
+    Raises
+    ------
+    NotImplementedError
+        For DDNPOW's Fortran-reproduction keywords (``mode``, ``ddn_model``,
+        ``mirror``, ``probabilities``, ``zero_field``, ``thresholds``).
+    TypeError
+        For any other unknown keyword.
+    ValueError
+        For batched parameters, ``width`` not of shape (3,), an invalid pair,
+        ``shape``, ``grid``, ``extent`` or ``angle_range``.
+
+    Examples
+    --------
+    Cu(II) (d^9) at X band, energies and widths in cm^-1:
+
+    >>> import torch
+    >>> from torchspin import lft
+    >>> V = torch.diag(torch.tensor([9900., -2100., -5100., -5100., 2400.], dtype=torch.float64))
+    >>> res = lft.ddnpow.simulate(9, torch.linspace(250, 380, 131), 9.5, V=V, zeta=830.0,
+    ...                           k=(0.8, 0.8, 0.8), width=(1.0e-3, 1.0e-3, 2.0e-3),
+    ...                           units='cm^-1', igloo=5, derivative=True)
+    >>> res.spectrum.shape, res.n_orientations
+    (torch.Size([131]), 22)
     """
     ctx = _common(n, params, pairs, width, units, temperature, h1mode, shape, cutoff, normalized_populations,
                   exact_cutoff, frequency_factor, subspace, constants, device)
@@ -504,12 +622,54 @@ def fdmr(n, axis, *, width, field=0.0, pairs=((0, 1),), shape: str = "gaussian",
          extent: str = "auto", normalized_populations: bool = True, exact_cutoff: bool = True,
          frequency_factor: bool = True, scale=1.0, units: str = "MHz", constants: Constants = TORCHSPIN_CONSTANTS,
          device="cpu", **params) -> PowderResult:
-    """Frequency-domain (FDMR) powder spectrum of d^n on ``axis`` (energies in ``units``).
+    """Frequency-domain (FDMR) powder spectrum of d^n at one static field.
 
-    ``field`` (mT): the static field magnitude.  At ``field <= 0`` the levels and the isotropic
-    probability (1/3) sum_k |<i|mu_k|j>|^2 are the same for every orientation (times 1 + h1mode for
-    h1mode > 0) and only the widths W(n) are averaged over the grid.  Other keywords as
-    :func:`simulate` (absorption only).
+    Each pair adds ``P pop nu_ij f(nu - nu_ij)`` on the energy axis (absorption
+    only).
+
+    Parameters
+    ----------
+    n : int
+        Number of d electrons, 0 to 10.
+    axis : array_like or torch.Tensor, shape (npts,)
+        Energy (frequency) axis in ``units`` (detached).
+    width : array_like or torch.Tensor, shape (3,)
+        Half widths at half maximum ``(Wx, Wy, Wz)`` in ``units``.
+    field : float, default 0.0
+        Static field magnitude in mT (converted with ``float``; not
+        differentiated).  At ``field <= 0`` the levels and the isotropic
+        probability ``(1/3) sum_k abs(<i|mu_k|j>)**2`` (times ``1 + h1mode`` for
+        ``h1mode > 0``) are the same for every orientation and only the widths
+        are averaged over the grid.
+    **kw
+        ``pairs``, ``shape``, ``cutoff``, ``temperature``, ``h1mode``,
+        ``igloo``, ``angle_range``, ``degrees``, ``grid``, ``extent``,
+        ``normalized_populations``, ``exact_cutoff``, ``frequency_factor``,
+        ``scale``, ``units``, ``constants``, ``device`` and the Hamiltonian
+        keywords, as :func:`simulate`.
+
+    Returns
+    -------
+    PowderResult
+        ``axis`` is the energy axis in ``units``.
+
+    Raises
+    ------
+    NotImplementedError, TypeError, ValueError
+        As :func:`simulate`.
+
+    Examples
+    --------
+    Zero-field splitting of a tetragonal Ni(II) (d^8), axis in cm^-1:
+
+    >>> import torch
+    >>> from torchspin import lft
+    >>> res = lft.ddnpow.fdmr(8, torch.linspace(0.0, 20.0, 201, dtype=torch.float64),
+    ...                       width=(0.3, 0.3, 0.3), pairs=[(0, 1), (0, 2)], B=900.0, C=3600.0,
+    ...                       V=lft.crystal_field(Dq=850.0, Ds=300.0, Dt=50.0), zeta=600.0,
+    ...                       units='cm^-1', igloo=4)
+    >>> round(float(res.axis[res.spectrum.argmax()]), 1)
+    1.6
     """
     ctx = _common(n, params, pairs, width, units, temperature, h1mode, shape, cutoff, normalized_populations,
                   exact_cutoff, frequency_factor, True, constants, device)

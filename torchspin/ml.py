@@ -2,7 +2,7 @@
 packing, on-the-fly datasets and differentiable losses.
 
 Every simulator in torchspin that is differentiable (``pepper`` via
-:func:`torchspin.pepper_autograd.pepper_autograd`, ``garlic``, ``salt``,
+:func:`torchspin.pepper_autograd`, ``garlic``, ``salt``,
 ``saffron``, ``curry``) accepts a :class:`~torchspin.spinsystem.SpinSystem`
 whose parameter tensors may ``requires_grad``.  This module packages the
 plumbing around that for training and inference workflows:
@@ -308,8 +308,13 @@ def resample(x_new: torch.Tensor, x: torch.Tensor, y: torch.Tensor) -> torch.Ten
 
 
 def normalize(y: torch.Tensor, mode: Optional[str] = 'maxabs', x: Optional[torch.Tensor] = None) -> torch.Tensor:
-    """``'maxabs'`` (max |y| = 1), ``'area'`` (∫|y| dx = 1, needs ``x``), ``'zscore'`` or ``None``;
-    along the last axis, differentiable."""
+    """Normalize spectra along the last axis (differentiable).
+
+    ``mode`` is ``'maxabs'`` (``max(abs(y)) = 1``), ``'area'``
+    (``sum(abs(y)) * dx = 1``, with ``dx`` from ``x``, else 1), ``'zscore'``
+    (zero mean, unit standard deviation) or ``None`` (unchanged).  Any other
+    value raises ``ValueError``.
+    """
     if mode is None:
         return y
     if mode == 'maxabs':
