@@ -492,8 +492,9 @@ two nearest points. EasySpin's `projecttriangles.c`/`projectzones.c` integrate o
   converged gradient.
 - **Other binning.** pepper's stick-accumulation branches (unreachable since every non-O3 grid
   without strain projects) now split linearly too. The template paths were already centered.
-  salt's field-swept and isotropic fixed-field stick paths round to the nearest point
-  (centered, no gradient; B86), garlic rounds or splits linearly, makespec splits linearly.
+  salt's field-swept stick paths round to the nearest point (centered, no gradient; the mode
+  raises for grad inputs); its isotropic fixed-field path uses exact-position templates since
+  0.9.36 (B86). garlic rounds or splits linearly, makespec splits linearly.
 
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
@@ -979,10 +980,13 @@ likewise (14N ENDOR dA = [-0.217, 0, 0.053] vs -0.1079 for x and y).
   Dinfh (Cu(II), GridSize [31 4], 1024 points).
 - **Spectra.** A gradient run whose parameterization breaks an accidental symmetry differs
   from the forward-only spectrum by the grid discretization error: 0.1 % of the maximum
-  for that Cu(II) case, but for an isotropic g given as three numbers the projection bins
-  every line (all orientations resonate at one field) where O3 draws an exact template:
-  17 % (first harmonic, lw 1 mT, 512 points over 60 mT; 2.6 % with 4096 points), as `pepper`
-  with a forced D2h grid. Set `Options.GridSymmetry` explicitly to compare gradient and
+  for that Cu(II) case, but for an isotropic g given as three numbers the projection
+  deposits every line as one point mass (all orientations resonate at one field) where O3
+  draws an exact template: 2-3 % (first harmonic, lw 1 mT, 512 points over 60 mT; 2-5e-4
+  with 4096 points; 17 % and 2.6 % before the centered bins of 0.9.35, B85), as `pepper`
+  with a forced D2h grid. salt's isotropic fixed-field path uses templates too since
+  0.9.36 (B86); three A leaves (D2h) give the O3 gradient to 4.1e-2 (512 points over
+  10 MHz, lw 0.3 MHz) and 4.2e-3 (2048 points). Set `Options.GridSymmetry` explicitly to compare gradient and
   forward-only runs, or parameterize the symmetry you mean (a scalar g, shared leaves).
 - The gradient is the exact derivative of the forward model on the chosen grid. Along
   directions that keep the accidental symmetry (g_z of an axial g given as three numbers)
@@ -1098,7 +1102,15 @@ The three orientation-selected (`ExciteWidth`) cases remain at cosine
 Since 2026-09-06 the fixed-field path is differentiable (torch interpolation /
 projection / convolution shared with `pepper_autograd`; gradients vs finite
 differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swept
-(multi-field) mode is not and raises for grad tensors.
+(multi-field) mode is not and raises for grad tensors. Isotropic systems (O3 grid, one
+orientation) were binned as sticks (`.item()`, nearest point) and returned a detached
+spectrum until 0.9.36 (B86); they now take bin-integrated Gaussians of width lw at the exact
+line positions from the on-graph transitions (pepper's O3 template path; lw = 0: linear split
+between the two nearest points). Gradient vs central differences 3e-11; forward error on 512
+points over 10 MHz 2.6 / 7.8 / 15 % -> 0.10 / 0.88 / 3.4 % of the maximum (lw 0.3 / 0.1 /
+0.05 MHz) against a 32x finer axis. EasySpin (salt.m:657-668) still builds sticks with lisum1i
+at width dx/100 and convolves; it skips a Gaussian lw of at most two increments, which the
+template does not.
 
 - **Method choice.** `salt` ignores `Options.Method`. For one electron without Q and without
   `Sys.Ham` it uses first-order perturbation theory (EasySpin `Opt.Method='perturb1'`),

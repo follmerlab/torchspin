@@ -14,6 +14,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hamiltonian. `ref_pepper_quadzeeman.mat` now has an S = 1 frequency sweep from the fixed
   EasySpin: cosine 1.0000000, amplitude 0.99988. No code change.
 
+## [0.9.36] — 2026-11-14
+
+### Fixed
+
+- **salt, fixed field: isotropic systems (O3 grid) were not differentiable (B86).** A system
+  whose grid is O3 (a scalar-leaf A keeps O3) went through the stick paths
+  (`B_res_all = [B_fixed] * n_orient`, `.item()` per line, nearest-point rounding) and returned
+  a detached spectrum: `RuntimeError: element 0 of tensors does not require grad`. The
+  transitions at the single orientation are now computed on the graph
+  (`_fixed_field_transitions`, as on the projection path) and every line enters as a
+  bin-integrated Gaussian of FWHM lw at its exact position (pepper's O3 template path); lw = 0
+  splits each line linearly between the two nearest points (the centered convention of B85).
+  Gradient vs central differences 3e-11 (1H, A = a[1 1 1]; also with `Options.Enhancement`
+  and for lw). Forward on 512 points over 10 MHz against a 32x finer axis: 2.6 / 7.8 / 16 %
+  -> 0.10 / 0.88 / 3.4 % of the maximum (lw 0.3 / 0.1 / 0.05 MHz). Three A leaves (auto D2h,
+  projection path) give the O3 gradient to 4.1e-2 (512 points) and 4.2e-3 (2048 points); on
+  0.9.34 that sum was 5.4e-23 (truncated sub-bin facets, fixed by B85).
+- Deliberate deviation from EasySpin (salt.m:657-668 builds sticks with lisum1i at width
+  dx/100 and convolves, skipping a Gaussian lw of at most two increments): the template always
+  carries lw. No existing test moved.
+
+### Tests
+
+- `test_salt_o3_grad.py`: O3 gradient vs converged central differences (lw 0.3 and 0.05 MHz),
+  three-leaf D2h gradient vs O3 (512 and 2048 points), forward vs a converged reference
+  (three line widths), lw = 0 linear split, Enhancement (matrix path) and lw gradients. 8 of
+  its 10 tests fail on 0.9.35.
+
 ## [0.9.35] — 2026-11-14
 
 ### Fixed

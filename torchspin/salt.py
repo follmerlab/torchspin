@@ -243,6 +243,29 @@ def _fixed_field_transitions(
     return Pdat, Idat
 
 
+
+def _o3_lines(Pdat: torch.Tensor, Idat: torch.Tensor, weights: torch.Tensor, total_weight: float,
+              freq_axis: torch.Tensor, df: float, lw_mhz) -> torch.Tensor:
+    """Fixed-field spectrum of an isotropic system (one orientation, B86): every line
+    (row of ``Pdat``/``Idat``, NaN = outside the window) with amplitude
+    ``I · w / sum(w)`` (the per-bin, orientation-averaged scale of the other paths).
+    ``lw_mhz > 0``: bin-integrated Gaussian of FWHM ``lw_mhz`` at the exact position
+    (EasySpin lisum1i template, min width df/100); ``lw_mhz = 0``: the line is split
+    linearly between the two nearest points (centered bins, B85).  Differentiable in
+    the positions, intensities and ``lw_mhz``."""
+    from torchspin._projection import hat_points_t
+    from torchspin.pepper_autograd import gaussian_bins_t
+    n = freq_axis.shape[0]
+    pos = Pdat.reshape(Pdat.shape[0], -1)[:, 0]
+    amp = Idat.reshape(Idat.shape[0], -1)[:, 0] * (weights[0] / total_weight)
+    ok = ~torch.isnan(pos.detach())
+    pos, amp = pos[ok], amp[ok]
+    lw = torch.as_tensor(lw_mhz, dtype=torch.float64, device=pos.device)
+    if float(lw.detach()) > 0.0:
+        return gaussian_bins_t(freq_axis, pos, lw * torch.ones_like(pos), amp, df / 100.0)
+    f0 = float(freq_axis[0])
+    return hat_points_t(n, (pos - f0) / df, amp)
+
 def _first_order_weights(sys: SpinSystem) -> list[float]:
     """Per-nucleus ENDOR intensity of one first-order ``(nucleus, mS)`` row.
 
@@ -533,8 +556,9 @@ def salt(
         # ── Powder average by interpolation + projection (EasySpin salt.m) ──
         # Every orientation contributes at the same field, so transitions can
         # be followed across the grid and projected as tents/segments instead
-        # of being binned as sticks.  Stick binning is kept for isotropic
-        # (single-orientation) systems and for the field-swept mode below.
+        # of being binned as sticks.  Isotropic (single-orientation) systems take
+        # exact-position line templates (_o3_lines, B86); stick binning is kept for
+        # the field-swept mode below.
         if zero_field and not (grid_sym != 'O3' and n_orient > 2):
             raise ValueError('salt: Options.ZeroField needs a powder grid with more than two '
                              'orientations (increase Options.GridSize).')
@@ -602,6 +626,27 @@ def salt(
             spec = connect_inputs(spec, sys, ('g', 'A', 'A_', 'Q', 'sigma', 'HStrain') + _FRAME_FIELDS, lw_mhz)
             return freq_axis.cpu(), spec.cpu()
 
+        # Isotropic (O3: one orientation) fixed-field systems (B86, 0.9.36): the
+        # transitions at the single orientation are computed on the graph and every
+        # line enters as a bin-integrated Gaussian of width lw at its exact position
+        # (pepper's O3 template path); lw = 0 splits each line linearly between the
+        # two nearest points (the centered convention of the projection, B85).  Before,
+        # they went through the stick paths below (.item(), nearest-bin rounding):
+        # not differentiable, and a stick spectrum convolved afterwards.
+        if grid_sym == 'O3':
+            _perturb_ok = (sys.nElectrons == 1
+                           and (sys.Q is None or not torch.any(sys.Q.abs() > 0))
+                           and not enhancement and not ham_present and not use_user_pairs)
+            Pdat, Idat = _fixed_field_transitions(
+                sys, (H0, mux, muy, muz, snmux, snmuy, snmuz),
+                phi_arr, theta_arr, float(exp.Field), orisel_w,
+                f_lo, f_hi, float(opt.Threshold), _perturb_ok,
+                enhancement=enhancement, user_pairs=_salt_user_pairs(opt, H0.shape[0]), tps=tps,
+            )
+            spec = _o3_lines(Pdat, Idat, weights_arr, total_weight, freq_axis, df, lw_mhz)
+            from torchspin.autograd import connect_inputs
+            spec = connect_inputs(spec, sys, ('g', 'A', 'A_', 'Q', 'sigma', 'HStrain') + _FRAME_FIELDS, lw_mhz)
+            return freq_axis.cpu(), spec.cpu()
         B_res_all  = [B_fixed] * n_orient
         intens_all = [orisel_w[k:k + 1] for k in range(n_orient)]
     elif any(t is not None and torch.is_tensor(t) and t.requires_grad
