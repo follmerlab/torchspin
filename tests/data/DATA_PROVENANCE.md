@@ -36,6 +36,7 @@ Tests comparing against these are true cross-validation.
 | `generate_endorfrq_perturb_refs.m` | `endorfrq_perturb_refs.mat` | `endorfrq_perturb` element by element (0.8.8, B20/B27): frequencies and intensities, PerturbOrder 2 and 1, 4 orientations (one `SampleFrame` row `[0 -theta -phi]` each), 340 mT; 1H with AFrame, 14N with Q/QFrame, 1H+14N, 55Mn with Q, strongly coupled 1H, 14N with full Q, 1H+14N with full A and full Q, S = 3/2 with D + 14N (8 cases) |
 | `generate_salt_first_order_refs.m` | `salt_first_order_refs.mat` | salt first-order intensity scale (bug B16, 0.8.1): fixed-field salt with `Opt.Method` `'matrix'` and `'perturb1'` for 1H and 1H+14N (no Q) |
 | `generate_salt_narrowlw_refs.m` | `salt_narrowlw_refs.mat` | salt final `Sys.lwEndor` convolution (bug B24, 0.8.11): Gaussian widths of 0, 1.5, 2.0, 2.5 and 10 increments (at most two increments not convolved, salt.m:899-911), fixed-field 1H powder, `Opt.Method` `'perturb1'` (5 cases) |
+| `generate_chili_mpsymm_refs.m` | `ref_chili_mpsymm_a.mat` … `_d.mat` | chili M–pS–pI symmetry and Lanczos stop (B114, B116): nitroxide at τc = 100 ns, fast vs general Lanczos vs general direct, `highField`, fast at tight `Threshold`; `simple_tc1e-07` fast at `Threshold` 1e-10. Run one part per job (`part='a'`…`'d'`) |
 | `generate_pepper_cupc_refs.m` | `ref_pepper_cupc.mat` | Cu(II) + ligand nuclei: `matrix`/`perturb`/`hybrid` on the same systems (34 cases), incl. natural-abundance isotopologues, tilted and anisotropic ligand A tensors, quadrupole coupling, enlarged exact core, two components |
 | `generate_nucspin_core_refs.m` | `ref_nucspin_core.mat` | Cores built with `nucspinrmv` (0.8.2, B14): pepper `hybrid` and `matrix` on an anisotropic exchange-coupled Cu dimer, an isotropic dimer and S = 3/2 with `Ham132` |
 | `generate_pepper_orientations_refs.m` | `ref_pepper_orientations.mat` | `Exp.Orientations` (0.7.6): EasySpin crystal spectra (`MolFrame=[0 0 0]`, one `SampleFrame` row per orientation, `SampleRotation={'z',[0 pi/2]}`) as an exact χ average, 5 cases incl. strain, Boltzmann triplet, frequency sweep, 4000-point Fibonacci sphere; plus EasySpin's powder of the axial case on the normal and the half-bin-shifted axis |
@@ -108,6 +109,7 @@ Tests comparing against these are true cross-validation.
 **Slow-motion (chili):**
 `chili_ref_*.mat` (4 files: anisog, isog_notcorr, 14N_isoA, 1H_fastmotion) — MATLAB-gen
 `chili_*.mat` (remaining ~20 files) — MATLAB
+`ref_chili_mpsymm_{a,b,c,d}.mat` — MATLAB-gen (`generate_chili_mpsymm_refs.m`, EasySpin main (~/Follmer_UCD/Follmer_Lab/Code/EasySpin/easyspin), R2024b, 2026-11-14, one `-singleCompThread -batch` job per part; store `Sys`/`Exp`): ¹⁴N nitroxide, τc = 100 ns, default LLMK, 256 points — (a) fast builder, general Lanczos, general direct (`Solver='\'`); (b) `highField` fast and general direct; (c) fast at `Threshold` 1e-10 and 1e-12; (d) case `simple_tc1e-07` of `generate_chili_ext_refs.m`, fast at the default and at `Threshold` 1e-10 (B114, B116)
 
 **ENDOR (salt):**
 `salt_ref_14N.mat`, `salt_ref_1H.mat` — MATLAB
