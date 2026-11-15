@@ -1755,7 +1755,16 @@ derivative before torch 2.15, so `dataproc._bessel_j01` supplies the backward
 and gave a silently wrong gradient at Harmonic 2 on torch <= 2.14 (the Bessel
 recurrence kept only its 2k/x path). A grad `ModAmp` <= 0 raises: `ModAmp = 0`
 switches to the plain field-derivative harmonic, so the spectrum is not
-continuous there. Not yet differentiable (`pepper_autograd` raises
+continuous there. The kernel's accuracy is bounded by torch's own
+`bessel_j0`/`bessel_j1` forward values, about 4e-7 absolute for x in 5-10 (torch
+2.10 and 2.15; scipy `jv` reference), so `fieldmod_t` and the gradients through it
+agree with the scipy-based `dataproc.fieldmod` to that level, not to roundoff.
+`dataproc.fieldmod_t` with `harmonic` >= 3 (not reachable through `pepper`, which
+caps Harmonic at 2) uses the J_n power series for |x| < n and the upward
+recurrence only for |x| >= n (0.9.37, B93; before, the recurrence was used down
+to |x| = 1e-3, where it is unstable: J_4(1e-3) was 7.9e-9 instead of 2.6e-15 and
+Harmonic >= 4 gradients did not match central differences); `harmonic` > 30
+raises (the series cancels near |x| = n). Not yet differentiable (`pepper_autograd` raises
 `NotImplementedError`, `pepper()` itself is unchanged): `Exp.mwPhase`,
 partial ordering, photoselection, crystals, frequency sweeps, `Sys.initState`.
 `salt` (fixed-field mode) and `garlic` (all modes) are
