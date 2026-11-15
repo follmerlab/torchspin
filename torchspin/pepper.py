@@ -248,6 +248,71 @@ def _interp_sph(
 _slot_state = threading.local()
 
 
+def _slot_layout(all_B, all_pairs, n_orient, unpaired='skip'):
+    """Slot bookkeeping of a per-orientation line list, vectorized.
+
+    A slot is a level pair ``(u, v)`` plus its occurrence index (looping
+    transitions can resonate more than once): at every orientation the
+    resonances are ordered by ``(u, v, B)`` (stable) and numbered per pair.
+    Orientations without level pairs (perturbation path) are index-matched:
+    resonance ``i`` goes to slot ``('idx', i)``.  Slots are numbered in order of
+    first appearance, orientation by orientation and, within one, in that order.
+
+    ``unpaired='skip'`` drops orientations without pairs when any orientation has
+    them (``pepper``); ``'index'`` index-matches them (``pepper_autograd``).
+
+    Returns ``(k, pos, slot, keys, B_flat)`` for the kept resonances: orientation,
+    position in ``B_flat`` (the concatenation of every non-empty ``all_B[k]`` in
+    orientation order, as a NumPy array), slot number, and the slot keys
+    (``(u, v, occurrence)`` or ``('idx', i)``) in slot order.  One host copy per
+    call instead of one per orientation.
+    """
+    lens = [int(b.numel()) if b is not None else 0 for b in all_B]
+    ks = [k for k in range(n_orient) if lens[k] > 0]
+    empty = np.zeros(0, dtype=np.int64)
+    if not ks:
+        return empty, empty, empty, [], np.zeros(0)
+    B_flat = torch.cat([all_B[k].detach().reshape(-1) for k in ks]).cpu().numpy()
+    no_pairs = all_pairs is None or all(p is None for p in all_pairs)
+    paired = [(not no_pairs) and all_pairs[k] is not None for k in ks]
+    keep_o = [pk or no_pairs or unpaired == 'index' for pk in paired]
+    lens_k = np.asarray([lens[k] for k in ks], dtype=np.int64)
+    offsets = np.concatenate([[0], np.cumsum(lens_k)[:-1]])
+    k_all = np.repeat(np.asarray(ks, dtype=np.int64), lens_k)
+    i_all = np.arange(lens_k.sum(), dtype=np.int64) - np.repeat(offsets, lens_k)
+    if no_pairs:
+        # index-matched (perturbation path): resonance i of every orientation is slot i
+        return k_all, np.arange(i_all.size, dtype=np.int64), i_all, [('idx', i) for i in range(int(lens_k.max()))], B_flat
+    typ = np.repeat(np.asarray([0 if pk else 1 for pk in paired], dtype=np.int64), lens_k)
+    u = i_all.copy(); v = np.zeros_like(i_all)
+    if any(paired):
+        P = torch.cat([all_pairs[k].detach().reshape(-1, 2) for k, pk in zip(ks, paired) if pk]).cpu().numpy()
+        sel = typ == 0
+        u[sel] = P[:, 0]; v[sel] = P[:, 1]
+    Bkey = np.where(typ == 0, B_flat, 0.0)
+    keep = np.repeat(np.asarray(keep_o), lens_k)
+    pos = np.nonzero(keep)[0]
+    # per orientation: (u, v, B) for paired, index order otherwise; stable
+    order = pos[np.lexsort((i_all[pos], Bkey[pos], v[pos], u[pos], k_all[pos]))]
+    ko, to, uo, vo = k_all[order], typ[order], u[order], v[order]
+    n = order.size
+    new_grp = np.ones(n, dtype=bool)
+    new_grp[1:] = (ko[1:] != ko[:-1]) | (uo[1:] != uo[:-1]) | (vo[1:] != vo[:-1]) | (to[1:] != to[:-1])
+    grp_start = np.maximum.accumulate(np.where(new_grp, np.arange(n), 0))
+    occ = np.where(to == 0, np.arange(n) - grp_start, 0)
+    # one int64 per (type, u, v, occurrence): 1-D unique is much faster than axis=0
+    nu, nv, nc = int(uo.max()) + 1, int(vo.max()) + 1, int(occ.max()) + 1
+    code = ((to * nu + uo) * nv + vo) * nc + occ
+    uc, first, inv = np.unique(code, return_index=True, return_inverse=True)
+    rank = np.empty(uc.shape[0], dtype=np.int64)
+    rank[np.argsort(first, kind='stable')] = np.arange(uc.shape[0])
+    slot = rank[inv.reshape(-1)]
+    keys = [None] * uc.shape[0]
+    for r, f in zip(rank.tolist(), first.tolist()):
+        keys[r] = (int(uo[f]), int(vo[f]), int(occ[f])) if to[f] == 0 else ('idx', int(uo[f]))
+    return ko, order, slot, keys, B_flat
+
+
 def _transition_slots(all_B, all_I, all_W, all_pairs, n_orient):
     """Group per-orientation resonances into transition slots across the grid.
 
@@ -258,54 +323,39 @@ def _transition_slots(all_B, all_I, all_W, all_pairs, n_orient):
     Interpolation and projection then act on physically the same transition at
     every grid point. Without level pairs (perturbation path, whose slot
     structure is fixed by construction) the arrays are matched by index.
+    See :func:`_slot_layout`.
 
     Returns (B_arrs, I_arrs, W_arrs): lists of (n_orient,) float arrays; W_arrs
     is None when no widths were supplied.
     """
     have_widths = any(w is not None and w.numel() > 0 for w in all_W) if all_W is not None else False
-    if all_pairs is None or all(p is None for p in all_pairs):
-        n_slots = max((b.numel() if b is not None else 0) for b in all_B) if all_B else 0
-        B_arrs = [np.full(n_orient, np.nan) for _ in range(n_slots)]
-        I_arrs = [np.full(n_orient, np.nan) for _ in range(n_slots)]
-        W_arrs = [np.full(n_orient, np.nan) for _ in range(n_slots)] if have_widths else None
-        for k in range(n_orient):
-            B = all_B[k]
-            if B is None:
-                continue
-            Bn = B.detach().cpu().numpy(); In = all_I[k].detach().cpu().numpy()
-            Wn = all_W[k].detach().cpu().numpy() if (have_widths and all_W[k] is not None) else None
-            for i in range(Bn.shape[0]):
-                B_arrs[i][k] = Bn[i]; I_arrs[i][k] = In[i]
-                if Wn is not None and i < Wn.shape[0]:
-                    W_arrs[i][k] = Wn[i]
-        _slot_state.keys = None      # index-matched slots (perturbation path)
-        return B_arrs, I_arrs, W_arrs
-    slots: dict = {}
-    B_arrs: list = []; I_arrs: list = []; W_arrs: list = []
-    for k in range(n_orient):
-        B = all_B[k]; pairs = all_pairs[k]
-        if B is None or pairs is None or B.numel() == 0:
-            continue
-        Bn = B.detach().cpu().numpy(); In = all_I[k].detach().cpu().numpy()
-        Wn = all_W[k].detach().cpu().numpy() if (have_widths and all_W[k] is not None) else None
-        pn = pairs.detach().cpu().numpy()
-        order = sorted(range(Bn.shape[0]), key=lambda i: (int(pn[i, 0]), int(pn[i, 1]), float(Bn[i])))
-        occ: dict = {}
-        for i in order:
-            uv = (int(pn[i, 0]), int(pn[i, 1]))
-            c = occ.get(uv, 0); occ[uv] = c + 1
-            key = (uv[0], uv[1], c)
-            if key not in slots:
-                slots[key] = len(B_arrs)
-                B_arrs.append(np.full(n_orient, np.nan))
-                I_arrs.append(np.full(n_orient, np.nan))
-                W_arrs.append(np.full(n_orient, np.nan))
-            j = slots[key]
-            B_arrs[j][k] = Bn[i]; I_arrs[j][k] = In[i]
-            if Wn is not None and i < Wn.shape[0]:
-                W_arrs[j][k] = Wn[i]
-    _slot_state.keys = sorted(slots.keys(), key=lambda kk: slots[kk])   # (u, v, occurrence) per slot
-    return B_arrs, I_arrs, (W_arrs if have_widths else None)
+    no_pairs = all_pairs is None or all(p is None for p in all_pairs)
+    k, pos, slot, keys, B_flat = _slot_layout(all_B, all_pairs, n_orient, unpaired='skip')
+    n_slots = len(keys)
+    B_mat = np.full((n_slots, n_orient), np.nan)
+    I_mat = np.full((n_slots, n_orient), np.nan)
+    W_mat = np.full((n_slots, n_orient), np.nan) if have_widths else None
+    if n_slots:
+        ks = [kk for kk in range(n_orient) if all_B[kk] is not None and all_B[kk].numel() > 0]
+        B_mat[slot, k] = B_flat[pos]
+        I_flat = torch.cat([all_I[kk].detach().reshape(-1) for kk in ks]).cpu().numpy()
+        I_mat[slot, k] = I_flat[pos]
+        if have_widths:
+            parts = []
+            for kk in ks:
+                m = int(all_B[kk].numel())
+                w = all_W[kk]
+                wn = np.full(m, np.nan)
+                if w is not None:
+                    w = w.detach().reshape(-1).cpu().numpy()[:m]
+                    wn[:w.shape[0]] = w
+                parts.append(wn)
+            W_mat[slot, k] = np.concatenate(parts)[pos]
+    _slot_state.keys = None if no_pairs else keys   # (u, v, occurrence) per slot; None: index-matched
+    B_arrs = [row.copy() for row in B_mat]
+    I_arrs = [row.copy() for row in I_mat]
+    W_arrs = [row.copy() for row in W_mat] if have_widths else None
+    return B_arrs, I_arrs, W_arrs
 
 
 # Missing knots (B88, B75): the matrix resonance search covers Exp.Range only, so
@@ -318,18 +368,29 @@ _RESEARCH_PADS = (0.5, 1.0, 2.0, 4.0)
 
 def _pair_counts(all_B, all_pairs):
     """``{(u, v): counts}``: number of resonances of each level pair at every
-    orientation (int array).  Empty without level pairs (perturbation path)."""
+    orientation (int array).  Empty without level pairs (perturbation path).
+    Pairs appear in order of first occurrence (orientation, then ``(u, v)``)."""
     counts: dict = {}
     if all_pairs is None or all(p is None for p in all_pairs):
         return counts
     n_orient = len(all_B)
-    for k in range(n_orient):
-        B, P = all_B[k], all_pairs[k]
-        if B is None or P is None or B.numel() == 0:
-            continue
-        uv, c = np.unique(P.detach().cpu().numpy().astype(np.int64), axis=0, return_counts=True)
-        for (u, v), n in zip(uv, c):
-            counts.setdefault((int(u), int(v)), np.zeros(n_orient, dtype=np.int64))[k] = n
+    ks = [k for k in range(n_orient)
+          if all_B[k] is not None and all_pairs[k] is not None and all_B[k].numel() > 0]
+    if not ks:
+        return counts
+    P = [all_pairs[k].detach().reshape(-1, 2) for k in ks]
+    lens = np.asarray([int(p.shape[0]) for p in P], dtype=np.int64)
+    P = torch.cat(P).cpu().numpy().astype(np.int64)
+    K = np.repeat(np.asarray(ks, dtype=np.int64), lens)
+    nv = int(P[:, 1].max()) + 1
+    code = P[:, 0] * nv + P[:, 1]
+    uc, inv = np.unique(code, return_inverse=True)
+    inv = inv.reshape(-1)
+    C = np.bincount(inv * n_orient + K, minlength=uc.shape[0] * n_orient).reshape(uc.shape[0], n_orient)
+    first = np.full(uc.shape[0], n_orient, dtype=np.int64)
+    np.minimum.at(first, inv, K)
+    for i in np.lexsort((uc, first)):
+        counts[(int(uc[i] // nv), int(uc[i] % nv))] = C[i].astype(np.int64)
     return counts
 
 
