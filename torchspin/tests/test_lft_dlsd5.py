@@ -80,9 +80,10 @@ def _same(a, b):
     for f in a.__dataclass_fields__:
         x, y = getattr(a, f), getattr(b, f)
         if isinstance(x, float) and isinstance(y, float):
-            # NaN == NaN; exact live; frozen: round-off of the O(1) normalized coefficients and g values
-            # the fields are computed from (Linux: c = 0.0992 moved by 2.4e-16, 1 ulp of 1)
-            R.same_bits(x, y, f, scale_floor=1.0)
+            # NaN == NaN; exact live. Frozen (another platform's libm): the solver inverts g values through
+            # closed forms that amplify round-off (Linux/Windows vs macOS: c 0.0992 by 2.4e-16, gx 1.6 by
+            # 1.55e-15), so 1e-13 x max(|value|, 1), ~65x the largest seen (Alec, 2026-11-15)
+            R.same_bits(x, y, f, scale_floor=1.0, frozen_rtol=1e-13)
         else:
             assert x == y, (f, x, y)
 

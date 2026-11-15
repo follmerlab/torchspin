@@ -80,11 +80,12 @@ def live() -> bool:
 FROZEN_ULPS = 4
 
 
-def same_bits(got, want, what: str = "", scale_floor: float = 0.0) -> None:
+def same_bits(got, want, what: str = "", scale_floor: float = 0.0, frozen_rtol: float = 0.0) -> None:
     """Assert ``got == want`` exactly when the oracle ran live; when it is a frozen copy, within
     ``FROZEN_ULPS`` units in the last place of the largest |want| (cross-platform round-off only).
     ``scale_floor``: the scale of the quantities the value was computed from, when larger (a small
-    result of O(1) operations carries O(1) round-off)."""
+    result of O(1) operations carries O(1) round-off). ``frozen_rtol``: a larger frozen-only bound,
+    relative to that scale, for computations that amplify round-off."""
     g = np.asarray(got, dtype=float) if not isinstance(got, np.ndarray) else got
     w = np.asarray(want, dtype=float) if not isinstance(want, np.ndarray) else want
     assert g.shape == w.shape, (what, g.shape, w.shape)
@@ -95,9 +96,9 @@ def same_bits(got, want, what: str = "", scale_floor: float = 0.0) -> None:
     nan = np.isnan(w)
     assert np.array_equal(np.isnan(g), nan), what
     scale = max(float(np.abs(w[~nan]).max()) if (~nan).any() else 0.0, scale_floor)
-    bound = FROZEN_ULPS * float(np.spacing(max(scale, np.finfo(float).tiny)))
+    bound = max(FROZEN_ULPS * float(np.spacing(max(scale, np.finfo(float).tiny))), frozen_rtol * scale)
     d = float(np.abs(g[~nan] - w[~nan]).max()) if (~nan).any() else 0.0
-    assert d <= bound, f"{what}: frozen copy differs by {d:.3g} (> {FROZEN_ULPS} ulp of {scale:.3g} = {bound:.3g})"
+    assert d <= bound, f"{what}: frozen copy differs by {d:.3g} (> bound {bound:.3g} at scale {scale:.3g})"
 
 
 # ------------------------------------------------------------------------------ registry
