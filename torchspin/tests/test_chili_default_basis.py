@@ -10,6 +10,8 @@ from torchspin import SpinSystem, Experiment, chili
 from torchspin.chili import ChiliOptions
 
 REF = Path(__file__).resolve().parents[2] / 'tests' / 'data' / 'example_nitroxide_tcorr.mat'
+# measured 8.5e-4 (0.9.32: 0.40); the default (symmetry-basis Lanczos) is 2.1e-4 from exact
+PLAIN_LANCZOS_RELMAX = 2e-3
 
 
 def _cos(a, b):
@@ -25,7 +27,19 @@ def test_default_basis_matches_easyspin_default_across_tcorr():
         sys = SpinSystem(S=[0.5], g=[[2.0089, 2.0058, 2.0021]], Nucs=['14N'], A=[[16.0, 16.0, 100.0]], tcorr=float(tc), lw=[0.0, 0.05])
         _, y = chili(sys, exp)
         assert _cos(y, y_ref) > 0.9999, f'tcorr {tc:.0e}: cosine {_cos(y, y_ref):.5f}'
-    # the explicit general basis reproduces EasySpin's general method, which differs at 100 ns
+    # The plain general basis (MpSymm=False) gives the same spectrum.  Until the B116 fix this
+    # asserted 0.93 < cosine < 0.95: the window encoded the Lanczos stopping early at a
+    # near-breakdown (step 40), as EasySpin's general method also does.  The converged
+    # plain-basis result matches EasySpin's default output: cosine 0.9999925 (measured).
     sys = SpinSystem(S=[0.5], g=[[2.0089, 2.0058, 2.0021]], Nucs=['14N'], A=[[16.0, 16.0, 100.0]], tcorr=1e-7, lw=[0.0, 0.05])
     _, y_gen = chili(sys, exp, ChiliOptions(MpSymm=False))
-    assert 0.93 < _cos(y_gen, ref['y_all'][0]) < 0.95
+    y_gen = y_gen.numpy()
+    assert _cos(y_gen, ref['y_all'][0]) > 0.9999, f'plain basis: cosine {_cos(y_gen, ref["y_all"][0]):.7f}'
+    # ... and its Lanczos stops where the spectrum is converged: compare with the converged
+    # solution (symmetry basis, which equals the plain basis to roundoff, see
+    # test_chili_mpsymm.py, with Threshold 1e-12; the eigenvalue solver is not used as the
+    # reference because its accuracy depends on the LAPACK build).
+    _, y_exact = chili(sys, exp, ChiliOptions(MpSymm=True, Threshold=1e-12))
+    y_exact = y_exact.numpy()
+    relmax = float(np.max(np.abs(y_gen - y_exact)) / np.max(np.abs(y_exact)))
+    assert relmax < PLAIN_LANCZOS_RELMAX, f'plain-basis Lanczos vs exact: relmax {relmax:.2e}'
