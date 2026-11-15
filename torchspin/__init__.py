@@ -358,8 +358,6 @@ __all__ = [
     'signalprocessing',
     # Visualization
     'oripotentialplot',
-    # Tier 3c — Higher-order Zeeman
-    'ham_ezho',
     # Tier 3d-i — Pulse EPR primitives
     'resonatorprofile',
     'transmitter',
