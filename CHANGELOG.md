@@ -24,8 +24,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
       evaluated from the stored factors in the test's own process.
     - Term projectors, stored factored, are compared at `1e-12 - 1e-13`.
   - Exception (`d1_skipdeg_field`): g(obs) at its 1 mG field (level splitting ~1.8e-9 cm⁻¹)
-    is compared at the bound implied by the energy tolerance divided by the splitting. It was
-    rtol 1e-9, and moved by ~2e-3 between torch 2.10 and 2.15 even against live telser-tools.
+    is ill-conditioned: it moved by up to 2e-3 between torch 2.10 and 2.15, even against live
+    telser-tools. It is compared at rtol 2e-2 (10× that), instead of 1e-9.
   - `test_lft_telser_refs.py` checks that the stored keys match the oracles. With
     telser-tools importable, it also checks that the stored values still equal live
     telser-tools to round-off.

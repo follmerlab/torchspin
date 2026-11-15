@@ -443,11 +443,11 @@ def test_reference_cases_match_telser_tools(name, conv):
             rtol = 1e-9
             if name == "d1_skipdeg_field":
                 # conditioning, not round-off: g(obs) = (E_1 - E_0) / (mu_B |B|) at a 1 mG field, where the
-                # splitting is ~1.8e-9 cm^-1, so the energy tolerance above (rtol 1e-12, atol 1e-9 per level)
-                # bounds g(obs) only to (tol(E_0) + tol(E_1)) / |E_1 - E_0| relative (~7.7 here); the
-                # energies moved by ~1e-11 cm^-1 between torch 2.10 and 2.15, which moved g(obs) by ~2e-3
-                tol = 1e-9 + 1e-12 * np.abs(e[:2])
-                rtol = float(tol.sum() / abs(e[1] - e[0]))
+                # splitting is ~1.8e-9 cm^-1. The energy tolerance above (atol 1e-9 per level) would bound
+                # g(obs) only to ~7.7 relative, i.e. not at all. Measured: the energies moved by ~1e-11 cm^-1
+                # between torch 2.10 and 2.15, which moved g(obs) by up to 2e-3 (OpenBLAS vs Accelerate
+                # 1.6e-4). Bound: 10x the largest movement seen (Alec, 2026-11-14).
+                rtol = 2e-2
             _close(float(b.field_g(0, 1)), a["field_g"], rtol=rtol, atol=1e-9)
         if f is None:
             ka, kb = a["kramers_g"], b.kramers_g()
