@@ -81,7 +81,7 @@ jobs:
           "$PY" -m pip install -q --dry-run --ignore-installed --report "$RUNNER_TEMP/report.json" "$WHEEL"
           "$PY" - "$RUNNER_TEMP/report.json" "${{ runner.os }}" <<'EOF'
           import json, sys
-          names = [i["metadata"]["name"].lower() for i in json.load(open(sys.argv[1]))["install"]]
+          names = [i["metadata"]["name"].lower() for i in json.load(open(sys.argv[1], encoding="utf-8"))["install"]]
           gpu = sorted(n for n in names if n.startswith(("nvidia-", "cuda-")))
           print("torch" in names, "CUDA packages:", gpu)
           # docs/installation.md: PyPI's Linux wheel is a CUDA build; Windows and macOS are not
@@ -108,5 +108,5 @@ jobs:
         working-directory: examples/notebooks
         run: |
           "$RUNNER_TEMP/nb/bin/jupyter" nbconvert --to notebook --execute \
-            --ExecutePreprocessor.timeout=600 --output-dir "$RUNNER_TEMP/out" \
-            01_torchspin_quickstart.ipynb
+            --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.kernel_name=python3 \
+            --output-dir "$RUNNER_TEMP/out" 01_torchspin_quickstart.ipynb
