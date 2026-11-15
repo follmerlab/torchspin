@@ -35,7 +35,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-    "torch>=2.0,<3",
+    "torch>=2.3,<3",
     "numpy>=1.23,<3",
     "scipy>=1.10",
 ]
@@ -51,6 +51,10 @@ plot = ["matplotlib>=3.6"]
 fit = ["cloudpickle>=2.0"]          # process-pool esfit with notebook-defined models
 hpc = ["threadpoolctl>=3.1", "cloudpickle>=2.0"]   # BLAS thread caps (torchspin.parallel.thread_budget(blas=True)), process pools
 gui = ["ipywidgets>=7.6", "matplotlib>=3.6", "ipympl>=0.9", "ipython>=7", "cloudpickle>=2.0"]   # interactive fitting panel (torchspin.fitgui)
+# Everything the shipped tutorials (examples/notebooks/01-09) import or need, plus Jupyter:
+# matplotlib (01-08 plots), ipywidgets + ipympl (09: %matplotlib widget, torchspin.fitgui),
+# cloudpickle (08, 09: process-pool esfit with models defined in notebook cells).
+notebooks = ["jupyter", "ipykernel", "matplotlib>=3.6", "ipywidgets>=7.6", "ipympl>=0.9", "cloudpickle>=2.0"]
 test = ["pytest>=7", "pytest-cov", "matplotlib>=3.6", "cloudpickle>=2.0", "ipywidgets>=7.6"]
 dev = ["pytest>=7", "pytest-cov", "build", "twine", "matplotlib>=3.6", "cloudpickle>=2.0", "ipywidgets>=7.6"]
 docs = ["sphinx>=7.3", "pydata-sphinx-theme>=0.15", "sphinx-copybutton>=0.5.2", "sphinx-design>=0.6", "myst-parser>=3.0", "myst-nb>=1.1"]   # documentation site (docs/)
