@@ -280,7 +280,10 @@ notebook cells). It also installs Jupyter itself.
 
 - Notebooks 04 (benchmarks) and 07 (EasySpin parity) read files from the repository (`benchmarks/`,
   `tests/data/`), so run them from a clone.
-- Notebook 02 has GPU cells. Without CUDA they fall back to the CPU or are skipped.
+- Notebook 02 skips its GPU comparisons when CUDA is unavailable, and it runs to completion on a
+  CPU-only machine.
+- The fitting notebooks (03, 05, 06, 08) run global fits that take minutes per cell on a laptop CPU.
+  Notebook 03 records about 950 s for its longest cell.
 - If you already use Jupyter from another environment (JupyterHub, VS Code), install
   `"torchspin[gui]" ipykernel` in the torchspin environment instead and register it as a kernel:
   `python -m ipykernel install --user --name torchspin`.
