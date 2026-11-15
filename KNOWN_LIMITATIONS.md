@@ -427,6 +427,75 @@ up to 0.9.20 (B74). Since 0.9.21 torchspin reverses each lower row before resamp
   by torchspin on the same fine knots without interpolation (`*_c1_vs_no_interpolation`).
   `test_gridinterp_l1_vs_easyspin[C1-*]` remains xfail (B58 and this deviation).
 
+## Centered projection bins: deliberate deviation from EasySpin (0.9.35, B85)
+
+The SOPHE projection (pepper, pepper_autograd, salt's fixed-field powder; `torchspin._projection`)
+gives axis point x_k the facet density integrated against the hat of half-width dx centered on
+x_k (linear interpolation / cloud-in-cell); a facet of zero width is split linearly between the
+two nearest points. EasySpin's `projecttriangles.c`/`projectzones.c` integrate over the box
+[x_k, x_k + dx), report it at x_k, and truncate facets narrower than one bin into one box.
+
+- **Why.** EasySpin's convention puts every projected spectrum half an increment low (best-fit
+  shift +0.49 dx against a converged reference), while its template paths (isotropic, crystal,
+  `Exp.Orientations`, lisum1i) are centered; and the truncating sub-bin deposit has no position
+  dependence. Rhombic S = 1/2, 512 points over 40 mT, lw 1 mT: max error against a converged
+  reference 9.4 % -> 0.65 % (lw 0.3 mT: 31 % -> 3.8 %; best-fit shift +0.49 -> -0.005 dx). An
+  isotropic g on a forced/auto D2h grid (three g leaves on the graph): spectrum vs the O3
+  template 2.8-5.5 % -> 2-5e-4 at 4096 points, and d/ds of g = s[1 1 1] +999.7 (0.9.34; the
+  true value is -13770) -> -11452 at 512 points (dx/sigma = 0.28) and within 3.2 % of the O3
+  gradient at 4096 points. The position derivative of a point mass split linearly is the chord
+  slope of the sampled line, first order in dx; central differences agree with autograd to 1e-10.
+- **Intensity.** The hats are a partition of unity: sum(spec)·dx equals the projected intensity
+  to roundoff (<= 2.4e-14 relative; 0.9.34 left 2.9e-12 from its running sums). Mass within
+  one increment beyond the first or last point goes partly to the missing neighbor and is
+  dropped, as mass outside the range was before.
+- **Smoothing.** The hat has variance dx²/6 against the box's dx²/12, so narrow lines are
+  broadened by dx²/12 more than in EasySpin; this, not the shift, is what remains against
+  EasySpin mapped onto centered bins.
+- **EasySpin comparisons.** 168 comparisons moved (spectra built by projection; cosine typically
+  0.98-0.999, stick spectra and very narrow lines down to 0.95). They stay as they were, strict
+  xfail with the measured numbers (`torchspin/tests/_b85.py`). Parity moved for two reasons:
+  EasySpin's projected spectra are half an increment low, and the hat smooths with variance
+  dx²/6 against the box's dx²/12. Against EasySpin's spectrum shifted by dx/2 (linear
+  interpolation) 61 of the 168 meet their original tolerances (36 %); against EasySpin mapped
+  onto centered hat bins ((-b[k-2] + 13 b[k-1] + 13 b[k] - b[k+1])/24,
+  `test_b85_easyspin_centered.py`) 73 do. The other 95 have tolerances calibrated to EasySpin's
+  box binning (1e-5..1e-9, stick spectra) and are strict xfail there too, with both numbers.
+- **Physical accuracy (hat chosen over a centered box, 2026-11-14).** Against converged
+  references (field axis 16-32x finer, GridSize [181 1] without interpolation, point values of
+  the converged spectrum at x_k), max error / max (0.9.34 | hat | centered box with a linear
+  split below one bin, branch `dev/b85-box`):
+
+  | case | 0.9.34 | hat | box |
+  |---|---|---|---|
+  | rhombic S = 1/2, 512 pts / 40 mT, lw 1 mT, 1st harmonic | 1.0e-1 | 3.6e-3 | 3.2e-3 |
+  | same, lw 0.3 mT | 3.3e-1 | 3.7e-2 | 3.1e-2 |
+  | Cu, A = [50 50 500] MHz, lw 0.3 mT, 1024 pts | 3.4e-1 | 5.0e-2 | 4.8e-2 |
+  | isotropic on a forced D2h grid, 512 / 4096 pts | 8.8e-2 / 5.5e-2 | 1.3e-2 / 4.7e-5 | same |
+  | case3 (S = 5/2, B4), [181 1] | 3.2e-1 | 4.3e-2 | 3.8e-2 |
+  | salt 1H ENDOR, lw 0.05 MHz | 1.8e-1 | 3.7e-2 | 3.2e-2 |
+
+  Best-fit shift: 0.9.34 +0.46..+0.54 dx, hat and box below 0.03 dx. Gradients against
+  converged values (rhombic, 512 points): d/dg_y relative error 3.7e-3 | 3.3e-5 | 2.0e-3,
+  d/dlw 5.3e-2 | 1.1e-3 | 9.8e-4; isotropic direction (three g leaves) at 4096 points: wrong
+  sign | 3.2 % | 3.2 %. The box is 5-30 % closer in the forward spectrum of narrow lines (half
+  the smoothing), but its blend of box and split for facets narrower than one bin gives
+  derivatives 10-60x less accurate in g and a kink at width dx; the hat was chosen.
+  `test_projection_accuracy.py` keeps the hat numbers.
+- **torchspin-only references.** `ref_missing_knots.npz` (same axis as the tests, so it shares
+  their projection bins) was regenerated with the centered bins. The sixteen coarse-grid
+  ([19 4]) checks the centered bins moved now compare with `ref_converged_b85.npz` (field axis
+  16-32x finer, point values), bounds measured x 1.05; 0.9.34 exceeds every one of them (by
+  1.9x for b50_stick_wide's max deviation, otherwise 4-600x). The lw
+  central-difference step is 2.5e-5 (was 1e-4; case1's d/dlw is small with the centered bins and
+  the h^2 truncation error at 1e-4 was 1.07e-7), bound unchanged; lw is also checked against the
+  converged gradient.
+- **Other binning.** pepper's stick-accumulation branches (unreachable since every non-O3 grid
+  without strain projects) now split linearly too. The template paths were already centered.
+  salt's field-swept stick paths round to the nearest point (centered, no gradient; the mode
+  raises for grad inputs); its isotropic fixed-field path uses exact-position templates since
+  0.9.36 (B86). garlic rounds or splits linearly, makespec splits linearly.
+
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
 The edge-bin integrals of `projecttriangles` were written as differences of O(bin index)
@@ -434,10 +503,11 @@ terms (`b − (a + first + 1)/2`). For a triangle much narrower than a bin that 
 bin edge, rounding of those terms was amplified by the 1/width² ramp slope: area errors
 up to tens of percent per triangle (salt's zero-field 1H line was 2.6 % too large before
 a workaround). Fixed in `pepper._ramp_bins` and `pepper_autograd._ramp_bins_t`, which now
-use only the small overlaps with the edge bins. EasySpin's `projecttriangles.c`, and
-torchspin's line-by-line port `pepper._projecttriangles_loop` (kept as the test reference
-for the vectorised projection), still use the old expressions; in these geometries torchspin
-now deliberately deviates from them, toward the exact integral.
+use only the small overlaps with the edge bins. EasySpin's `projecttriangles.c` still uses the
+old expressions; in these geometries torchspin deliberately deviates from it, toward the exact
+integral. Since 0.9.35 (B85) the projection is `torchspin._projection` (centered hat bins), which
+forms every term from the overlap with a half-hat and the relative position inside the facet,
+and deposits facets inside one axis interval exactly as a point mass at their centroid.
 
 ## `nucspinrmv` / `nucspinkeep` / `nucspinadd` keep every field (fixed 0.8.2)
 
@@ -515,12 +585,13 @@ make pepper sum stick spectra over the given field directions with χ-averaged r
 - **No interpolation, no projection.** The spectrum is a plain weighted sum; a quadrature
   must be fine enough for the line width (a 20000-point Fibonacci sphere reproduces the
   1 mT-broadened powder of a rhombic nitroxide to 1e-4 of the maximum).
-- **Half-bin offset against the powder.** pepper's powder projection (like EasySpin's
-  `projectzones`/`projecttriangles`) puts bin k on [x_k, x_k + dx); the template paths
-  (crystal, isotropic, Orientations; EasySpin `lisum1i`) centre it on x_k. A full-sphere
-  quadrature therefore differs from the powder spectrum by a shift of dx/2 — 3 % of the
-  maximum for an axial S = 1/2 with 1 mT lines at 1024 points over 50 mT, in EasySpin as
-  in torchspin. Compare with the powder on the axis shifted by −dx/2.
+- **Half-bin offset against the powder (fixed 0.9.35, B85).** Before 0.9.35 pepper's powder
+  projection (like EasySpin's `projectzones`/`projecttriangles`) put bin k on [x_k, x_k + dx)
+  while the template paths centre it on x_k, so a full-sphere quadrature differed from the
+  powder by a shift of dx/2 (3 % of the maximum for an axial S = 1/2 with 1 mT lines at 1024
+  points over 50 mT). The projection is centered now; a 20000-point Fibonacci sphere matches
+  the powder to 5.9e-5 (absorption) and 1.5e-3 (first harmonic) without any shift. EasySpin
+  keeps the offset.
 - **Strain.** The powder strain branch (EasySpin's facet summation with Λ smoothing) is
   an approximation; a fine quadrature with per-line strain widths differs from it by
   ~0.7 % of the maximum.
@@ -658,16 +729,17 @@ and `resfreqs_perturb` always). A negative field still raises in the constructor
   ⟨u|∂H|u⟩ is replaced by its cluster mean tr(P_a ∂H)/n_a. This is exact for Kramers
   doublets, where time-even operators are proportional to the identity. For accidental
   non-Kramers degeneracies it ignores the splitting the strain itself would cause.
-- **Lines on a bin edge.** At B = 0 every orientation puts a line at one frequency, so the
-  powder projection drops the whole line into the bin that contains it (bin k covers
-  [x_k, x_k + dx), as in EasySpin, and as a very narrow line at B → 0⁺ does). A line exactly on
-  a bin edge then lands in either neighbor depending on the last bit of round-off, which can
-  differ between machines (a one-bin shift; 4 % of the maximum for a 300 MHz line at 10 MHz
-  bins). Avoid axes whose points coincide with the zero-field splittings, or compare on the
-  axis shifted by dx/2. With an interpolated grid (e.g. GridSize [19 4]) the single-bin deposit
-  relies on `pepper._zf_const_pos`, which gives every interpolated orientation the coarse
-  position; interpolation round-off would otherwise split a line on an edge between the two bins
-  (5-39 % in the lower bin). Tested against EasySpin in `test_pepper_zerofield_edge.py` (0.9.1).
+- **Lines between axis points.** At B = 0 every orientation puts a line at one frequency, so
+  the powder projection deposits it as one point mass, split linearly between the two nearest
+  axis points (centered hat bins since 0.9.35, B85; a line exactly on x_k goes to x_k, as in
+  EasySpin). Before 0.9.35 the whole line went into the box [x_k, x_k + dx) that contains it,
+  as in EasySpin, and a line exactly on a box edge landed in either neighbor depending on the
+  last bit of round-off (4 % of the maximum for a 300 MHz line at 10 MHz bins); the linear split
+  changes only by ulps there. With an interpolated grid (e.g. GridSize [19 4])
+  `pepper._zf_const_pos` gives every interpolated orientation the coarse position, so the facets
+  have zero width exactly. Tested against EasySpin in `test_pepper_zerofield_edge.py` (0.9.1);
+  a 4000-point Fibonacci sphere matches the zero-field powder to 0.077 % (0.74 % before, on the
+  dx/2-shifted axis).
 - **Not supported.** Non-equilibrium populations (`Sys.initState`) raise with
   `ZeroField`. Frequency sweeps have no differentiable pepper path (`pepper_autograd`
   raises for them, as before). The zero-field resonances from `resfreqs_batch`
@@ -842,9 +914,11 @@ saffron_thyme, orisel, nucfrq2d and the broadband autograd model, treats every s
 more tensor in its own frame, because the strain widths depend on the field direction (B82):
 
 - `HStrain` / `HStrainL`: `diag(HStrain²)` in the molecular frame.
-- `gStrain`: per electron `G∘G` with `G = R_g2M diag(gStrain/g) R_g2M'` (the element-wise
-  square the width formula uses, so a tilted g frame can give a lower group than g itself).
-- `AStrain` (single electron, first nucleus): `A∘A` and `G∘A`, A frame.
+- `gStrain`: per electron `G·G` with `G = R_g2M diag(gStrain/g) R_g2M'` (the matrix square
+  the width formula uses since 0.9.33, so strain collinear with g has the symmetry of g, in
+  the g frame; before, the element-wise square `G∘G` gave Ci for any tilted g frame, B84).
+- `AStrain` (single electron, first nucleus): `A·A` and `G·A + A·G`, A frame (`A∘A` and
+  `G∘A` before 0.9.33).
 - `DStrain`: Dinfh about the D-frame z axis without E strain, otherwise D2h in the D frame
   (also with `DStrainCorr`).
 
@@ -906,10 +980,13 @@ likewise (14N ENDOR dA = [-0.217, 0, 0.053] vs -0.1079 for x and y).
   Dinfh (Cu(II), GridSize [31 4], 1024 points).
 - **Spectra.** A gradient run whose parameterization breaks an accidental symmetry differs
   from the forward-only spectrum by the grid discretization error: 0.1 % of the maximum
-  for that Cu(II) case, but for an isotropic g given as three numbers the projection bins
-  every line (all orientations resonate at one field) where O3 draws an exact template:
-  17 % (first harmonic, lw 1 mT, 512 points over 60 mT; 2.6 % with 4096 points), as `pepper`
-  with a forced D2h grid. Set `Options.GridSymmetry` explicitly to compare gradient and
+  for that Cu(II) case, but for an isotropic g given as three numbers the projection
+  deposits every line as one point mass (all orientations resonate at one field) where O3
+  draws an exact template: 2-3 % (first harmonic, lw 1 mT, 512 points over 60 mT; 2-5e-4
+  with 4096 points; 17 % and 2.6 % before the centered bins of 0.9.35, B85), as `pepper`
+  with a forced D2h grid. salt's isotropic fixed-field path uses templates too since
+  0.9.36 (B86); three A leaves (D2h) give the O3 gradient to 4.1e-2 (512 points over
+  10 MHz, lw 0.3 MHz) and 4.2e-3 (2048 points). Set `Options.GridSymmetry` explicitly to compare gradient and
   forward-only runs, or parameterize the symmetry you mean (a scalar g, shared leaves).
 - The gradient is the exact derivative of the forward model on the chosen grid. Along
   directions that keep the accidental symmetry (g_z of an axial g given as three numbers)
@@ -965,7 +1042,9 @@ symmetry-frame grid; these cases match MATLAB to cosine 0.99996–1.0
 
 Strain widths are validated per transition and orientation against EasySpin
 `resfields` (≤1.3e-3 relative; the residual is EasySpin's linear eigenvector
-interpolation between field knots). Powder spectra with H/g/A/D strain,
+interpolation between field knots), except g/A strain with a tilted g or A frame,
+where torchspin deviates deliberately since 0.9.33 (§ Field sweeps — gStrain/AStrain
+widths with tilted frames). Powder spectra with H/g/A/D strain,
 including several electron spins, tilted D frames and correlated D/E strain,
 match EasySpin to cosine ≥0.999 and amplitude within 3 % on 24 MATLAB cases
 (`test_strain_*_matlab_validation.py`, `test_pepper_dstrain_matlab_validation.py`).
@@ -1023,7 +1102,15 @@ The three orientation-selected (`ExciteWidth`) cases remain at cosine
 Since 2026-09-06 the fixed-field path is differentiable (torch interpolation /
 projection / convolution shared with `pepper_autograd`; gradients vs finite
 differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swept
-(multi-field) mode is not and raises for grad tensors.
+(multi-field) mode is not and raises for grad tensors. Isotropic systems (O3 grid, one
+orientation) were binned as sticks (`.item()`, nearest point) and returned a detached
+spectrum until 0.9.36 (B86); they now take bin-integrated Gaussians of width lw at the exact
+line positions from the on-graph transitions (pepper's O3 template path; lw = 0: linear split
+between the two nearest points). Gradient vs central differences 3e-11; forward error on 512
+points over 10 MHz 2.6 / 7.8 / 15 % -> 0.10 / 0.88 / 3.4 % of the maximum (lw 0.3 / 0.1 /
+0.05 MHz) against a 32x finer axis. EasySpin (salt.m:657-668) still builds sticks with lisum1i
+at width dx/100 and convolves; it skips a Gaussian lw of at most two increments, which the
+template does not.
 
 - **Method choice.** `salt` ignores `Options.Method`. For one electron without Q and without
   `Sys.Ham` it uses first-order perturbation theory (EasySpin `Opt.Method='perturb1'`),
@@ -1040,10 +1127,11 @@ differences 1e-6–1e-8 for g, A, Q, lw, `test_salt_autograd.py`); the field-swe
 - **Absolute scale vs EasySpin.** The fixed-field spectrum is the per-bin,
   orientation-averaged amplitude: EasySpin's `salt` output times Δx/(8π²) (Δx = rf bin width
   in MHz; EasySpin integrates over χ with 2π and returns a density), for every path.
-- **Bin positions.** The triangle/zone projection assigns a line to the bin whose lower edge
-  is at or below it (a line at 13.408 MHz with Δx = 0.01 lands in the 13.40 bin), so lines
-  sit on average half a bin low. EasySpin's `salt` does exactly the same (verified, identical
-  bins and values), so this is kept.
+- **Bin positions (deliberate deviation since 0.9.35, B85).** The triangle/zone projection
+  centers axis point k on f_k (hat bins; a line at 13.408 MHz with Δx = 0.01 goes 20 % to
+  13.40 and 80 % to 13.41). EasySpin's `salt` assigns it to the bin whose lower edge is at or
+  below it (13.40), half a bin low on average, as torchspin did before 0.9.35. See
+  § Centered projection bins.
 - **gnscale.** The first-order path (frequencies and intensities) ignores `Sys.gnscale`, as
   EasySpin's `endorfrq_perturb.m` does; the matrix path applies it (via `ham_nz`).
 - **Equivalent nuclei.** `salt` raises for `Sys.n > 1`, as EasySpin does (salt.m:135-136).
@@ -1516,8 +1604,10 @@ from earlier development snapshots should pass `seed=` explicitly.
 ## AStrain — EasySpin's effective-mI model, followed deliberately (0.9.25)
 
 - **Convention.** The AStrain width of a transition (u, v) is
-  `dBdE * sqrt(zL' (G + gAStrainCorr * mI_uv * AStrainMatrix).^2 zL)` with
-  `mI_uv = (mI_u + mI_v)/2`, as in EasySpin `resfields.m` 766-788 and 1297-1306. Each
+  `dBdE * |(G + gAStrainCorr * mI_uv * AStrainMatrix) zL|` with
+  `mI_uv = (mI_u + mI_v)/2`, as in EasySpin `resfields.m` 766-788 and 1297-1306 except
+  that EasySpin squares the matrix element-wise (`zL' (...).^2 zL`; the same for
+  untilted frames, see § Field sweeps — gStrain/AStrain widths with tilted frames). Each
   level's mI (`<Iz>` of the first nucleus) is computed **once per call**, from the
   eigenvectors of `H0 - centerB*muz` with the field along the **molecular z axis** and
   `centerB = mean(Exp.Range)`, and is attached to the **level index** (levels sorted by
@@ -1533,17 +1623,82 @@ from earlier development snapshots should pass `seed=` explicitly.
   The labels also depend on `Exp.Range` through `centerB`. In the regime AStrain is meant
   for (one dominant hyperfine coupling, hyperfine levels ordered by mI) the order does not
   change and the model matches an explicit ensemble.
-- **Scope.** First nucleus only, one electron spin; the same mI for every orientation in
+- **Scope.** First nucleus only, one electron spin (more than one electron spin raises
+  `ValueError` in field and frequency sweeps since 0.9.31, as EasySpin; before, field sweeps
+  without gStrain dropped AStrain silently, B89); the same mI for every orientation in
   pepper, pepper_autograd, `Opt.Method='hybrid'` (core system) and `resfields`/
   `resfields_batch`. `compute_strain_widths_batch` requires `mI_levels` with AStrain;
   `compute_strain_widths` (single orientation) takes `Range` or `mI_levels`, and without
-  either labels the levels at its `B0`. Frequency sweeps follow EasySpin's
-  `resfreqs_matrix.m` instead, which does not use mI (operator derivatives
-  `AStrain_k I_k S_k` evaluated per orientation).
+  either labels the levels at its `B0`. Frequency sweeps do not use mI, like EasySpin's
+  `resfreqs_matrix.m`: they evaluate the operator derivatives dnu/dA_k per orientation,
+  along the `AFrame` axes (§ Frequency sweeps — AStrain along the AFrame axes).
+- **Not rotation covariant.** The labels are taken along the molecular z axis, so with
+  anisotropic A (or anisotropic g with a tilted g frame) the same physical system
+  described in a tilted frame gets other mI labels and other widths (B96, open; EasySpin
+  behaves the same). With isotropic g and A the widths are covariant (0.9.33).
 - Validated: per-orientation widths against EasySpin `resfields` to 1e-5 relative (incl.
-  θ = 90° and a tilted AFrame) and pepper/pepper_autograd spectra to cosine ≥ 0.999996
+  θ = 90°; with a tilted AFrame up to 0.9.32 only, see § Field sweeps — gStrain/AStrain
+  widths with tilted frames) and pepper/pepper_autograd spectra to cosine ≥ 0.999996
   (`test_astrain_mi_model.py`). A 63Cu system with a tilted `AFrame` has a separate,
   strain-independent spectrum difference from EasySpin (strict xfail there).
+
+## Field sweeps — gStrain/AStrain widths with tilted frames: deliberate deviation from EasySpin (0.9.33)
+
+The g-strain model is a Gaussian distribution of the principal g values in the g frame. For a
+field direction z (molecular frame) its width² is `Σ_i (R z)_i² (gStrain_i/g_i · mwFreq)²`
+(R = erot(gFrame)), which is `z' G G z = |G z|²` with `G = R' diag(gStrain/g · mwFreq) R`.
+torchspin evaluates exactly that, and `|(G + gAStrainCorr·mI·A) z|²` with AStrain
+(`A = R_A' diag(AStrain) R_A`), for one and several electron spins (`strainwidth.py`), and
+`hamsymm` uses the matching quadratic forms (`G·G`, `A·A`, `G·A + A·G`).
+
+- **EasySpin** (resfields.m 787/792/1309, resfields_perturb.m 523/532, resfreqs_perturb.m 504)
+  squares the rotated matrix element-wise, `z' (G.^2) z`. That equals the model only when G is
+  diagonal (frame 0, or axes swapped); with a tilted frame the widths depend on how the same
+  physical system is described. S = 1/2, g = [2.0 2.0 2.2] (rhombic: [2.0 2.1 2.3]), gStrain =
+  [0.01 0.01 0.05] ([0.01 0.03 0.06]), 9.5 GHz: gFrame = [0.4 0.9 -0.3] against the untilted
+  system at the rotated field direction, per-orientation widths up to ~100 % apart,
+  powder spectra 9-27 % of the peak. torchspin before 0.9.33 did the same (B84).
+- **Now:** the tilted and the untilted description agree to 1e-14 (widths) and 3e-14 (pepper
+  powder spectra, with the strain symmetry now Dinfh/D2h in the g frame instead of Ci);
+  `gFrame = 0` and diagonal strain matrices are unchanged bit for bit. The torchspin field-sweep
+  paths with strain all use the matrix path; the perturbation-theory paths compute no strain
+  widths. Frequency sweeps use the linear form `z' G z` and were already covariant.
+- **Consequence:** EasySpin reference cases with a tilted g or A frame and g/A strain are strict
+  xfails: `test_strain_validation.py` tilted_frame (RMS 0.0996, peak ratio 1.25; before 0.0874,
+  0.944), `test_strain_widths_matlab_validation.py` two_spinhalf_gstrain_both (widths up to
+  17 % apart; before 3.4e-4) and the two Cu63_AFrame width tests in `test_astrain_mi_model.py`
+  (up to 45 %; before 9.2e-6). Each has an objective replacement: the tilted system against the
+  untilted one (or EasySpin's untilted reference), a global rotation of a two-electron system,
+  and the width model written out (`test_gstrain_covariance.py` and the files above).
+- AStrain with anisotropic A is still not fully covariant because of the mI labels (§ AStrain,
+  B96).
+
+## Frequency sweeps — AStrain along the AFrame axes: deliberate deviation from EasySpin (0.9.31)
+
+In a frequency sweep the AStrain width of a transition (u, v) is
+`sqrt(Σ_k (AStrain_k · m((R'S)_k (R'I)_k))²)`, `m(op) = <v|op|v> − <u|op|u>`, R = R_A2M =
+erot(AFrame)' (first electron, first nucleus): AStrain_k times dnu/dA_k, the derivative of the
+transition frequency with respect to the hyperfine principal value A_k (Hellmann-Feynman). The
+term is differentiable in `AStrain` and `AFrame` (`compute_strain_widths_freq_batch`).
+
+- **EasySpin.** resfreqs_matrix.m (567-583) builds `I_k = Σ_c R(c,k) I_c` but
+  `S_k = Σ_c R(k,c) S_c` (the transpose). This is dnu/dA_k only when R is symmetric up to signs
+  (AFrame = 0, a swap of two axes); a cyclic axis permutation or a general tilt gives other
+  widths. EasySpin (GitHub main, MATLAB R2024b) for S = 1/2, g = 2, 63Cu A = [30 60 200] MHz,
+  AFrame = [0.4 0.9 -0.3], AStrain = [10 20 40] MHz, 340 mT, field along
+  [0.6816 0.5741 0.4536] (φ = 0.7, θ = 1.1; Exp.SampleFrame = [0 -1.1 -0.7]): 21.44, 21.86,
+  7.20 and 7.24 MHz for the two outermost and the two next allowed lines; eigenvalue
+  derivatives and torchspin: 56.85, 56.48, 18.92 and 18.87 MHz. With AFrame = [π/2 π/2 0]
+  (cyclic) EasySpin's formula is off by up to 7.3 MHz on the same system.
+- **History.** Before 0.9.31 torchspin used the molecular axes (`AStrain_c I_c S_c`), i.e.
+  ignored `AFrame` (19.0, 18.5, 6.5 and 6.0 MHz for the lines above), and `float(AStrain)` cut
+  the gradient (B90). `AFrame = 0` gives the same values as before.
+- **Validated** (`test_freq_astrain_frame.py`): widths of all transitions against eigenvalue
+  central differences to 8e-8 MHz at a generic tilt; a pepper frequency sweep with
+  AFrame = [0 π/2 0] against the untilted system with A and AStrain permuted to 1.4e-13
+  relative; `AStrain` and `AFrame` gradients against converged central differences.
+- gStrain or AStrain with more than one electron spin raises `ValueError`, as in EasySpin
+  (resfreqs_matrix.m 102-106; before 0.9.31 the first electron's strains were used, B89).
 
 ## Autograd — differentiable pepper
 

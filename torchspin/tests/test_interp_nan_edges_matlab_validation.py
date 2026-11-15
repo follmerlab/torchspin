@@ -51,6 +51,7 @@ import torch
 from scipy.io import loadmat
 
 import torchspin.pepper  # noqa: F401  (module, not the re-exported function)
+from torchspin.tests._b85 import converged_refs
 from torchspin.experiment import Experiment, Options
 from torchspin.pepper import pepper
 from torchspin.pepper_autograd import pepper_autograd
@@ -93,8 +94,11 @@ DEVIATION = {
 CONV = {
     'b48_stick': ('b48_stick', 7.7e-8, 8.3e-4), 'b48_stick_noint': ('b48_stick', 1.98e-5, 2.35e-2),
     'b48_h0': ('b48_h0', 2.51e-10, 6.45e-5), 'b48_h1': ('b48_h1', 2.95e-8, 9.66e-4),
-    'b50_h1': ('b50_h1', 7.45e-5, 1.51e-2), 'b50_stick': ('b50_stick', 2.84e-5, 2.99e-2),
-    'b50_stick_wide': ('b50_stick_wide', 3.44e-5, 2.10e-2),
+    'b50_h1': ('b85:b50_h1', 7.71e-5, 1.50e-2), 'b50_stick': ('b50_stick', 2.84e-5, 2.99e-2),
+    # b50_h1, b50_stick_wide: B85 (0.9.35) against the converged reference (16-32x finer axis,
+    # [181 1], point values at x_k; ref_converged_b85.npz), measured x 1.05; 0.9.34: 1 - cos
+    # 5.39e-3 / 2.65e-3, max dev 0.130 / 0.315
+    'b50_stick_wide': ('b85:b50_stick_wide', 7.06e-4, 1.64e-1),
 }
 
 
@@ -173,7 +177,7 @@ def test_spectrum_vs_converged(ref, name, func):
     rn, cmax, dmax = CONV[name]
     x, spc = (pepper if func == 'pepper' else pepper_autograd)(sys, exp, opt)
     x = x.detach().numpy(); spc = spc.detach().numpy()
-    r = np.load(CONVERGED)
+    r = converged_refs(CONVERGED)
     assert np.allclose(x, r[rn + '_x'], rtol=0, atol=1e-9)
     cs, d = gen.metrics(spc, r[rn], gen.interior(x, sys))
     print(f'{name} {func}: 1 - cosine {cs:.3e}, max dev {d:.3e}')

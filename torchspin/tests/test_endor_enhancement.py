@@ -187,10 +187,10 @@ def test_salt_enhanced_vs_brute_force(mk, B, rng, lw):
         My = V.conj().T @ np.tensordot(yL, mu, 1) @ V
         f = E[jj] - E[ii]
         w = (abs(Mx[ii, jj]) ** 2 + abs(My[ii, jj]) ** 2) / 2
-        # salt's projection puts lines half a bin (dx/2) below their frequency;
-        # EasySpin salt does the same (measured against this brute force), so the
-        # reference is shifted by -dx/2.
-        spec += (w[:, None] * np.exp(-0.5 * ((x[None, :] - f[:, None] + dx / 2) / sig) ** 2)).sum(0)
+        # salt's projection centers axis point k on x_k (hat bins, 0.9.35, B85);
+        # before, it put lines half a bin low, as EasySpin salt does, and this
+        # reference was shifted by -dx/2.
+        spec += (w[:, None] * np.exp(-0.5 * ((x[None, :] - f[:, None]) / sig) ** 2)).sum(0)
     xs, ys = salt(s, Experiment(Field=B, mwFreq=9.7), Options(GridSize=[31, 6], Enhancement=True),
                   freq_range=rng, n_points=n_points, lw_mhz=lw)
     ys = ys.numpy()

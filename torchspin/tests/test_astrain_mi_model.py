@@ -32,6 +32,7 @@ from torchspin.ham import ham
 from torchspin.pepper import pepper
 from torchspin.pepper_autograd import pepper_autograd
 from torchspin.resfields_batch import resfields_batch
+from torchspin.rotations import erot
 from torchspin.spinsystem import SpinSystem
 from torchspin.strainwidth import (astrain_level_mI, compute_strain_widths,
                                    compute_strain_widths_batch)
@@ -88,7 +89,22 @@ def _cosine(a, b):
 # Per-orientation widths (resfields_batch, as pepper calls it)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name", CASES)
+def _b84_xfail(measured):
+    return pytest.mark.xfail(strict=True, reason=(
+        "B84 deliberate deviation (0.9.33): with the tilted AFrame EasySpin squares the rotated "
+        "AStrain matrix element-wise (resfields.m 1309), which is not rotation covariant; "
+        f"torchspin uses the matrix square. {measured} Objective check: "
+        "test_cu63_aframe_widths_explicit_model."))
+
+
+# max |torchspin - EasySpin| / max(0.1, |EasySpin|) over the Cu63_AFrame lines
+# (WIDTH_TOL 1e-4), before -> after B84: see the marks
+_B84_BATCH = _b84_xfail("resfields_batch widths: max relative deviation 9.2e-6 -> 0.45.")
+_B84_SINGLE = _b84_xfail("compute_strain_widths: max relative deviation 9.2e-6 -> 0.45.")
+
+
+@pytest.mark.parametrize("name", [pytest.param(n, marks=[_B84_BATCH] if n == 'Cu63_AFrame' else [])
+                                  for n in CASES])
 def test_widths_vs_easyspin(refs, name):
     c = refs[name]
     sys = sys_from_mat(c.Sys)
@@ -128,7 +144,8 @@ def test_perpendicular_lines_have_astrain_width(refs):
 # Single-orientation compute_strain_widths
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name", ['N14', 'Cu63', 'N14_gSm', 'Cu63_AFrame'])
+@pytest.mark.parametrize("name", ['N14', 'Cu63', 'N14_gSm',
+                                  pytest.param('Cu63_AFrame', marks=[_B84_SINGLE])])
 def test_single_orientation_widths_vs_easyspin(refs, name):
     c = refs[name]
     sys = sys_from_mat(c.Sys)
@@ -141,6 +158,57 @@ def test_single_orientation_widths_vs_easyspin(refs, name):
                                   torch.tensor([[u, v]]), 9.5, pos, Range=rng)
         assert abs(float(w[0]) - wid) <= WIDTH_TOL * max(0.1, abs(wid)), (
             f"{name} theta={np.degrees(ori[k, 1]):.0f} pair {u+1}-{v+1}: {float(w[0]):.6f} vs {wid:.6f}")
+        n += 1
+    assert n >= 30
+
+
+def _explicit_astrain_widths(sys, H0, mux, muy, muz, phi, theta, u, v, B0, mI, elementwise):
+    """The AStrain width model written out (no gStrain, gAStrainCorr = 1):
+    |mI_avg| * |A_M z| / |d(E_v - E_u)/dB| with A_M = R_A2M diag(AStrain) R_A2M',
+    or EasySpin's |mI_avg| * sqrt(z' (A_M .^ 2) z) with ``elementwise``."""
+    z = torch.tensor([np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)], dtype=F64)
+    muzL = z[0] * mux + z[1] * muy + z[2] * muz
+    _, V = torch.linalg.eigh(H0 - B0 * muzL)
+    d = torch.real(torch.diagonal(V.conj().T @ muzL @ V))
+    R = erot(np.asarray(sys.AFrame[0].detach(), float).tolist()).to(F64)   # molecular -> A frame
+    A = R.T @ torch.diag(sys.AStrain.to(F64)) @ R
+    a = torch.sqrt(z @ (A * A) @ z) if elementwise else torch.linalg.norm(A @ z)
+    return float(abs(0.5 * (mI[u] + mI[v])) * a / abs(d[v] - d[u]))
+
+
+def test_cu63_aframe_widths_explicit_model(refs):
+    """Objective check for the Cu63_AFrame widths (B84, 0.9.33): both torchspin
+    width functions equal the explicitly written model with the matrix square
+    |A_M z| (to 1e-12 relative), and the same model with EasySpin's element-wise
+    square reproduces EasySpin's widths (WIDTH_TOL), so the matrix square is the
+    whole difference.  This tests the width formula only: the AStrain mI labels
+    (taken along the molecular z axis, as EasySpin) are not rotation covariant
+    with anisotropic A (B96, open), so this case has no exact rotated twin.
+    Before the fix the matrix-square model differed from torchspin by up to 31 %
+    (after: 4e-16)."""
+    c = refs['Cu63_AFrame']
+    sys = sys_from_mat(c.Sys)
+    assert sys.gStrain is None and float(sys.gAStrainCorr) == 1.0
+    H0, mux, muy, muz = ham(sys)
+    ori = np.asarray(c.ori, dtype=float)
+    rng = np.asarray(c.Range, float).tolist()
+    mI = astrain_level_mI(sys, H0, muz, float(np.mean(rng)))
+    B, _, W, P = resfields_batch(H0, mux, muy, muz, torch.tensor(ori[:, 0]), torch.tensor(ori[:, 1]),
+                                 Experiment(mwFreq=9.5, Range=rng), Options(), sys=sys, return_pairs=True)
+    n = 0
+    for k, (u, v), pos, wid in _easyspin_lines(c):
+        phi, theta = float(ori[k, 0]), float(ori[k, 1])
+        w_single = float(compute_strain_widths(sys, H0, mux, muy, muz, phi, theta,
+                                               torch.tensor([[u, v]]), 9.5, pos, Range=rng)[0])
+        w_model = _explicit_astrain_widths(sys, H0, mux, muy, muz, phi, theta, u, v, pos, mI, False)
+        assert w_single == pytest.approx(w_model, rel=1e-12, abs=0)
+        w_es = _explicit_astrain_widths(sys, H0, mux, muy, muz, phi, theta, u, v, pos, mI, True)
+        assert abs(w_es - wid) <= WIDTH_TOL * max(0.1, abs(wid))
+        sel = torch.nonzero((P[k][:, 0] == u) & (P[k][:, 1] == v)).reshape(-1)
+        j = sel[torch.argmin((B[k][sel] - pos).abs())]
+        w_model_b = _explicit_astrain_widths(sys, H0, mux, muy, muz, phi, theta, u, v,
+                                             float(B[k][j]), mI, False)
+        assert float(W[k][j]) == pytest.approx(w_model_b, rel=1e-12, abs=0)
         n += 1
     assert n >= 30
 
@@ -246,7 +314,8 @@ def test_cu63_vs_converged_reference(refs, h, fn):
 @pytest.mark.xfail(strict=True, reason=(
     "Separate defect, not the AStrain mI model: 63Cu with a tilted AFrame [0 0.4 0] differs "
     "from EasySpin even without any strain (pepper h1 cosine 0.873, pepper_autograd 0.962, "
-    "and the two torchspin paths disagree); the per-orientation widths agree (above)."))
+    "and the two torchspin paths disagree); the per-orientation widths agreed with EasySpin "
+    "before 0.9.33 and now follow the rotation-covariant matrix square (B84, above)."))
 @pytest.mark.parametrize("fn", [pepper, pepper_autograd], ids=['pepper', 'pepper_autograd'])
 def test_spectra_vs_easyspin_tilted_aframe(refs, fn):
     c = refs['Cu63_AFrame']

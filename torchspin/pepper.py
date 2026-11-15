@@ -27,6 +27,7 @@ import torch
 import numpy as np
 
 from torchspin.convspec import convspec
+from torchspin import _projection as _proj
 from torchspin.isotopologues import expand_components
 from torchspin.experiment import (auto_batch_size, Experiment, Options,
                                   PEPPER_PERTURB_ORDER)
@@ -971,14 +972,16 @@ def _user_transitions(transitions, n_states):
 
 def _zf_const_pos(B_f, B_c):
     """Zero field: a transition has the same position at every orientation.
-    Give every interpolated vertex the coarse position exactly, so the line
-    goes into one bin as in EasySpin. Interpolation round-off scatters the
-    fine-grid positions by a few ulp; for a line exactly on a bin edge
-    (bin k covers [x_k, x_k + dx)) the vertices then straddle the edge and the
-    projection puts part of the line into the lower bin (5-39 % per line for
-    S = 1, D = [-700 -1300 2000] MHz on a 10 MHz axis, GridSize [19 4]; test
-    test_pepper_zerofield_edge.py). The projection itself is exact for such
-    near-zero-width triangles since 0.8.4 (B18); this is about which bin."""
+    Give every interpolated vertex the coarse position exactly, so every facet
+    of the line has zero width and the line is one point mass, split linearly
+    between the two nearest axis points (all of it on x_k when it sits on x_k,
+    as in EasySpin). Interpolation round-off scatters the fine-grid positions
+    by a few ulp; before 0.9.35 (bin k covering [x_k, x_k + dx)) a line on x_k
+    then straddled the bin edge and part of it went into the lower bin (5-39 %
+    per line for S = 1, D = [-700 -1300 2000] MHz on a 10 MHz axis, GridSize
+    [19 4]; test_pepper_zerofield_edge.py). With the centered hat bins (B85)
+    such ulp scatter changes the split only by ulps, so this is now exact
+    bookkeeping rather than a necessity."""
     fin = B_c[np.isfinite(B_c)]
     if fin.size == 0:
         return B_f
@@ -1024,16 +1027,55 @@ def _preselect_pairs_zero_field(H0, mux, muy, muz, sys, exp, thr):
     return [(int(first[a]), int(first[b])) for a, b in zip(ii.tolist(), jj.tolist())]
 
 
+_GL2 = (0.5 - 0.5 / math.sqrt(3.0), 0.5 + 0.5 / math.sqrt(3.0))   # 2-point Gauss-Legendre on [0, 1]
+
+
+def _hat_piece_loop(spec: np.ndarray, a: float, b: float, va: float, vb: float) -> None:
+    """Reference for one linear density piece (``va`` at ``a``, ``vb`` at ``b``, axis
+    coordinates, ``a < b``): ``spec[k] += ∫ L(u) Λ(u − k) du`` by two-point Gauss-Legendre
+    on every interval between the breakpoints ``a``, ``b`` and the integers (the integrand
+    is quadratic there, so the rule is exact)."""
+    n = spec.shape[0]
+    cuts = [a] + [float(c) for c in range(int(math.floor(a)) + 1, int(math.ceil(b)))] + [b]
+    for p, q in zip(cuts[:-1], cuts[1:]):
+        if q <= p:
+            continue
+        k_lo = int(math.floor(0.5 * (p + q)))       # the interval lies in [k_lo, k_lo + 1]
+        for t in _GL2:
+            u = p + t * (q - p)
+            dens = va + (vb - va) * (u - a) / (b - a)
+            wgt = 0.5 * (q - p) * dens
+            f = u - k_lo                              # weight of k_lo + 1; 1 − f of k_lo
+            if 0 <= k_lo < n:
+                spec[k_lo] += wgt * (1.0 - f)
+            if 0 <= k_lo + 1 < n:
+                spec[k_lo + 1] += wgt * f
+
+
+def _hat_point_loop(spec: np.ndarray, u: float, mass: float) -> None:
+    """Reference point mass: linear split between the two nearest axis points."""
+    n = spec.shape[0]
+    k = int(math.floor(u))
+    t = u - k
+    if 0 <= k < n:
+        spec[k] += mass * (1.0 - t)
+    if 0 <= k + 1 < n:
+        spec[k + 1] += mass * t
+
+
 def _projectzones_loop(
     pos: np.ndarray,
     amp: np.ndarray,
     seg_weights: np.ndarray,
     x: np.ndarray,
 ) -> np.ndarray:
-    """Port of EasySpin's ``projectzones.c`` — axial-grid projection.
+    """Segment-by-segment reference for :func:`_projectzones` (axial-grid projection,
+    EasySpin ``projectzones``, with the centered hat bins of :mod:`torchspin._projection`).
 
-    Each segment between consecutive orientations (pos[i], pos[i+1]) contributes
-    a rectangular (uniform) density to the spectrum, scaled by seg_weights[i].
+    Each segment between consecutive orientations (pos[i], pos[i+1]) is a uniform
+    density of integrated intensity ``mean(amp)·seg_weights[i]``; ``spec[k]`` is its
+    integral against the hat of half-width ``delta`` centered on ``x[k]``, divided by
+    ``delta``.  A zero-width segment is split linearly between the two nearest points.
 
     Parameters
     ----------
@@ -1050,51 +1092,19 @@ def _projectzones_loop(
     delta = float(x[1] - x[0])
     x0 = float(x[0])
     spec = np.zeros(nPoints)
-
     anisoAmp = (len(amp) > 1)
-    if not anisoAmp:
-        fixed_meanAmp = float(amp[0]) / delta
-
     for iSeg in range(len(seg_weights)):
-        left  = float(pos[iSeg])
-        right = float(pos[iSeg + 1])
+        left, right = float(pos[iSeg]), float(pos[iSeg + 1])
         if np.isnan(left) or np.isnan(right):
             continue
-        if left > right:
-            left, right = right, left
-
-        if anisoAmp:
-            meanAmp = (float(amp[iSeg]) + float(amp[iSeg + 1])) / 2.0 / delta
+        left, right = min(left, right), max(left, right)
+        meanAmp = (float(amp[iSeg]) + float(amp[iSeg + 1])) / 2.0 if anisoAmp else float(amp[0])
+        mass = meanAmp * float(seg_weights[iSeg]) / delta
+        a, b = (left - x0) / delta, (right - x0) / delta
+        if b > a:
+            _hat_piece_loop(spec, a, b, mass / (b - a), mass / (b - a))
         else:
-            meanAmp = fixed_meanAmp
-
-        sw      = float(seg_weights[iSeg])
-        left_b  = (left  - x0) / delta
-        right_b = (right - x0) / delta
-        first   = int(left_b)
-        last    = int(right_b)
-
-        if first >= nPoints or last < 0:
-            continue
-
-        if first == last:
-            if 0 <= first < nPoints:
-                spec[first] += meanAmp * sw
-        else:
-            Height = meanAmp * sw / (right_b - left_b)
-            if first >= 0:
-                spec[first] += Height * (first + 1 - left_b)
-            else:
-                first = -1
-            if last < nPoints:
-                spec[last] += Height * (right_b - last)
-            else:
-                last = nPoints
-            # Interior bins — replace Python loop with NumPy slice
-            lo, hi = first + 1, last   # bounds already clamped above
-            if lo < hi:
-                spec[lo:hi] += Height
-
+            _hat_point_loop(spec, a, mass)
     return spec
 
 
@@ -1105,12 +1115,14 @@ def _projecttriangles_loop(
     amp: np.ndarray,
     x: np.ndarray,
 ) -> np.ndarray:
-    """Port of EasySpin's ``projecttriangles.c`` — 2-D triangulation projection.
+    """Triangle-by-triangle reference for :func:`_projecttriangles` (EasySpin
+    ``projecttriangles``, with the centered hat bins of :mod:`torchspin._projection`).
 
-    For each triangle the three resonance-field positions define a tent (hat)
-    function: linearly rising from the leftmost to the middle vertex, then
-    linearly falling to the rightmost vertex.  This eliminates the quantization
-    noise of stick-spectrum binning and converges at much coarser grids.
+    For each triangle the three resonance-field positions define a tent function of
+    integrated intensity ``mean(amp)·area``: linearly rising from the leftmost to the
+    middle vertex, then falling to the rightmost vertex.  ``spec[k]`` is its integral
+    against the hat of half-width ``delta`` centered on ``x[k]``, divided by ``delta``;
+    a zero-width triangle is split linearly between the two points nearest to it.
 
     Parameters
     ----------
@@ -1125,168 +1137,26 @@ def _projecttriangles_loop(
     spec : (nPoints,) spectral density
     """
     nPoints = int(len(x))
-    delta   = float(x[1] - x[0])
-    x0      = float(x[0])
-    spec    = np.zeros(nPoints)
-    # Pre-allocated float64 index buffer avoids per-triangle np.arange allocation
-    _idx_buf = np.arange(nPoints, dtype=np.float64)
-
+    delta = float(x[1] - x[0])
+    x0 = float(x[0])
+    spec = np.zeros(nPoints)
     for iTri in range(len(tri_idx)):
         i1, i2, i3 = int(tri_idx[iTri, 0]), int(tri_idx[iTri, 1]), int(tri_idx[iTri, 2])
-        p1, p2, p3 = float(fun[i1]), float(fun[i2]), float(fun[i3])
-        if np.isnan(p1) or np.isnan(p2) or np.isnan(p3):
+        p = [float(fun[i1]), float(fun[i2]), float(fun[i3])]
+        if any(np.isnan(v) for v in p):
             continue
-
-        # Sort vertices: left ≤ middle ≤ right (mT)
-        left, middle, right = sorted([p1, p2, p3])
-
-        area      = float(areas[iTri])
-        amplitude = (float(amp[i1]) + float(amp[i2]) + float(amp[i3])) / 3.0
-
-        # Convert to fractional bin coordinates
-        left_b   = (left   - x0) / delta
-        middle_b = (middle - x0) / delta
-        right_b  = (right  - x0) / delta
-
-        Width  = right_b - left_b
-        Width1 = middle_b - left_b   # left sub-triangle
-        Width2 = right_b  - middle_b  # right sub-triangle
-
-        # Zero-width: all vertices at same field → delta function
-        if Width == 0.0:
-            fi = int(left_b)
-            if 0 <= fi < nPoints:
-                spec[fi] += amplitude * area / delta
+        mass = (float(amp[i1]) + float(amp[i2]) + float(amp[i3])) / 3.0 * float(areas[iTri]) / delta
+        left, middle, right = sorted((v - x0) / delta for v in p)
+        width = right - left
+        if width == 0.0:
+            _hat_point_loop(spec, (sum(p) / 3.0 - x0) / delta, mass)
             continue
-
-        # ── LEFT sub-triangle: ramp up from left_b to middle_b ────────────
-        if Width1 > 0.0:
-            f0     = (2.0 * amplitude * area / Width) / Width1 / delta
-            first1 = int(left_b)
-            last1  = int(middle_b)
-            if first1 < nPoints and last1 >= 0:
-                if first1 == last1:
-                    spec[first1] += f0 * Width1 * Width1 / 2.0
-                else:
-                    if first1 >= 0:
-                        spec[first1] += f0 * (first1 + 1 - left_b) ** 2 / 2.0
-                    else:
-                        first1 = -1
-                    if last1 < nPoints:
-                        spec[last1] += f0 * ((last1 + middle_b) / 2.0 - left_b) * (middle_b - last1)
-                    else:
-                        last1 = nPoints
-                    lsh = left_b - 0.5
-                    lo1, hi1 = first1 + 1, last1  # bounds already clamped
-                    if lo1 < hi1:
-                        spec[lo1:hi1] += f0 * (_idx_buf[lo1:hi1] - lsh)
-
-        # ── RIGHT sub-triangle: ramp down from middle_b to right_b ────────
-        if Width2 > 0.0:
-            f0     = (2.0 * amplitude * area / Width) / Width2 / delta
-            first2 = int(middle_b)
-            last2  = int(right_b)
-            if first2 < nPoints and last2 >= 0:
-                if first2 == last2:
-                    spec[first2] += f0 * Width2 * Width2 / 2.0
-                else:
-                    if first2 >= 0:
-                        spec[first2] += f0 * (first2 + 1 - middle_b) * (right_b - (middle_b + first2 + 1) / 2.0)
-                    else:
-                        first2 = -1
-                    if last2 < nPoints:
-                        spec[last2] += f0 * (right_b - last2) ** 2 / 2.0
-                    else:
-                        last2 = nPoints
-                    rsh = right_b - 0.5
-                    lo2, hi2 = first2 + 1, last2  # bounds already clamped
-                    if lo2 < hi2:
-                        spec[lo2:hi2] += f0 * (rsh - _idx_buf[lo2:hi2])
-
+        h = 2.0 * mass / width
+        if middle > left:
+            _hat_piece_loop(spec, left, middle, 0.0, h)
+        if right > middle:
+            _hat_piece_loop(spec, middle, right, h, 0.0)
     return spec
-
-
-def _ramp_bins(spec: np.ndarray, f0: np.ndarray, a: np.ndarray, b: np.ndarray, rising: bool) -> None:
-    """Accumulate linear ramps ``f0·(u−a)`` (rising) or ``f0·(b−u)`` (falling) on
-    ``[a, b]`` (fractional bin coordinates, a ≤ b) into ``spec`` — the vectorised
-    form of the sub-triangle branches of ``projecttriangles.c``.
-
-    Ramps that touch at most three bins are scattered bin by bin; wider ramps
-    (whose ``f0`` is bounded, so no cancellation) contribute their edge bins
-    directly and their interior bins through two cumulative sums (the interior
-    value is linear in the bin index).
-    """
-    nPoints = spec.shape[0]
-    width = b - a
-    first = np.trunc(a).astype(np.int64)          # C-style truncation (as in the .c code)
-    last = np.trunc(b).astype(np.int64)
-    ok = (width > 0.0) & (first < nPoints) & (last >= 0)
-    if not ok.any():
-        return
-    f0, a, b, width, first, last = f0[ok], a[ok], b[ok], width[ok], first[ok], last[ok]
-    one = first == last
-    if one.any():
-        idx = first[one]
-        inr = (idx >= 0) & (idx < nPoints)
-        np.add.at(spec, idx[inr], (f0[one] * width[one] * width[one] / 2.0)[inr])
-    multi = ~one
-    f0, a, b, width, first, last = f0[multi], a[multi], b[multi], width[multi], first[multi], last[multi]
-    if f0.size == 0:
-        return
-    # edge bins, from the small overlaps c, d and the width only: differences of
-    # O(bin index) terms such as b − (a+first+1)/2 cancel catastrophically for
-    # near-zero widths straddling a bin edge (f0 ∝ 1/width²)
-    c = first + 1 - a                             # overlap with the first bin, 0 < c ≤ width
-    d = b - last                                  # overlap with the last bin, 0 ≤ d < width
-    if rising:
-        v_first = f0 * c * c / 2.0
-        v_last = f0 * d * (width - d / 2.0)
-    else:
-        v_first = f0 * c * (width - c / 2.0)
-        v_last = f0 * d * d / 2.0
-    m = first >= 0
-    np.add.at(spec, first[m], v_first[m])
-    m = last < nPoints
-    np.add.at(spec, last[m], v_last[m])
-    lo = np.maximum(first + 1, 0)                 # interior bins lo .. hi-1
-    hi = np.minimum(last, nPoints)
-    has_int = lo < hi
-    if not has_int.any():
-        return
-    f0, a, b, lo, hi = f0[has_int], a[has_int], b[has_int], lo[has_int], hi[has_int]
-    # interior value at bin k: rising f0·(k − (a − ½)), falling f0·((b − ½) − k)
-    narrow = (hi - lo) <= 2
-    if narrow.any():
-        for off in (0, 1):
-            k = lo[narrow] + off
-            sel = k < hi[narrow]
-            kk = k[sel]
-            if rising:
-                val = f0[narrow][sel] * (kk - (a[narrow][sel] - 0.5))
-            else:
-                val = f0[narrow][sel] * ((b[narrow][sel] - 0.5) - kk)
-            np.add.at(spec, kk, val)
-    wide = ~narrow
-    if wide.any():
-        f0w, lo_w, hi_w = f0[wide], lo[wide], hi[wide]
-        if rising:
-            s1, s0 = f0w, -f0w * (a[wide] - 0.5)
-        else:
-            s1, s0 = -f0w, f0w * (b[wide] - 0.5)
-        S1 = np.zeros(nPoints + 1); S0 = np.zeros(nPoints + 1)
-        np.add.at(S1, lo_w, s1); np.add.at(S1, hi_w, -s1)
-        np.add.at(S0, lo_w, s0); np.add.at(S0, hi_w, -s0)
-        c1 = np.cumsum(S1)[:nPoints]; c0 = np.cumsum(S0)[:nPoints]
-        # Past the last wide ramp the running sums leave a roundoff residual
-        # (the +s/−s pairs do not cancel exactly, and c1 is multiplied by k), so
-        # bins that no interior covers would get a roundoff floor (~1e-13 of the
-        # maximum) where projecttriangles.c adds nothing.  An integer coverage
-        # count built with the same lo/hi scatter keeps those bins exactly 0;
-        # covered bins are unchanged.
-        cnt = np.zeros(nPoints + 1, dtype=np.int64)
-        np.add.at(cnt, lo_w, 1); np.add.at(cnt, hi_w, -1)
-        cov = np.cumsum(cnt)[:nPoints] > 0
-        spec += np.where(cov, c1 * np.arange(nPoints, dtype=np.float64) + c0, 0.0)
 
 
 def _projectzones(
@@ -1295,48 +1165,14 @@ def _projectzones(
     seg_weights: np.ndarray,
     x: np.ndarray,
 ) -> np.ndarray:
-    """Vectorised :func:`_projectzones_loop` (EasySpin ``projectzones.c``)."""
-    nPoints = int(len(x))
-    delta = float(x[1] - x[0])
-    x0 = float(x[0])
-    spec = np.zeros(nPoints)
-    pos = np.asarray(pos, dtype=float); amp = np.asarray(amp, dtype=float)
-    sw = np.asarray(seg_weights, dtype=float)
-    nSeg = sw.shape[0]
-    left = np.minimum(pos[:nSeg], pos[1:nSeg + 1]); right = np.maximum(pos[:nSeg], pos[1:nSeg + 1])
-    if amp.size > 1:
-        meanAmp = (amp[:nSeg] + amp[1:nSeg + 1]) / 2.0 / delta
-    else:
-        meanAmp = np.full(nSeg, float(amp[0]) / delta)
-    ok = ~(np.isnan(left) | np.isnan(right))
-    left, right, meanAmp, sw = left[ok], right[ok], meanAmp[ok], sw[ok]
-    left_b = (left - x0) / delta; right_b = (right - x0) / delta
-    first = np.trunc(left_b).astype(np.int64); last = np.trunc(right_b).astype(np.int64)
-    ok = (first < nPoints) & (last >= 0)
-    left_b, right_b, meanAmp, sw, first, last = left_b[ok], right_b[ok], meanAmp[ok], sw[ok], first[ok], last[ok]
-    one = first == last
-    if one.any():
-        idx = first[one]; inr = (idx >= 0) & (idx < nPoints)
-        np.add.at(spec, idx[inr], (meanAmp[one] * sw[one])[inr])
-    multi = ~one
-    if not multi.any():
-        return spec
-    left_b, right_b, meanAmp, sw, first, last = left_b[multi], right_b[multi], meanAmp[multi], sw[multi], first[multi], last[multi]
-    Height = meanAmp * sw / (right_b - left_b)
-    m = first >= 0
-    np.add.at(spec, first[m], (Height * (first + 1 - left_b))[m])
-    m = last < nPoints
-    np.add.at(spec, last[m], (Height * (right_b - last))[m])
-    lo = np.maximum(first + 1, 0); hi = np.minimum(last, nPoints)
-    has_int = lo < hi
-    if has_int.any():
-        S0 = np.zeros(nPoints + 1)
-        np.add.at(S0, lo[has_int], Height[has_int]); np.add.at(S0, hi[has_int], -Height[has_int])
-        # bins no interior covers stay exactly 0 (see _ramp_bins)
-        cnt = np.zeros(nPoints + 1, dtype=np.int64)
-        np.add.at(cnt, lo[has_int], 1); np.add.at(cnt, hi[has_int], -1)
-        spec += np.where(np.cumsum(cnt)[:nPoints] > 0, np.cumsum(S0)[:nPoints], 0.0)
-    return spec
+    """Axial-grid projection (EasySpin ``projectzones``) onto the axis ``x`` with centered
+    hat bins: numpy front end of :func:`torchspin._projection.projectzones_t` (same
+    arithmetic as ``pepper_autograd``); :func:`_projectzones_loop` is the reference."""
+    x = np.asarray(x, dtype=float)
+    pos_t = torch.from_numpy(np.asarray(pos, dtype=float).reshape(1, -1))
+    amp_t = torch.from_numpy(np.asarray(amp, dtype=float).reshape(1, -1))
+    sw = torch.from_numpy(np.asarray(seg_weights, dtype=float).reshape(-1))
+    return _proj.projectzones_t(pos_t, amp_t, sw, float(x[0]), float(x[1] - x[0]), int(len(x))).numpy()
 
 
 def _projecttriangles(
@@ -1346,50 +1182,19 @@ def _projecttriangles(
     amp: np.ndarray,
     x: np.ndarray,
 ) -> np.ndarray:
-    """Vectorised :func:`_projecttriangles_loop` (EasySpin ``projecttriangles.c``):
-    every triangle's tent function is split into its rising and falling ramps,
-    which are accumulated by :func:`_ramp_bins`."""
-    nPoints = int(len(x))
-    delta = float(x[1] - x[0])
-    x0 = float(x[0])
-    spec = np.zeros(nPoints)
-    tri_idx = np.asarray(tri_idx, dtype=np.int64)
-    fun = np.asarray(fun, dtype=float); amp = np.asarray(amp, dtype=float)
-    if tri_idx.size == 0:
-        return spec
-    P = fun[tri_idx]                                   # (nTri, 3)
-    ok = ~np.isnan(P).any(axis=1)
-    if not ok.any():
-        return spec
-    P = np.sort(P[ok], axis=1)
-    area = np.asarray(areas, dtype=float)[ok]
-    A = amp[tri_idx[ok]]
-    amplitude = (A[:, 0] + A[:, 1] + A[:, 2]) / 3.0
-    left_b = (P[:, 0] - x0) / delta; middle_b = (P[:, 1] - x0) / delta; right_b = (P[:, 2] - x0) / delta
-    Width = right_b - left_b
-    Width1 = middle_b - left_b
-    Width2 = right_b - middle_b
-    zero = Width == 0.0
-    if zero.any():
-        fi = np.trunc(left_b[zero]).astype(np.int64)
-        inr = (fi >= 0) & (fi < nPoints)
-        np.add.at(spec, fi[inr], (amplitude[zero] * area[zero] / delta)[inr])
-    nz = ~zero
-    if not nz.any():
-        return spec
-    amplitude, area, left_b, middle_b, right_b, Width, Width1, Width2 = (
-        amplitude[nz], area[nz], left_b[nz], middle_b[nz], right_b[nz], Width[nz], Width1[nz], Width2[nz])
-    base = 2.0 * amplitude * area / Width
-    with np.errstate(divide='ignore', invalid='ignore'):
-        f0L = base / Width1 / delta
-        f0R = base / Width2 / delta
-    sL = Width1 > 0.0
-    if sL.any():
-        _ramp_bins(spec, f0L[sL], left_b[sL], middle_b[sL], rising=True)
-    sR = Width2 > 0.0
-    if sR.any():
-        _ramp_bins(spec, f0R[sR], middle_b[sR], right_b[sR], rising=False)
-    return spec
+    """Triangle projection (EasySpin ``projecttriangles``) onto the axis ``x`` with
+    centered hat bins: numpy front end of :func:`torchspin._projection.projecttriangles_t`
+    (same arithmetic as ``pepper_autograd``); :func:`_projecttriangles_loop` is the
+    reference.  See :mod:`torchspin._projection` for the convention."""
+    x = np.asarray(x, dtype=float)
+    n = int(len(x))
+    tri = np.asarray(tri_idx, dtype=np.int64).reshape(-1, 3)
+    if tri.shape[0] == 0:
+        return np.zeros(n)
+    fun_t = torch.from_numpy(np.asarray(fun, dtype=float).reshape(1, -1))
+    amp_t = torch.from_numpy(np.asarray(amp, dtype=float).reshape(1, -1))
+    return _proj.projecttriangles_t(torch.from_numpy(tri), torch.from_numpy(np.asarray(areas, dtype=float)),
+                                    fun_t, amp_t, float(x[0]), float(x[1] - x[0]), n).numpy()
 
 
 def _user_orientations(exp):
@@ -2336,7 +2141,7 @@ def _pepper_single(
                 if B_f is None:
                     continue
                 if zero_field:
-                    # one position for all orientations: single-bin deposit on a bin edge
+                    # one position for all orientations: one point mass (exact zero-width facets)
                     B_f = _zf_const_pos(B_f, B_c)
                 I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, mode='val')
                 W_f = _interp_slot(W_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f_s, mode='val')
@@ -2490,7 +2295,7 @@ def _pepper_single(
                     if B_f is None:
                         continue
                     if zero_field:
-                        # one position for all orientations: single-bin deposit on a bin edge
+                        # one position for all orientations: one point mass (exact zero-width facets)
                         B_f = _zf_const_pos(B_f, B_c)
                     I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
 
@@ -2560,7 +2365,7 @@ def _pepper_single(
                                         )
                                     else:
                                         frac = (Bj - exp.Range[0]) / dx
-                                        ilo = int(frac)
+                                        ilo = math.floor(frac)
                                         ihi = ilo + 1
                                         a = frac - ilo
                                         if 0 <= ilo < exp.nPoints:
@@ -2658,9 +2463,10 @@ def _pepper_single(
                             _Bk = _B_mat[:, _k]; _WIk = (_W_col[:, 0] * _I_mat[:, _k])
                             _vk = ~torch.isnan(_Bk) & (_WIk != 0)
                             if _vk.any():
-                                _bk = ((_Bk[_vk] - exp.Range[0]) / dx).floor().long()
-                                _ink = (_bk >= 0) & (_bk < exp.nPoints)
-                                _row(_k).scatter_add_(0, _bk[_ink].cpu(), _WIk[_vk][_ink].cpu().to(torch.float64))
+                                # centered bins: linear split between the two nearest points (B85)
+                                _r = _row(_k)
+                                _r += _proj.hat_points_t(exp.nPoints, ((_Bk[_vk] - exp.Range[0]) / dx).cpu().to(torch.float64),
+                                                         _WIk[_vk].cpu().to(torch.float64))
                     else:
                         _B_flat = _B_mat.reshape(-1)            # (M * n_slots,)
                         # Bin valid (non-NaN, in-range) transitions
@@ -2668,12 +2474,10 @@ def _pepper_single(
                         if _valid.any():
                             _B_v = _B_flat[_valid]
                             _W_v = _WI[_valid]
-                            _bin = ((_B_v - exp.Range[0]) / dx).floor().long()
-                            _in = (_bin >= 0) & (_bin < exp.nPoints)   # drop out-of-window lines
-                            _bin = _bin[_in]
-                            # scatter on whichever device the data lives, then move back to CPU
-                            spec_dev = spec.to(_bin.device)
-                            spec = spec_dev.scatter_add(0, _bin, _W_v[_in].to(spec_dev.dtype)).cpu()
+                            # centered bins: linear split between the two nearest points (B85);
+                            # out-of-window weights are dropped
+                            spec = spec + _proj.hat_points_t(exp.nPoints, ((_B_v - exp.Range[0]) / dx).cpu().to(torch.float64),
+                                                             _W_v.cpu().to(torch.float64))
                     used_projection = False  # will still apply normalization below
                 else:
                     _all_orient = []
@@ -2711,10 +2515,9 @@ def _pepper_single(
                         _WI_cat = torch.cat(_WI_parts)
                         _valid  = ~torch.isnan(_B_cat)
                         if _valid.any():
-                            _bin = ((_B_cat[_valid] - exp.Range[0]) / dx).floor().long()
-                            _in = (_bin >= 0) & (_bin < exp.nPoints)   # drop out-of-window lines
-                            spec_dev = spec.to(_bin.device)
-                            spec = spec_dev.scatter_add_(0, _bin[_in], _WI_cat[_valid][_in]).cpu()
+                            # centered bins: linear split between the two nearest points (B85)
+                            spec = spec + _proj.hat_points_t(exp.nPoints, ((_B_cat[_valid] - exp.Range[0]) / dx).cpu().to(torch.float64),
+                                                             _WI_cat[_valid].cpu().to(torch.float64))
                 else:
                     for k_orient, (B_res, intens, widths, w_k) in enumerate(_orient_seq):
                         if B_res.numel() == 0:
@@ -2741,7 +2544,7 @@ def _pepper_single(
                                     )
                                 else:
                                     frac = (Bi - exp.Range[0]) / dx
-                                    ilo = int(frac)
+                                    ilo = math.floor(frac)
                                     ihi = ilo + 1
                                     a = frac - ilo
                                     if 0 <= ilo < exp.nPoints:
