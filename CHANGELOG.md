@@ -8,6 +8,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Tests
 
+- **The `torchspin.lft` parity tests against telser-tools now run without telser-tools.** CI
+  does not install telser-tools, so 618 tests in the lft files were skipped there. Now 1405
+  run and pass without telser-tools. The 5 that still skip are the 2 dpnfit cases with no free
+  parameter and the 3 magnetometry tests, which stay live-only (their oracle,
+  `telser_tools_diff`, runs on torch).
+  - The telser-tools values the tests use (results, parsed inputs, constants) come from
+    oracle functions in the test modules. They run live when telser-tools is importable;
+    otherwise the tests use the copies in `torchspin/tests/data/telser/refs/*.npz` (13 files,
+    2.6 MiB). `TORCHSPIN_TELSER_REFS=frozen` forces the stored copies.
+  - `torchspin/tests/data/telser/generate_telser_refs.py` writes those files with their
+    provenance (`tests/data/DATA_PROVENANCE.md`).
+  - Tolerances are unchanged, with two changes for the frozen copies:
+    - Bit-for-bit checks of BLAS-order-dependent products, such as `L2 = Re(Σ L_i L_i)`, are
+      evaluated from the stored factors in the test's own process.
+    - Term projectors, stored factored, are compared at `1e-12 - 1e-13`.
+  - Exception (`d1_skipdeg_field`): g(obs) at its 1 mG field (level splitting ~1.8e-9 cm⁻¹)
+    is compared at the bound implied by the energy tolerance divided by the splitting. It was
+    rtol 1e-9, and moved by ~2e-3 between torch 2.10 and 2.15 even against live telser-tools.
+  - `test_lft_telser_refs.py` checks that the stored keys match the oracles. With
+    telser-tools importable, it also checks that the stored values still equal live
+    telser-tools to round-off.
+  - No code change.
+
 - **EasySpin reference for frequency sweeps with field-quadratic `Sys.Ham2xx` terms.** EasySpin's
   `resfreqs_matrix.m` could not run them before StollLab/EasySpin d46e5ef9 (it tested for obsolete
   `ZB*` fields), so `Options.QuadraticZeeman` frequency sweeps were checked only against the full
