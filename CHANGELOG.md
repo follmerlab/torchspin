@@ -42,7 +42,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - EasySpin's own default (`fast`) output has the same early stop for this nitroxide at
     256 points (cosine 0.9647 against its general method solved directly). It also explains
     the loosened ext case `simple_tc1e-07`: with `Opt.Threshold=1e-10`, EasySpin's output
-    matches torchspin to cosine 0.9999966.
+    matches torchspin to cosine 0.9999966. That case's comparison with EasySpin's default
+    output is now held to the default 0.999 / 2 % as a strict xfail (it was loosened to
+    0.997 / 8 %); the converged comparison is the objective check.
   - Default outputs on the stored EasySpin cases change by at most 0.06 % in amplitude
     (`simplepotential_grid19`, plain basis on a powder grid). No tolerance was loosened.
 

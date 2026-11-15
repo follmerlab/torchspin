@@ -146,13 +146,17 @@ def cosine(a, b):
 
 
 # name -> (cosine threshold, amplitude tolerance, reason)  — default 0.999 / 2 %
-LOOSE = {
-    'simple_tc1e-07': (0.997, 0.08, "reference computed with EasySpin's default 'fast' Liouvillian "
-                                    "builder; torchspin ports the 'general' method, which EasySpin "
-                                    "itself matches to cosine 1.000000 here but which differs from "
-                                    "'fast' by 0.2 % in shape and 7 % in amplitude at tcorr = 1e-7 s"),
-}
+LOOSE = {}
 XFAIL = {}
+# EasySpin reference known to be wrong: held to the default tolerance as a strict xfail
+# (the test must keep failing), with the objective replacement named in the reason.
+STRICT_XFAIL = {
+    'simple_tc1e-07': "EasySpin's default 'fast' output stopped its continued fraction early "
+                      "(MATLAB check ref_chili_mpsymm_d: at Opt.Threshold 1e-10 it moves by "
+                      "cosine 0.9979 / amplitude 1.069). Measured against this reference: cosine "
+                      "0.99798, amplitude 1.066. Objective check: test_chili_lanczos.py::"
+                      "test_simple_tc1e7_matches_converged_easyspin_fast (cosine 0.9999966)",
+}
 
 
 def _run(c):
@@ -170,9 +174,11 @@ def _case_names():
 
 
 @pytest.mark.parametrize("name", _case_names())
-def test_chili_vs_matlab(cases, name):
+def test_chili_vs_matlab(cases, name, request):
     if name in XFAIL:
         pytest.xfail(XFAIL[name])
+    if name in STRICT_XFAIL:
+        request.applymarker(pytest.mark.xfail(strict=True, reason=STRICT_XFAIL[name]))
     c = cases[name]
     x, y = _run(c)
     y = y.numpy(); ref = np.asarray(c.y, dtype=float)

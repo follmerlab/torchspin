@@ -986,8 +986,11 @@ and output scaling, post-convolution nuclei and multi-component input.
 Every intermediate was checked against EasySpin's `Opt.Diagnostics` dump
 (basis identical, H and Γ to machine precision). On 60 MATLAB cases
 mirroring EasySpin's chili tests, 59 match to cosine ≥0.999 and amplitude
-within 2 %; the one at 0.998 (`simple_tc1e-07`) is a case whose reference
-used EasySpin's compiled `fast` builder in the slow-motion limit.
+within 2 %. The other, `simple_tc1e-07` (cosine 0.998, amplitude 1.066), is a
+strict xfail: its reference is EasySpin's default `fast` output, which stopped
+its continued fraction early (with `Opt.Threshold=1e-10` EasySpin's own output
+moves by cosine 0.9979 / amplitude 1.069 and matches torchspin to cosine
+0.9999966, tested separately).
 
 M–pS–pI symmetry basis (`MpSymm`; derived rule since the B114/B115 fix,
 replacing the empirical rule of 2026-09-02).  Without director tilt, and with
