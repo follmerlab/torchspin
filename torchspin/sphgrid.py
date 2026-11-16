@@ -419,6 +419,16 @@ def _ang2vec(phi: np.ndarray, theta: np.ndarray) -> np.ndarray:
 
 
 def grid_triangulation(symmetry: str, N: int) -> tuple[np.ndarray, np.ndarray]:
+    """Triangle connectivity and solid angles of a SOPHE grid (EasySpin sphgrid.m);
+    see :func:`_grid_triangulation`.  Cached per ``(symmetry, N)`` (a fit or a
+    data-generation loop triangulates the same grid on every call); the arrays
+    returned are copies."""
+    tri, areas = _grid_triangulation(str(symmetry), int(N))
+    return tri.copy(), areas.copy()
+
+
+@functools.lru_cache(maxsize=64)
+def _grid_triangulation(symmetry: str, N: int) -> tuple[np.ndarray, np.ndarray]:
     """Triangle connectivity and solid angles of a SOPHE grid (EasySpin sphgrid.m).
 
     Returns ``(tri, areas)`` with ``tri`` an ``(nTri, 3)`` array of 0-based
