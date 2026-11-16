@@ -551,8 +551,11 @@ def resfields_batch(
 
     # ── Strain widths of the core transitions ────────────────────────────────
     # EasySpin evaluates the strain width of every transition at its own
-    # resonance field (eigenvectors there): batch over all (orientation,
-    # resonance) brackets, one "orientation" per resonance.  Computed before any
+    # resonance field: batch over all (orientation, resonance) brackets, one
+    # "orientation" per resonance.  The two eigenvectors of each transition are
+    # the ones of the candidate diagonalization (one Newton step, below the
+    # field tolerance, from B_res; the intensities use them too), so no second
+    # eigendecomposition is needed (B15-field).  Computed before any
     # hybrid expansion so the sub-lines of one core transition inherit its width
     # unchanged, as EasySpin does.
     widths_flat: Optional[torch.Tensor] = None
@@ -573,6 +576,7 @@ def resfields_batch(
                 mwFreq=exp.mwFreq,
                 pairs_flat=torch.stack([pi_bk, pj_bk], dim=1),
                 mI_levels=mI_levels,
+                eigvecs_flat=(psi_i, psi_j),
                 **({'ho_batch': (Q2[m_idx] if Q2 is not None else None,
                                  Q3[m_idx] if Q3 is not None else None)} if has_ho else {}),
             ).reshape(-1)
