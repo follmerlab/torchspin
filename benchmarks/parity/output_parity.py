@@ -172,6 +172,12 @@ def _cases():
     C['saffron_hyscore_14N_1H_128'] = lambda: saffron(
         SpinSystem(S=[0.5], g=[2.0023] * 3, Nucs='14N,1H', A=[[3, 3, 6], [2, 2, 8]], Q=[[-0.5, -0.5, 1.0], [0, 0, 0]]),
         PulseExperiment(Sequence='HYSCORE', Field=350, dt=0.016, nPoints=128, tau=0.1), SaffronOptions(GridSize=31))
+    C['saffron_thyme_echo'] = lambda: saffron(
+        SpinSystem(S=[0.5], g=[[2.006, 2.006, 2.002]], Nucs=['1H'], A=[[3.0, 3.0, 8.0]]),
+        PulseExperiment(Field=340.0, mwFreq=9.5, Sequence=[{'tp': 0.016, 'Flip': np.pi / 2}, 0.15,
+                                                           {'tp': 0.032, 'Flip': np.pi}, 0.15],
+                        DetWindow=[-0.02, 0.02], DetPhase=0.0),
+        SaffronOptions(SimulationMode='thyme', IntTimeStep=1e-4, GridSize=5))
     C['salt_14N_wband'] = lambda: salt(
         SpinSystem(S=[0.5], g=[[2.2, 2.2, 2.0]], Nucs='14N', A=[[4.0, 4.0, 5.0]], Q=[[0.84, 0.84, -1.68]]),
         Experiment(Field=3394.0, mwFreq=95.0), O(GridSize=19), freq_range=(5, 20), n_points=512, lw_mhz=0.2)
