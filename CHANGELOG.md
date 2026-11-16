@@ -8,6 +8,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **Real-pulse engine (thyme/spidyan): less work per acquisition point** (B11). The chronological event
+  order is cached on the exact event lengths (every orientation repeats the same per-point sequences),
+  free-evolution propagators are cached per orientation on the exact step (a 32 x 32 sweep needs about
+  65 distinct ones instead of 3000), and a detected free evolution is evaluated in the eigenbasis of the
+  static Hamiltonian, all time points at once, instead of one `U sigma U^dagger` product per step.
+  The caches are bit-identical; the closed form agrees with the step loop to 7e-13 (it does not
+  accumulate roundoff). Nitroxide two-pulse sweep 0.43 -> 0.34 s, three-pulse 32 x 32 1.83 -> 1.00 s,
+  transient echo detection 2.2 -> 0.29 s (1 thread).
+- **Real-pulse engine: pulse propagators from the waveform's period** (B10b). A lab-frame carrier sampled
+  on the simulation grid repeats its amplitude levels exactly every period: the undetected pulse
+  propagator is now (one period)^k times the remainder instead of one product per time step (4000 for a
+  32 ns pulse), runs of a constant level become matrix powers, and complex excitations compute one
+  matrix exponential per distinct level. Roundoff only (within 8e-13 end to end). Together with B11:
+  nitroxide two-pulse sweep 0.43 -> 0.15 s, three-pulse 32 x 32 1.83 -> 0.82 s, transient echo
+  2.2 -> 0.24 s.
+- **cardamom `Method='ISTOs'`: batched over steps and trajectories** (B9). One SciPy `expm` call for all
+  step propagators and one batched product per time step for all trajectories, instead of a Python
+  loop over every (step, trajectory) pair (5 million `expm` calls for 50 trajectories x 1000 steps).
+  Roundoff only (within 3e-16; the trajectory average sums in another order). Nitroxide 20 x 400:
+  8.9 -> 4.8 s; Cu(II) 10.9 -> 7.0 s.
+- **`mdload`: spin-label frames, global-rotation removal and protein-relative frames for all MD frames at
+  once** (B18) instead of per-frame Python loops (batched cross products, one batched SVD for the Kabsch
+  fits). Rotations bit-identical, frames within 6e-15. 5000 frames: label frames 0.21 -> 0.0005 s,
+  rotation removal 0.08 -> 0.008 s.
+
+- **saffron `ProductRule=True`: time signals from the occupied frequency bins only** (B12). Each zero-filled
+  peak buffer (512 x 512 for a 128-point HYSCORE) used to go through a full `ifft2` for every
+  orientation; the first `nPoints` are now taken as `E1 @ B[rows][:, cols] @ E2.T` over the few occupied
+  rows and columns, with exact twiddle phases (FFT when more than a quarter is occupied). Roundoff only
+  (within 1e-12). Product-rule HYSCORE (14N + 1H, 128 points) 0.47 -> 0.06 s; the default (no product
+  rule) path is unchanged.
+
 - **`esfit` levmar with `n_workers > 1`** evaluates its trial point and the Jacobian column-refresh probe
   in one pool round (B4); results are bit-identical to the serial fit. On cheap models the serial default
   is still as fast; the gain is for expensive ones.
