@@ -6,6 +6,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **`esfit` default target is `'fcn'`** (EasySpin 6's default) instead of `'auto'` (B131). `'auto'`
+  picked `'int'` for derivative-like data; integrating the residuals turns white noise into a random
+  walk, so on synthetic nitroxide fits the parameters landed up to 8 sigma from the truth (within
+  about 2 sigma with `'fcn'`). `'int'` and `'auto'` stay available for rugged fits from a poor start.
+
+### Fixed
+
+- **`esfit` uncertainties for `target='int'` and `'diff'`** (B131). The HC1 sandwich treated the
+  transformed residuals as independent and understated `pstd` 2-25x for `'int'` (Monte Carlo, 300 noise
+  realizations of a three-line derivative spectrum); its middle term is now `J' T diag(r^2) T' J` with
+  the untransformed residuals `r`. `'fcn'` uncertainties are unchanged.
+
 ## [0.9.38] — 2026-11-15
 
 ### Added
