@@ -2558,6 +2558,7 @@ def _optimize_levmar(
     for i in range(n):
         x1 = x.copy(); x1[i] += delta
         probes.append(x1)
+    parallel = _resolve_workers(options.n_workers, 2) > 1
     if _resolve_workers(options.n_workers, n + 1) > 1:
         # pool sized for the largest batch of the fit (the 2n-probe uncertainty Jacobian)
         R = _map_points(resid_fn, [untransform(xi) for xi in [x] + probes], options.n_workers, options.workers,
@@ -2599,12 +2600,23 @@ def _optimize_levmar(
             message = 'parameter step below threshold'
             break
         xnew = np.clip(x + h, xlb, xub)
-        Fnew, fnew = funeval(xnew)
         # refresh one Jacobian column by finite differences when its step was small
         j = (j % n) + 1
-        if abs(h[j - 1]) < 0.8 * norm_h:
+        refresh = abs(h[j - 1]) < 0.8 * norm_h
+        if refresh:
             xu = x.copy(); xu[j - 1] += delta
-            _, fu = funeval(xu)
+        if refresh and parallel:
+            # B4: the trial point and the refresh probe depend only on x and h, so they
+            # go to the pool together; recorded in the serial order (bit-identical)
+            R2 = _map_points(resid_fn, [untransform(xnew), untransform(xu)], options.n_workers,
+                             options.workers, size_hint=2 * n)
+            Fnew, fnew = finish(xnew, R2[0])
+            _, fu = finish(xu, R2[1])
+        else:
+            Fnew, fnew = funeval(xnew)
+            if refresh:
+                _, fu = funeval(xu)
+        if refresh:
             hu = xu - x
             J = J + np.outer((fu - f - J @ hu) / (hu @ hu), hu)
         J = J + np.outer((fnew - f - J @ h) / (h @ h), h)

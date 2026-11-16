@@ -8,6 +8,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **`esfit` levmar with `n_workers > 1`** evaluates its trial point and the Jacobian column-refresh probe
+  in one pool round (B4); results are bit-identical to the serial fit. On cheap models the serial default
+  is still as fast; the gain is for expensive ones.
+
 - **Projection kernel: both half-hats in one pass** (A4, `_projection.hat_segments_t`). The edge bins
   of every linear piece are integrated in one `(m, 8)` pass with fewer operations (Simpson as
   `L/6 (Lp (2wp + wq) + Lq (2wq + wp))`, signed weights, one scatter). Roundoff only: outputs within
