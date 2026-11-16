@@ -28,6 +28,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   loop over every (step, trajectory) pair (5 million `expm` calls for 50 trajectories x 1000 steps).
   Roundoff only (within 3e-16; the trajectory average sums in another order). Nitroxide 20 x 400:
   8.9 -> 4.8 s; Cu(II) 10.9 -> 7.0 s.
+- **`mdload`: spin-label frames, global-rotation removal and protein-relative frames for all MD frames at
+  once** (B18) instead of per-frame Python loops (batched cross products, one batched SVD for the Kabsch
+  fits). Rotations bit-identical, frames within 6e-15. 5000 frames: label frames 0.21 -> 0.0005 s,
+  rotation removal 0.08 -> 0.008 s.
 
 - **saffron `ProductRule=True`: time signals from the occupied frequency bins only** (B12). Each zero-filled
   peak buffer (512 x 512 for a 128-point HYSCORE) used to go through a full `ifft2` for every
