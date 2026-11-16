@@ -202,7 +202,6 @@ def sf_peaks(inc_scheme_id: int,
         El = [E[fl - 1] for fl in free_l]
         Er = [E[fr - 1] for fr in free_r]
 
-        amp_6 = torch.einsum('ni,ij,jk,kl,lm,mn->', D, T2l, T1l, G, T1r, T2r)  # scalar check
         # Full rank-6 contraction: Amp[i,j,k,l,m,n] = D[ni]*T2l[ij]*T1l[jk]*G[kl]*T1r[lm]*T2r[mn]
         amp = torch.einsum('ij,jk,kl,lm,mn,ni->ijklmn', T2l, T1l, G, T1r, T2r, D)
 

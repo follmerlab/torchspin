@@ -53,6 +53,9 @@ _CLOSEDPHI_1OCT = frozenset({'D2h', 'D4h', 'D6h', 'D3d', 'Th', 'Oh'})
 
 
 _INTERP_MATRIX_MAX = 8_000_000     # n_coarse × n_fine above which the scipy splines are used
+# Facets per slot from which the slot projections run in parallel workers; below,
+# the per-op Python overhead dominates and the GIL serializes a thread pool.
+_POOL_MIN_FACETS = 4000
 
 
 @functools.lru_cache(maxsize=16)
@@ -248,6 +251,71 @@ def _interp_sph(
 _slot_state = threading.local()
 
 
+def _slot_layout(all_B, all_pairs, n_orient, unpaired='skip'):
+    """Slot bookkeeping of a per-orientation line list, vectorized.
+
+    A slot is a level pair ``(u, v)`` plus its occurrence index (looping
+    transitions can resonate more than once): at every orientation the
+    resonances are ordered by ``(u, v, B)`` (stable) and numbered per pair.
+    Orientations without level pairs (perturbation path) are index-matched:
+    resonance ``i`` goes to slot ``('idx', i)``.  Slots are numbered in order of
+    first appearance, orientation by orientation and, within one, in that order.
+
+    ``unpaired='skip'`` drops orientations without pairs when any orientation has
+    them (``pepper``); ``'index'`` index-matches them (``pepper_autograd``).
+
+    Returns ``(k, pos, slot, keys, B_flat)`` for the kept resonances: orientation,
+    position in ``B_flat`` (the concatenation of every non-empty ``all_B[k]`` in
+    orientation order, as a NumPy array), slot number, and the slot keys
+    (``(u, v, occurrence)`` or ``('idx', i)``) in slot order.  One host copy per
+    call instead of one per orientation.
+    """
+    lens = [int(b.numel()) if b is not None else 0 for b in all_B]
+    ks = [k for k in range(n_orient) if lens[k] > 0]
+    empty = np.zeros(0, dtype=np.int64)
+    if not ks:
+        return empty, empty, empty, [], np.zeros(0)
+    B_flat = torch.cat([all_B[k].detach().reshape(-1) for k in ks]).cpu().numpy()
+    no_pairs = all_pairs is None or all(p is None for p in all_pairs)
+    paired = [(not no_pairs) and all_pairs[k] is not None for k in ks]
+    keep_o = [pk or no_pairs or unpaired == 'index' for pk in paired]
+    lens_k = np.asarray([lens[k] for k in ks], dtype=np.int64)
+    offsets = np.concatenate([[0], np.cumsum(lens_k)[:-1]])
+    k_all = np.repeat(np.asarray(ks, dtype=np.int64), lens_k)
+    i_all = np.arange(lens_k.sum(), dtype=np.int64) - np.repeat(offsets, lens_k)
+    if no_pairs:
+        # index-matched (perturbation path): resonance i of every orientation is slot i
+        return k_all, np.arange(i_all.size, dtype=np.int64), i_all, [('idx', i) for i in range(int(lens_k.max()))], B_flat
+    typ = np.repeat(np.asarray([0 if pk else 1 for pk in paired], dtype=np.int64), lens_k)
+    u = i_all.copy(); v = np.zeros_like(i_all)
+    if any(paired):
+        P = torch.cat([all_pairs[k].detach().reshape(-1, 2) for k, pk in zip(ks, paired) if pk]).cpu().numpy()
+        sel = typ == 0
+        u[sel] = P[:, 0]; v[sel] = P[:, 1]
+    Bkey = np.where(typ == 0, B_flat, 0.0)
+    keep = np.repeat(np.asarray(keep_o), lens_k)
+    pos = np.nonzero(keep)[0]
+    # per orientation: (u, v, B) for paired, index order otherwise; stable
+    order = pos[np.lexsort((i_all[pos], Bkey[pos], v[pos], u[pos], k_all[pos]))]
+    ko, to, uo, vo = k_all[order], typ[order], u[order], v[order]
+    n = order.size
+    new_grp = np.ones(n, dtype=bool)
+    new_grp[1:] = (ko[1:] != ko[:-1]) | (uo[1:] != uo[:-1]) | (vo[1:] != vo[:-1]) | (to[1:] != to[:-1])
+    grp_start = np.maximum.accumulate(np.where(new_grp, np.arange(n), 0))
+    occ = np.where(to == 0, np.arange(n) - grp_start, 0)
+    # one int64 per (type, u, v, occurrence): 1-D unique is much faster than axis=0
+    nu, nv, nc = int(uo.max()) + 1, int(vo.max()) + 1, int(occ.max()) + 1
+    code = ((to * nu + uo) * nv + vo) * nc + occ
+    uc, first, inv = np.unique(code, return_index=True, return_inverse=True)
+    rank = np.empty(uc.shape[0], dtype=np.int64)
+    rank[np.argsort(first, kind='stable')] = np.arange(uc.shape[0])
+    slot = rank[inv.reshape(-1)]
+    keys = [None] * uc.shape[0]
+    for r, f in zip(rank.tolist(), first.tolist()):
+        keys[r] = (int(uo[f]), int(vo[f]), int(occ[f])) if to[f] == 0 else ('idx', int(uo[f]))
+    return ko, order, slot, keys, B_flat
+
+
 def _transition_slots(all_B, all_I, all_W, all_pairs, n_orient):
     """Group per-orientation resonances into transition slots across the grid.
 
@@ -258,54 +326,39 @@ def _transition_slots(all_B, all_I, all_W, all_pairs, n_orient):
     Interpolation and projection then act on physically the same transition at
     every grid point. Without level pairs (perturbation path, whose slot
     structure is fixed by construction) the arrays are matched by index.
+    See :func:`_slot_layout`.
 
     Returns (B_arrs, I_arrs, W_arrs): lists of (n_orient,) float arrays; W_arrs
     is None when no widths were supplied.
     """
     have_widths = any(w is not None and w.numel() > 0 for w in all_W) if all_W is not None else False
-    if all_pairs is None or all(p is None for p in all_pairs):
-        n_slots = max((b.numel() if b is not None else 0) for b in all_B) if all_B else 0
-        B_arrs = [np.full(n_orient, np.nan) for _ in range(n_slots)]
-        I_arrs = [np.full(n_orient, np.nan) for _ in range(n_slots)]
-        W_arrs = [np.full(n_orient, np.nan) for _ in range(n_slots)] if have_widths else None
-        for k in range(n_orient):
-            B = all_B[k]
-            if B is None:
-                continue
-            Bn = B.detach().cpu().numpy(); In = all_I[k].detach().cpu().numpy()
-            Wn = all_W[k].detach().cpu().numpy() if (have_widths and all_W[k] is not None) else None
-            for i in range(Bn.shape[0]):
-                B_arrs[i][k] = Bn[i]; I_arrs[i][k] = In[i]
-                if Wn is not None and i < Wn.shape[0]:
-                    W_arrs[i][k] = Wn[i]
-        _slot_state.keys = None      # index-matched slots (perturbation path)
-        return B_arrs, I_arrs, W_arrs
-    slots: dict = {}
-    B_arrs: list = []; I_arrs: list = []; W_arrs: list = []
-    for k in range(n_orient):
-        B = all_B[k]; pairs = all_pairs[k]
-        if B is None or pairs is None or B.numel() == 0:
-            continue
-        Bn = B.detach().cpu().numpy(); In = all_I[k].detach().cpu().numpy()
-        Wn = all_W[k].detach().cpu().numpy() if (have_widths and all_W[k] is not None) else None
-        pn = pairs.detach().cpu().numpy()
-        order = sorted(range(Bn.shape[0]), key=lambda i: (int(pn[i, 0]), int(pn[i, 1]), float(Bn[i])))
-        occ: dict = {}
-        for i in order:
-            uv = (int(pn[i, 0]), int(pn[i, 1]))
-            c = occ.get(uv, 0); occ[uv] = c + 1
-            key = (uv[0], uv[1], c)
-            if key not in slots:
-                slots[key] = len(B_arrs)
-                B_arrs.append(np.full(n_orient, np.nan))
-                I_arrs.append(np.full(n_orient, np.nan))
-                W_arrs.append(np.full(n_orient, np.nan))
-            j = slots[key]
-            B_arrs[j][k] = Bn[i]; I_arrs[j][k] = In[i]
-            if Wn is not None and i < Wn.shape[0]:
-                W_arrs[j][k] = Wn[i]
-    _slot_state.keys = sorted(slots.keys(), key=lambda kk: slots[kk])   # (u, v, occurrence) per slot
-    return B_arrs, I_arrs, (W_arrs if have_widths else None)
+    no_pairs = all_pairs is None or all(p is None for p in all_pairs)
+    k, pos, slot, keys, B_flat = _slot_layout(all_B, all_pairs, n_orient, unpaired='skip')
+    n_slots = len(keys)
+    B_mat = np.full((n_slots, n_orient), np.nan)
+    I_mat = np.full((n_slots, n_orient), np.nan)
+    W_mat = np.full((n_slots, n_orient), np.nan) if have_widths else None
+    if n_slots:
+        ks = [kk for kk in range(n_orient) if all_B[kk] is not None and all_B[kk].numel() > 0]
+        B_mat[slot, k] = B_flat[pos]
+        I_flat = torch.cat([all_I[kk].detach().reshape(-1) for kk in ks]).cpu().numpy()
+        I_mat[slot, k] = I_flat[pos]
+        if have_widths:
+            parts = []
+            for kk in ks:
+                m = int(all_B[kk].numel())
+                w = all_W[kk]
+                wn = np.full(m, np.nan)
+                if w is not None:
+                    w = w.detach().reshape(-1).cpu().numpy()[:m]
+                    wn[:w.shape[0]] = w
+                parts.append(wn)
+            W_mat[slot, k] = np.concatenate(parts)[pos]
+    _slot_state.keys = None if no_pairs else keys   # (u, v, occurrence) per slot; None: index-matched
+    B_arrs = [row.copy() for row in B_mat]
+    I_arrs = [row.copy() for row in I_mat]
+    W_arrs = [row.copy() for row in W_mat] if have_widths else None
+    return B_arrs, I_arrs, W_arrs
 
 
 # Missing knots (B88, B75): the matrix resonance search covers Exp.Range only, so
@@ -318,18 +371,29 @@ _RESEARCH_PADS = (0.5, 1.0, 2.0, 4.0)
 
 def _pair_counts(all_B, all_pairs):
     """``{(u, v): counts}``: number of resonances of each level pair at every
-    orientation (int array).  Empty without level pairs (perturbation path)."""
+    orientation (int array).  Empty without level pairs (perturbation path).
+    Pairs appear in order of first occurrence (orientation, then ``(u, v)``)."""
     counts: dict = {}
     if all_pairs is None or all(p is None for p in all_pairs):
         return counts
     n_orient = len(all_B)
-    for k in range(n_orient):
-        B, P = all_B[k], all_pairs[k]
-        if B is None or P is None or B.numel() == 0:
-            continue
-        uv, c = np.unique(P.detach().cpu().numpy().astype(np.int64), axis=0, return_counts=True)
-        for (u, v), n in zip(uv, c):
-            counts.setdefault((int(u), int(v)), np.zeros(n_orient, dtype=np.int64))[k] = n
+    ks = [k for k in range(n_orient)
+          if all_B[k] is not None and all_pairs[k] is not None and all_B[k].numel() > 0]
+    if not ks:
+        return counts
+    P = [all_pairs[k].detach().reshape(-1, 2) for k in ks]
+    lens = np.asarray([int(p.shape[0]) for p in P], dtype=np.int64)
+    P = torch.cat(P).cpu().numpy().astype(np.int64)
+    K = np.repeat(np.asarray(ks, dtype=np.int64), lens)
+    nv = int(P[:, 1].max()) + 1
+    code = P[:, 0] * nv + P[:, 1]
+    uc, inv = np.unique(code, return_inverse=True)
+    inv = inv.reshape(-1)
+    C = np.bincount(inv * n_orient + K, minlength=uc.shape[0] * n_orient).reshape(uc.shape[0], n_orient)
+    first = np.full(uc.shape[0], n_orient, dtype=np.int64)
+    np.minimum.at(first, inv, K)
+    for i in np.lexsort((uc, first)):
+        counts[(int(uc[i] // nv), int(uc[i] % nv))] = C[i].astype(np.int64)
     return counts
 
 
@@ -2354,7 +2418,41 @@ def _pepper_single(
                     all_B_res, all_intens, all_widths, all_pairs, n_orient
                 )
                 slot_B, slot_I, slot_W = _filter_slots(slot_B, slot_I, slot_W, _post_thr)
-                for i_t in range(len(slot_B)):
+                if use_proj:
+                    # SOPHE triangle/zone projection: each facet contributes a
+                    # tent/rect density → smooth spectrum without quantization noise.
+                    # The slots are independent: interpolate and project them in
+                    # single-threaded workers (hundreds of mid-sized tensor ops lose
+                    # time with intra-op threads, B128) and accumulate in slot order,
+                    # so the result equals the 1-thread result at any thread count.
+                    def _proj_slot(i_t):
+                        B_c = slot_B[i_t]
+                        B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f)
+                        if B_f is None:
+                            return None
+                        if zero_field:
+                            # one position for all orientations: one point mass (exact zero-width facets)
+                            B_f = _zf_const_pos(B_f, B_c)
+                        I_f = _interp_slot(slot_I[i_t], grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
+                        if grid_sym == 'Dinfh':
+                            return _projectzones(B_f, I_f, _seg_wts, x_np)
+                        return _projecttriangles(_tri_f, _areas_f, B_f, I_f, x_np)
+                    from torchspin._linalg import pool_map as _pool_map, single_threaded as _single_threaded
+                    _n_fac = len(_seg_wts) if grid_sym == 'Dinfh' else int(np.asarray(_tri_f).shape[0])
+                    if _n_fac >= _POOL_MIN_FACETS:
+                        _contribs = _pool_map(_proj_slot, list(range(len(slot_B))))
+                    else:
+                        # small slots: Python overhead dominates and the GIL would
+                        # serialize a pool anyway; one thread, no wake-ups
+                        with _single_threaded():
+                            _contribs = [_proj_slot(i_t) for i_t in range(len(slot_B))]
+                    for i_t, contrib in enumerate(_contribs):
+                        if contrib is None:
+                            continue
+                        I_c = slot_I[i_t]
+                        _acc(i_t, torch.from_numpy(contrib * (2.0 * math.pi)), np.nanmax(np.abs(I_c)) if np.isfinite(I_c).any() else 0.0)
+                        used_projection = True
+                for i_t in range(0 if use_proj else len(slot_B)):
                     B_c = slot_B[i_t]
                     I_c = slot_I[i_t]
                     valid = ~np.isnan(B_c)
@@ -2366,86 +2464,76 @@ def _pepper_single(
                         B_f = _zf_const_pos(B_f, B_c)
                     I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
 
-                    if use_proj:
-                        # SOPHE triangle/zone projection: each facet contributes a
-                        # tent/rect density → smooth spectrum without quantization noise.
-                        if grid_sym == 'Dinfh':
-                            contrib = _projectzones(B_f, I_f, _seg_wts, x_np)
-                        else:
-                            contrib = _projecttriangles(_tri_f, _areas_f, B_f, I_f, x_np)
-                        _acc(i_t, torch.from_numpy(contrib * (2.0 * math.pi)), np.nanmax(np.abs(I_c)) if np.isfinite(I_c).any() else 0.0)
-                        used_projection = True
+                    # Fallback: per-orientation accumulation.
+                    # Used for has_strain (spatial Gaussians) or grids without a
+                    # standard triangulation (e.g. Ci symmetry → stick binning).
+                    if has_strain and slot_W is not None:
+                        W_c = slot_W[i_t]
+                        W_f = _interp_slot(W_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
                     else:
-                        # Fallback: per-orientation accumulation.
-                        # Used for has_strain (spatial Gaussians) or grids without a
-                        # standard triangulation (e.g. Ci symmetry → stick binning).
-                        if has_strain and slot_W is not None:
-                            W_c = slot_W[i_t]
-                            W_f = _interp_slot(W_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
-                        else:
-                            W_f = np.zeros(n_orient_fine)
+                        W_f = np.zeros(n_orient_fine)
 
-                        if not has_strain:
-                            # Vectorized stick binning for non-projectable no-strain grids
-                            # (e.g. Ci symmetry). Replaces O(n_fine) Python loop.
-                            _vld = (~np.isnan(B_f)) & (~np.isnan(I_f)) & (I_f > 0.0)
-                            if _vld.any():
-                                _Bv = torch.from_numpy(B_f[_vld])
-                                _Iv = torch.from_numpy(I_f[_vld]).to(spec.dtype)
-                                _wv = weights_fine[_vld].to(spec.dtype)
-                                _frac = (_Bv - exp.Range[0]) / dx
-                                _ilo  = _frac.floor().long()
-                                _ihi  = _ilo + 1
-                                _a    = (_frac - _ilo.to(_frac.dtype)).to(spec.dtype)
-                                _amp  = _wv * _Iv
-                                _mlo  = (_ilo >= 0) & (_ilo < exp.nPoints)
-                                _mhi  = (_ihi >= 0) & (_ihi < exp.nPoints)
-                                if _mlo.any():
-                                    (_row(i_t) if sep_trans else spec).scatter_add_(0, _ilo[_mlo],
-                                                      _amp[_mlo] * (1.0 - _a[_mlo]))
-                                if _mhi.any():
-                                    (_row(i_t) if sep_trans else spec).scatter_add_(0, _ihi[_mhi],
-                                                      _amp[_mhi] * _a[_mhi])
-                        else:
-                            for j in range(n_orient_fine):
-                                Bj = B_f[j]
-                                Ij = I_f[j]
-                                Wj = W_f[j]
-                                wj = weights_fine[j].item()
+                    if not has_strain:
+                        # Vectorized stick binning for non-projectable no-strain grids
+                        # (e.g. Ci symmetry). Replaces O(n_fine) Python loop.
+                        _vld = (~np.isnan(B_f)) & (~np.isnan(I_f)) & (I_f > 0.0)
+                        if _vld.any():
+                            _Bv = torch.from_numpy(B_f[_vld])
+                            _Iv = torch.from_numpy(I_f[_vld]).to(spec.dtype)
+                            _wv = weights_fine[_vld].to(spec.dtype)
+                            _frac = (_Bv - exp.Range[0]) / dx
+                            _ilo  = _frac.floor().long()
+                            _ihi  = _ilo + 1
+                            _a    = (_frac - _ilo.to(_frac.dtype)).to(spec.dtype)
+                            _amp  = _wv * _Iv
+                            _mlo  = (_ilo >= 0) & (_ilo < exp.nPoints)
+                            _mhi  = (_ihi >= 0) & (_ihi < exp.nPoints)
+                            if _mlo.any():
+                                (_row(i_t) if sep_trans else spec).scatter_add_(0, _ilo[_mlo],
+                                                  _amp[_mlo] * (1.0 - _a[_mlo]))
+                            if _mhi.any():
+                                (_row(i_t) if sep_trans else spec).scatter_add_(0, _ihi[_mhi],
+                                                  _amp[_mhi] * _a[_mhi])
+                    else:
+                        for j in range(n_orient_fine):
+                            Bj = B_f[j]
+                            Ij = I_f[j]
+                            Wj = W_f[j]
+                            wj = weights_fine[j].item()
 
-                                if np.isnan(Bj) or np.isnan(Ij) or Ij <= 0.0:
-                                    continue
+                            if np.isnan(Bj) or np.isnan(Ij) or Ij <= 0.0:
+                                continue
 
-                                fwhm_strain  = max(float(Wj), _min_fwhm)
-                                if strain_lorentz:
-                                    _acc(i_t, wj * _lorentzian_bins(x, np.array([float(Bj)]), np.array([fwhm_strain]),
-                                                                    np.array([float(Ij)]), _min_fwhm, phase=mw_phase))
-                                    continue
-                                fwhm_g_total = fwhm_strain  # global lw is convolved afterwards (EasySpin)
-                                fwhm_l       = 0.0
-                                if fwhm_l == 0.0:
-                                    if fwhm_g_total > 0.0:
-                                        sigma    = fwhm_g_total / _sqrt_8log2
-                                        peak_amp = float(Ij) * dx * _inv_sqrt_2pi / sigma
-                                        spec     = spec + wj * peak_amp * torch.exp(
-                                            -0.5 * ((x - Bj) / sigma) ** 2
-                                        )
-                                    else:
-                                        frac = (Bj - exp.Range[0]) / dx
-                                        ilo = math.floor(frac)
-                                        ihi = ilo + 1
-                                        a = frac - ilo
-                                        if 0 <= ilo < exp.nPoints:
-                                            spec[ilo] = spec[ilo] + wj * float(Ij) * (1.0 - a)
-                                        if 0 <= ihi < exp.nPoints:
-                                            spec[ihi] = spec[ihi] + wj * float(Ij) * a
+                            fwhm_strain  = max(float(Wj), _min_fwhm)
+                            if strain_lorentz:
+                                _acc(i_t, wj * _lorentzian_bins(x, np.array([float(Bj)]), np.array([fwhm_strain]),
+                                                                np.array([float(Ij)]), _min_fwhm, phase=mw_phase))
+                                continue
+                            fwhm_g_total = fwhm_strain  # global lw is convolved afterwards (EasySpin)
+                            fwhm_l       = 0.0
+                            if fwhm_l == 0.0:
+                                if fwhm_g_total > 0.0:
+                                    sigma    = fwhm_g_total / _sqrt_8log2
+                                    peak_amp = float(Ij) * dx * _inv_sqrt_2pi / sigma
+                                    spec     = spec + wj * peak_amp * torch.exp(
+                                        -0.5 * ((x - Bj) / sigma) ** 2
+                                    )
                                 else:
-                                    Bt = torch.tensor([Bj], dtype=torch.float64)
-                                    It = torch.tensor([float(Ij)], dtype=torch.float64)
-                                    _, line_i = makespec(exp.Range, exp.nPoints, Bt, It)
-                                    line_i = convspec(line_i, dx,
-                                                      fwhm_g=fwhm_g_total, fwhm_l=fwhm_l, deriv=0)
-                                    _acc(i_t, wj * line_i)
+                                    frac = (Bj - exp.Range[0]) / dx
+                                    ilo = math.floor(frac)
+                                    ihi = ilo + 1
+                                    a = frac - ilo
+                                    if 0 <= ilo < exp.nPoints:
+                                        spec[ilo] = spec[ilo] + wj * float(Ij) * (1.0 - a)
+                                    if 0 <= ihi < exp.nPoints:
+                                        spec[ihi] = spec[ihi] + wj * float(Ij) * a
+                            else:
+                                Bt = torch.tensor([Bj], dtype=torch.float64)
+                                It = torch.tensor([float(Ij)], dtype=torch.float64)
+                                _, line_i = makespec(exp.Range, exp.nPoints, Bt, It)
+                                line_i = convspec(line_i, dx,
+                                                  fwhm_g=fwhm_g_total, fwhm_l=fwhm_l, deriv=0)
+                                _acc(i_t, wj * line_i)
 
         else:
             # -----------------------------------------------------------

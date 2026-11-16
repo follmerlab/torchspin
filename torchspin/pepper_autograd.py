@@ -193,6 +193,13 @@ def _interp_matrix(symmetry: str, N_c: int, N_f: int, mode: str, linear: bool) -
     interpolating the columns of the identity."""
     n_c = sphgrid(symmetry, N_c)[0].numel()
     n_f = sphgrid(symmetry, N_f)[0].numel()
+    if (not linear and mode != 'val' and symmetry in _pep._CLOSEDPHI_1OCT
+            and n_c == N_c * (N_c + 1) // 2 and n_f == N_f * (N_f + 1) // 2
+            and n_c * n_f <= _pep._INTERP_MATRIX_MAX):
+        # G3 positions on the triangular one-octant grid: _interp_sph applies this
+        # very matrix to the values, so its columns are the matrix itself (building
+        # them by interpolating the identity column by column took ~2 s at [31 4])
+        return _pep._d2h_interp_matrix(N_c, N_f).copy()
     M = np.zeros((n_f, n_c))
     eye = np.eye(n_c)
     for j in range(n_c):
@@ -280,33 +287,11 @@ def _slots_t(all_B: list, all_I: list, all_pairs: list, n_orient: int, threshold
     have_W = all_W is not None and any(w is not None and w.numel() for w in all_W)
     W_flat = torch.cat([w for w in all_W if w is not None and w.numel()]) if have_W else None
     dev = B_flat.device
-    offsets = np.cumsum([0] + [(b.numel() if b is not None else 0) for b in all_B])
-    slots: dict = {}
-    s_idx, o_idx, f_idx = [], [], []
-    for k in range(n_orient):
-        B = all_B[k]
-        if B is None or B.numel() == 0:
-            continue
-        Bn = B.detach().cpu().numpy()
-        pn = all_pairs[k].detach().cpu().numpy() if all_pairs is not None and all_pairs[k] is not None else None
-        if pn is None:
-            for i in range(Bn.shape[0]):
-                key = ('idx', i)
-                slots.setdefault(key, len(slots))
-                s_idx.append(slots[key]); o_idx.append(k); f_idx.append(offsets[k] + i)
-            continue
-        order = sorted(range(Bn.shape[0]), key=lambda i: (int(pn[i, 0]), int(pn[i, 1]), float(Bn[i])))
-        occ: dict = {}
-        for i in order:
-            uv = (int(pn[i, 0]), int(pn[i, 1]))
-            c = occ.get(uv, 0); occ[uv] = c + 1
-            key = (uv[0], uv[1], c)
-            slots.setdefault(key, len(slots))
-            s_idx.append(slots[key]); o_idx.append(k); f_idx.append(offsets[k] + i)
-    n_slots = len(slots)
-    s_t = torch.tensor(s_idx, dtype=torch.long, device=dev)
-    o_t = torch.tensor(o_idx, dtype=torch.long, device=dev)
-    f_t = torch.tensor(f_idx, dtype=torch.long, device=dev)
+    o_idx, f_idx, s_idx, keys, _ = _pep._slot_layout(all_B, all_pairs, n_orient, unpaired='index')
+    n_slots = len(keys)
+    s_t = torch.as_tensor(s_idx, dtype=torch.long, device=dev)
+    o_t = torch.as_tensor(o_idx, dtype=torch.long, device=dev)
+    f_t = torch.as_tensor(f_idx, dtype=torch.long, device=dev)
     nan = torch.full((n_slots, n_orient), float('nan'), dtype=_F64, device=dev)
     B_s = nan.index_put((s_t, o_t), B_flat.to(_F64)[f_t])
     I_s = nan.index_put((s_t, o_t), I_flat.to(_F64)[f_t])

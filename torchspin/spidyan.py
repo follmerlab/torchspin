@@ -924,20 +924,23 @@ def _liouvillian(Ham, Gamma, eq_state_vec, dt):
     return L, sigma_ss
 
 
-def _build_propagator_table(Ham0, xOp, dt, vert_res, scale):
-    """Pre-compute propagators for all discrete amplitude levels."""
+def _build_propagator_table(Ham0, xOp, dt, vert_res, scale, levels=None):
+    """Pre-compute propagators for the discrete amplitude levels ``levels``
+    (default: all ``vert_res + 1``; the others stay ``None``).  A pulse whose
+    waveform visits few levels then needs few matrix exponentials."""
     table = [None] * (vert_res + 1)
-    for i_res in range(vert_res + 1):
+    for i_res in (range(vert_res + 1) if levels is None else levels):
         Ham1 = scale * (i_res - vert_res / 2) * np.real(xOp)
         table[i_res] = _propagator(Ham0 + Ham1, dt)
     return table
 
 
-def _build_liouvillian_table(Ham0, Gamma, eq_state_vec, xOp, dt, vert_res, scale):
-    """Pre-compute Liouvillians for all discrete amplitude levels."""
+def _build_liouvillian_table(Ham0, Gamma, eq_state_vec, xOp, dt, vert_res, scale, levels=None):
+    """Pre-compute Liouvillians for the discrete amplitude levels ``levels``
+    (default: all); see :func:`_build_propagator_table`."""
     L_table = [None] * (vert_res + 1)
     ss_table = [None] * (vert_res + 1)
-    for i_res in range(vert_res + 1):
+    for i_res in (range(vert_res + 1) if levels is None else levels):
         Ham1 = scale * (i_res - vert_res / 2) * np.real(xOp)
         L, ss = _liouvillian(Ham0 + Ham1, Gamma, eq_state_vec, dt)
         L_table[i_res] = L
@@ -1213,7 +1216,8 @@ def _build_pulse_propagators(evt, Ham0_rad, relaxation, n):
     if not has_imag and not use_relaxation:
         # Build lookup table
         U_table = _build_propagator_table(
-            Ham0_rad, evt.xOp, evt.TimeStep, vert_res, scale
+            Ham0_rad, evt.xOp, evt.TimeStep, vert_res, scale,
+            levels=np.unique(real_binary).tolist()
         )
 
         if evt.Detection:
@@ -1237,7 +1241,7 @@ def _build_pulse_propagators(evt, Ham0_rad, relaxation, n):
         eq_vec = relaxation.equilibriumState.reshape(-1)
         L_table, ss_table = _build_liouvillian_table(
             Ham0_rad, relaxation.Gamma, eq_vec, evt.xOp,
-            evt.TimeStep, vert_res, scale
+            evt.TimeStep, vert_res, scale, levels=np.unique(real_binary).tolist()
         )
 
         L_total = [[None] * n_wave for _ in range(n_phase_cycle)]

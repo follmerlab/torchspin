@@ -870,6 +870,38 @@ def pqorder(spins):
 # LANCZOS_VERIFY_FACTOR * Threshold (relative to its maximum) over the next interval.
 LANCZOS_VERIFY_FACTOR = 100.0
 
+# Nonzeros from which the Lanczos mat-vec is split over row blocks in a thread pool
+# (scipy's CSR mat-vec releases the GIL; below this the pool overhead wins).
+_MATVEC_POOL_NNZ = 200_000
+
+
+def _row_block_matvec(A):
+    """``q -> A @ q`` for a CSR matrix, split over row blocks in a thread pool when
+    the matrix is large and more than one thread is allowed.  Every row is computed
+    by the same scipy kernel in the same order, so the result is identical to
+    ``A @ q``."""
+    from torchspin.parallel import inner_threads
+    w = inner_threads()
+    if w <= 1 or getattr(A, 'format', None) != 'csr' or A.nnz < _MATVEC_POOL_NNZ:
+        return lambda q: A @ q
+    from torchspin._linalg import _executor
+    n = A.shape[0]
+    cuts = np.searchsorted(A.indptr, np.linspace(0, A.nnz, w + 1)[1:-1])   # equal nonzeros per block
+    bounds = [0] + sorted(set(int(c) for c in cuts if 0 < c < n)) + [n]
+    blocks = [(r0, r1, A[r0:r1]) for r0, r1 in zip(bounds[:-1], bounds[1:])]
+    ex = _executor(len(blocks))
+
+    def matvec(q):
+        y = np.empty(n, dtype=np.result_type(A.dtype, q.dtype))
+
+        def _blk(t):
+            r0, r1, Ab = t
+            y[r0:r1] = Ab @ q
+        list(ex.map(_blk, blocks))
+        return y
+    return matvec
+
+
 def chili_lanczos(A, b, z, threshold: float, max_steps: Optional[int] = None,
                   verify_factor: float = LANCZOS_VERIFY_FACTOR):
     """Spectrum s(z) = <b|(A + z)^-1|b> for a complex-symmetric A (pseudo-norm Lanczos).
@@ -907,8 +939,9 @@ def chili_lanczos(A, b, z, threshold: float, max_steps: Optional[int] = None,
     alpha = np.zeros(max_steps, dtype=complex); beta = np.zeros(max_steps, dtype=complex)
     candidate = None                      # (spectrum, step) that passed the Lentz test
     k_done = 0
+    matvec = _row_block_matvec(A)
     for k in range(max_steps):
-        y = A @ q
+        y = matvec(q)
         alpha[k] = q @ y
         y = y - alpha[k] * q - bq
         beta[k] = np.sqrt(y @ y)
