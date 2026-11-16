@@ -116,17 +116,29 @@ def test_grid_triangulation_cache_returns_copies():
 
 
 # ----------------------------------------------------------------------------- esfit memo
-def test_esfit_memo_skips_exact_repeats_only():
-    from torchspin.esfit import esfit, FitOptions
-    calls = []
+def test_esfit_memo_after_optimizer_only(monkeypatch):
+    """The final point is evaluated by the optimizer, again for the residuals and as
+    the center of the uncertainty stencil: with the memo the last two are served
+    (two fewer model calls), with identical results and evaluation counts."""
+    from torchspin.esfit import esfit, FitOptions, ModelWrapper
 
-    def model(p):
-        calls.append(np.asarray(p, float).tobytes())
-        x = np.linspace(-1, 1, 64)
-        return np.exp(-(x - p[0]) ** 2 / p[1])       # center and width (amplitude is autoscaled)
+    def run():
+        calls = []
 
-    data = model(np.array([0.1, 0.1])); calls.clear()
-    r = esfit(data, model, p0=np.array([0.0, 0.08]), vary=np.array([0.3, 0.05]),
-              options=FitOptions(method='levmar', max_iter=6, verbosity=0, compute_uncertainties=True))
-    assert len(calls) == len(set(calls)), 'an exact repeat reached the model'
-    assert np.allclose(r.pfit, [0.1, 0.1], atol=1e-5)
+        def model(p):
+            calls.append(np.asarray(p, float).tobytes())
+            x = np.linspace(-1, 1, 64)
+            return np.exp(-(x - p[0]) ** 2 / p[1])       # center and width (amplitude is autoscaled)
+
+        data = model(np.array([0.1, 0.1])); calls.clear()
+        r = esfit(data, model, p0=np.array([0.0, 0.08]), vary=np.array([0.3, 0.05]),
+                  options=FitOptions(method='levmar', max_iter=6, verbosity=0, compute_uncertainties=True))
+        return r, len(calls)
+
+    r1, n1 = run()
+    with monkeypatch.context() as m:
+        m.setattr(ModelWrapper, 'serve_memo', property(lambda self: False, lambda self, v: None))
+        r0, n0 = run()
+    assert n0 - n1 == 2
+    assert np.array_equal(r1.pfit, r0.pfit) and np.array_equal(r1.pstd, r0.pstd)
+    assert r1.n_evaluations == r0.n_evaluations

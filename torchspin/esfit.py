@@ -1038,14 +1038,16 @@ class ModelWrapper:
             return dataclasses.replace(opt, AccumMethod='linear')
         return opt
 
-    # The fit drivers evaluate some points more than once (levmar re-evaluates
-    # the accepted point at the end, esfit the final point for the residuals,
-    # the uncertainty estimate the center of its stencil): 5 of 24 simulations in
-    # a 4-parameter levmar fit.  The last few outputs are kept, keyed by the exact
-    # bytes of the parameter vector, so a repeat costs nothing and returns the very
-    # same array.  Only exact repeats hit; stochastic models (cardamom without a
-    # seed) then return the earlier draw instead of a new one.
+    # After the optimizer has returned, esfit evaluates the final point again for
+    # the residuals and the uncertainty estimate evaluates it as the center of its
+    # stencil.  The last few outputs are kept, keyed by the exact bytes of the
+    # parameter vector, and served once ``serve_memo`` is set (after the
+    # optimizer), so those repeats cost nothing and return the very same array.
+    # During the optimization every evaluation still reaches the model, so the
+    # evaluation counts, budgets and interrupt behavior are unchanged.  Stochastic
+    # models (cardamom without a seed) return the earlier draw at a served repeat.
     _MEMO_SIZE = 8
+    serve_memo = False
 
     def __getstate__(self):
         state = dict(self.__dict__)
@@ -1055,9 +1057,10 @@ class ModelWrapper:
     def __call__(self, pvec_active: np.ndarray, param_handler: ParameterHandler) -> np.ndarray:
         key = (id(param_handler), np.asarray(pvec_active, dtype=float).tobytes())
         memo = getattr(self, '_memo', ())
-        for k, out in memo:
-            if k == key:
-                return out.copy()
+        if self.serve_memo:
+            for k, out in memo:
+                if k == key:
+                    return out.copy()
         output = self._evaluate(pvec_active, param_handler)
         # replace the list as a whole: concurrent callers (thread backend) read snapshots
         self._memo = ([(key, output.copy())] + [e for e in memo if e[0] != key])[:self._MEMO_SIZE]
@@ -3133,7 +3136,9 @@ def esfit(
     
         pfit_vec = opt_result.x
     
-        # 7. Compute final fit and residuals
+        # 7. Compute final fit and residuals (repeats of points the optimizer
+        # evaluated are served from ModelWrapper's memo from here on)
+        model_wrapper.serve_memo = True
         residuals, rmsd, info = compute_residuals(
             pfit_vec, data, model_wrapper, param_handler, options
         )
