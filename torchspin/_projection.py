@@ -32,8 +32,9 @@ reference) and loses the position dependence of sub-bin facets.
 The hat-weighted integral of a linear piece is computed exactly: on each half of a hat the
 integrand is (linear density) × (linear weight), a quadratic, which Simpson's rule
 integrates exactly.  Every term is formed from the overlap of the piece with the half-hat
-and the relative position inside the piece (between 0 and 1), never from differences of
-O(bin index) quantities, so narrow pieces (density ∝ 1/width) lose no precision.  Bins whose
+and the offset inside the piece (the density at u is ``va + (dv/w)·(u − a)`` with
+``0 ≤ u − a ≤ w``), never from differences of O(bin index) densities, so narrow pieces
+(density ∝ 1/width) lose no precision.  Bins whose
 hat lies entirely inside one linear piece take the density value at the point; those are
 filled through running sums with an integer coverage count that keeps uncovered bins at
 exactly 0 (B47).
@@ -50,6 +51,9 @@ _F64 = torch.float64
 
 # Interiors of at most this many bins are filled bin by bin, longer ones by running sums.
 _SHORT_INTERIOR = 64
+
+# Sign of the hat weight on the rising (+) and falling (−) halves, see hat_segments_t.
+_HALF_SIGN = torch.tensor([1.0] * 4 + [-1.0] * 4, dtype=_F64)
 
 __all__ = ['hat_points_t', 'hat_segments_t', 'project_tents_t', 'project_zones_t',
            'projecttriangles_t', 'projectzones_t']
@@ -96,34 +100,34 @@ def hat_segments_t(n: int, a: torch.Tensor, b: torch.Tensor, va: torch.Tensor, v
         return spec
     a, b, va, vb, w, fa, fb = a[nz], b[nz], va[nz], vb[nz], w[nz], fa[nz], fb[nz]
     # Edge bins: the hats of fa, fa+1 contain a, those of fb, fb+1 contain b.  For
-    # fb <= fa + 2 the four bins fa .. fa+3 cover everything (unused ones get 0).
+    # fb <= fa + 2 the four bins fa .. fa+3 cover everything (unused ones get 0).  Both
+    # halves of the four hats are done in one (m, 8) pass: columns 0-3 are the rising
+    # halves [k − 1, k] (weight u − (k − 1)), columns 4-7 the falling halves [k, k + 1]
+    # (weight (k + 1) − u = −(u − (k + 1))).  Every overlap is kept, including those of
+    # zero length: at a = k exactly the clamp of a zero-length overlap carries the
+    # derivative with respect to a (torch.maximum/minimum split ties).
     k2 = torch.maximum(fb, fa + 2)
     cand = torch.stack([fa, fa + 1, k2, k2 + 1], dim=1)            # (m, 4)
-    kf = cand.to(_F64)
-    A, B, W = a[:, None], b[:, None], w[:, None]
-    VA, VB = va[:, None], vb[:, None]
-    dv = VB - VA
-    val = torch.zeros_like(kf)
-    for lo_off, rising in ((-1.0, True), (0.0, False)):
-        lo = kf + lo_off
-        hi = lo + 1.0
-        p = torch.maximum(A, lo)
-        q = torch.minimum(B, hi)
-        L = torch.clamp(q - p, min=0.0)
-        # positions inside the segment (0..1) and the hat weights at p, q
-        sp = (p - A) / W
-        sq = (q - A) / W
-        if rising:                                   # weight u − (k − 1)
-            wp, wq = p - lo, q - lo
-        else:                                        # weight (k + 1) − u
-            wp, wq = hi - p, hi - q
-        Lp = VA + dv * sp
-        Lq = VA + dv * sq
-        Lm = 0.5 * (Lp + Lq)
-        wm = 0.5 * (wp + wq)
-        val = val + (L / 6.0) * (Lp * wp + 4.0 * Lm * wm + Lq * wq)
-    inr = (cand >= 0) & (cand < n)
-    spec = spec.index_add(0, cand[inr], val[inr])
+    LO = torch.cat([cand - 1, cand], dim=1).to(_F64)               # (m, 8) half-hat starts
+    A, B = a[:, None], b[:, None]
+    dv = vb - va
+    VA, R = va[:, None], (dv / w)[:, None]                         # density, slope per unit u
+    p = torch.maximum(A, LO)
+    q = torch.minimum(B, LO + 1.0)
+    L = torch.clamp(q - p, min=0.0)
+    Lp = VA + R * (p - A)                                          # density at p, q
+    Lq = VA + R * (q - A)
+    base = torch.cat([LO[:, :4], LO[:, 4:] + 1.0], dim=1)          # where the weight is 0
+    sg = _HALF_SIGN.to(a.device)
+    wp = sg * (p - base)                                           # hat weights at p, q
+    wq = sg * (q - base)
+    # Simpson on (linear density) × (linear weight), exact for the quadratic:
+    # L/6 (Lp wp + 4 Lm wm + Lq wq) = L/6 (Lp (2 wp + wq) + Lq (2 wq + wp)).
+    t = (L / 6.0) * (Lp * (wp + wp + wq) + Lq * (wq + wq + wp))
+    val = t[:, :4] + t[:, 4:]
+    # Out-of-range bins go to a dump slot n (one scatter, no boolean gather).
+    idx = torch.where((cand >= 0) & (cand < n), cand, torch.full_like(cand, n))
+    spec = torch.cat([spec, spec.new_zeros(1)]).index_add(0, idx.reshape(-1), val.reshape(-1))[:n]
     # Interior bins fa+2 .. fb-1: the hat lies inside the segment, value L(k).
     lo_i = torch.clamp(fa + 2, min=0)
     hi_i = torch.clamp(fb, max=n)                    # exclusive
@@ -140,11 +144,11 @@ def hat_segments_t(n: int, a: torch.Tensor, b: torch.Tensor, va: torch.Tensor, v
         start = torch.repeat_interleave(lo_i[short], reps)
         offs = torch.arange(int(reps.sum()), device=dev) - torch.repeat_interleave(torch.cumsum(reps, 0) - reps, reps)
         kk = start + offs
-        a_s, w_s, va_s, dv_s = a[short][seg], w[short][seg], va[short][seg], dv[short, 0][seg]
+        a_s, w_s, va_s, dv_s = a[short][seg], w[short][seg], va[short][seg], dv[short][seg]
         spec = spec.index_add(0, kk, va_s + dv_s * ((kk.to(_F64) - a_s) / w_s))
     has = cnt_i > _SHORT_INTERIOR
     if bool(has.any()):
-        s1 = (dv[:, 0] / w)[has]
+        s1 = (dv / w)[has]
         s0 = va[has] - s1 * a[has]
         li, hj = lo_i[has], hi_i[has]
         S1 = torch.zeros(n + 1, dtype=_F64, device=dev).index_add(0, li, s1).index_add(0, hj, -s1)

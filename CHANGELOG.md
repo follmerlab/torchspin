@@ -8,6 +8,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **Projection kernel: both half-hats in one pass** (A4, `_projection.hat_segments_t`). The edge bins
+  of every linear piece are integrated in one `(m, 8)` pass with fewer operations (Simpson as
+  `L/6 (Lp (2wp + wq) + Lq (2wq + wp))`, signed weights, one scatter). Roundoff only: outputs within
+  9.2e-16 relative of 0.9.38 on the parity cases, gradients within 1.1e-15; zero-length overlaps (the
+  derivative at exact bin boundaries) are kept. Kernel 1.3-1.6x faster; end to end up to 1.16x
+  (Cu rhombic, default grid), 1.03-1.06x for most pepper and fit cases.
+
 - **`esfit` default target is `'fcn'`** (EasySpin 6's default) instead of `'auto'` (B131). `'auto'`
   picked `'int'` for derivative-like data; integrating the residuals turns white noise into a random
   walk, so on synthetic nitroxide fits the parameters landed up to 8 sigma from the truth (within
