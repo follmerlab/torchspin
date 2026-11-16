@@ -64,7 +64,11 @@ and $j(\omega_0)$ of the g and A anisotropy at $\tau_c$ (`fastmotion.py`).
 **Unsupported**
 ([§ Garlic](../../KNOWN_LIMITATIONS.md#garlic--what-is-and-is-not-ported)):
 
-- automatic sweep range;
-- natural-abundance isotope mixtures and multi-component input through `compisoloop`;
-- `Opt.separate`;
-- equivalent nuclei in the fast-motion regime, as in EasySpin.
+- equivalent nuclei in the fast-motion regime, as in EasySpin;
+- anisotropic rotational diffusion (`Diff` with two or three values) in the fast-motion regime
+  (use `chili`);
+- excitation geometries other than `mwMode` `'perpendicular'` and `'parallel'`.
+
+The fast-motion widths use `gFrame` and `AFrame` (they depend on the relative orientation of g and
+A; ignored before 0.9.39, B105), full g, A and Q matrices, and `Diff`/`logDiff` as
+`tcorr = 1/(6 Diff)` (B107).

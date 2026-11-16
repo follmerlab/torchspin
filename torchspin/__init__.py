@@ -112,7 +112,10 @@ from torchspin.oripotentialplot import oripotentialplot
 from torchspin.saffron import saffron, PulseExperiment, SaffronOptions
 from torchspin.signalprocessing import signalprocessing
 from torchspin.saffron_pathways import find_refocusing_pathways
-from torchspin.spinsystem import SpinSystem, nucspinrmv, nucspinkeep, nucspinadd, isotopologues, spinvec
+from torchspin.spinsystem import SpinSystem, nucspinrmv, nucspinkeep, nucspinadd, spinvec
+# B104: the public isotopologues is the EasySpin port (all isotope combinations,
+# natural or custom abundances); spinsystem.isotopologues is a legacy helper
+from torchspin.isotopologues import isotopologues
 from torchspin.sigeq import sigeq
 from torchspin.fdaxis import fdaxis
 from torchspin.plegendre import plegendre

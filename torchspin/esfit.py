@@ -59,8 +59,8 @@ class FitOptions:
         How the model output is scaled to the data before the residuals are
         formed. ``'lsq'``: least-squares scale (constrained to be
         non-negative, as in EasySpin), solved jointly with the baseline.
-        ``'maxabs'``: ``max|data| / max|model|``. ``'none'``: scale 1. Any
-        other value is treated as ``'none'``. With ``'lsq'`` the model must
+        ``'maxabs'``: ``max|data| / max|model|``. ``'none'``: scale 1. Other
+        values raise ``ValueError``. With ``'lsq'`` the model must
         carry the sign of the signal: fit an inversion-recovery curve with
         ``-exp(-t/T)``, not ``exp(-t/T)``.
     lsq_negative_scale : {'clip', 'abs'}, default 'clip'
@@ -438,8 +438,9 @@ class FitResult:
     corr : numpy.ndarray, shape (n_active, n_active), or None
         Correlation matrix derived from ``cov``. ``None`` as for ``pstd``.
     r_squared : float
-        Coefficient of determination, intended as ``1 - SS_res / SS_tot`` of
-        the untransformed residuals; see Notes.
+        Coefficient of determination ``1 - SS_res / SS_tot`` of the
+        untransformed residuals, ``SS_tot`` taken about the mean of the data
+        (``nan`` for constant data).
     reduced_chi_square : float
         ``sum(residuals**2) / max(n_data - n_active, 1)`` of the
         untransformed residuals: an estimate of the noise variance in data
@@ -470,14 +471,6 @@ class FitResult:
     --------
     esfit, FitOptions
 
-    Notes
-    -----
-    ``r_squared`` reconstructs the data as ``fit + residuals`` although
-    ``residuals = fit - data``, so ``SS_tot`` is taken about ``2 * fit -
-    data`` instead of the data. For a close fit the difference is small; for
-    a poor fit the value can be far off (even hugely negative). Compute
-    ``1 - sum(res.residuals**2) / sum((data - data.mean())**2)`` yourself
-    when the exact value matters.
     """
     pfit: np.ndarray
     pnames: list[str]
@@ -2165,10 +2158,14 @@ def _optimize_grid(
     best_f = objective_fn(p0)
 
     import itertools
-    combos = list(itertools.product(*grids))
-    if len(combos) > options.max_iter:
-        combos = combos[:options.max_iter]
-    grid_pts = np.array(combos)
+    n_grid = npts ** n
+    if n_grid > options.max_iter:
+        # B110: the grid used to be cut to its first max_iter points, which leave
+        # the leading parameters at their lowest grid values
+        raise ValueError(
+            f"esfit grid search: grid_points**n_active = {npts}**{n} = {n_grid} points "
+            f"exceeds max_iter = {options.max_iter}; lower grid_points or raise max_iter.")
+    grid_pts = np.array(list(itertools.product(*grids)))
     tracker = _tracker_of(objective_fn)
     tracker.eval_total = len(grid_pts) + 1
     grid_f = _eval_population(objective_fn, grid_pts, options.n_workers, options.workers)
@@ -2843,7 +2840,7 @@ def _jacobian_finite_diff(
 
 def _compute_fit_diagnostics(
     residuals: np.ndarray,
-    fit: np.ndarray,
+    data: np.ndarray,
     n_params: int
 ) -> dict:
     """
@@ -2852,9 +2849,9 @@ def _compute_fit_diagnostics(
     Parameters
     ----------
     residuals : np.ndarray
-        Fit residuals
-    fit : np.ndarray
-        Fitted values
+        Untransformed residuals ``fit - data``
+    data : np.ndarray
+        The data the fit was compared to (flattened)
     n_params : int
         Number of fitted parameters
     
@@ -2865,13 +2862,13 @@ def _compute_fit_diagnostics(
         reduced_chi_square: χ²/(n_data - n_params)
         noise_std: estimated noise level
     """
-    data = fit + residuals  # Reconstruct data
     n_data = len(residuals)
-    
-    # R²
+
+    # R² about the mean of the data (B100: it used to rebuild the data as
+    # fit + residuals = 2 fit - data)
     ss_res = np.sum(residuals**2)
     ss_tot = np.sum((data - np.mean(data))**2)
-    r_squared = 1 - ss_res / (ss_tot + 1e-12)
+    r_squared = 1 - ss_res / ss_tot if ss_tot > 0 else float('nan')
     
     # Reduced chi-square: ss_res / dof
     # Without an independent noise estimate, this equals the estimated noise
@@ -2886,6 +2883,33 @@ def _compute_fit_diagnostics(
         'reduced_chi_square': reduced_chi_square,
         'noise_std': noise_std
     }
+
+
+_METHODS = ('simplex', 'lbfgsb', 'powell', 'grid', 'montecarlo', 'genetic', 'swarm', 'global', 'levmar', 'trf')
+# methods that work with infinite bounds (the others normalize to [lb, ub] or sample in it)
+_UNBOUNDED_OK = ('lbfgsb', 'powell', 'trf')
+
+
+def _validate_fit_options(options: 'FitOptions') -> None:
+    """Reject invalid FitOptions before any model evaluation (B112, B113)."""
+    def _one_of(name, allowed):
+        v = getattr(options, name)
+        if v not in allowed:
+            raise ValueError(f"FitOptions.{name} must be one of {allowed}, got {v!r}.")
+    _one_of('method', _METHODS)
+    _one_of('autoscale', ('lsq', 'maxabs', 'none'))
+    _one_of('lsq_negative_scale', ('clip', 'abs'))
+    _one_of('target', ('fcn', 'int', 'diff', 'auto'))
+    _one_of('workers', ('auto', 'processes', 'threads'))
+    nw = options.n_workers
+    if isinstance(nw, str):
+        if nw != 'auto':
+            raise ValueError(f"FitOptions.n_workers must be a positive int or 'auto', got {nw!r}.")
+    elif isinstance(nw, bool) or not isinstance(nw, (int, np.integer)) or nw < 1:
+        raise ValueError(f"FitOptions.n_workers must be a positive int or 'auto', got {nw!r}.")
+    b = options.baseline
+    if isinstance(b, bool) or not isinstance(b, (int, np.integer)) or b < -1:
+        raise ValueError(f"FitOptions.baseline must be an int >= -1, got {b!r}.")
 
 
 def esfit(
@@ -2957,8 +2981,7 @@ def esfit(
         and fields as each other, the layout of ``vary``, and ``p0`` within
         them. Array style: a missing ``lb`` or ``ub`` is ``-inf`` or
         ``+inf``, which only ``'lbfgsb'``, ``'powell'`` and ``'trf'`` handle;
-        the other methods need finite bounds (with an infinite bound they
-        return NaN parameters, raise, or, for ``'grid'``, return ``p0``).
+        the other methods raise ``ValueError`` for an infinite bound.
     options : FitOptions, optional
         Algorithm, scaling, baseline, target, budget, parallelism and
         progress. Default ``FitOptions()``.
@@ -2979,11 +3002,13 @@ def esfit(
         every parameter is fixed; in the dict style, if a key is not in
         ``p0``, an object has no such field, a shape does not match the
         field, only one of ``lb``/``ub`` is given, they name different keys
-        or fields, ``lb > ub``, or ``p0`` lies outside ``[lb, ub]``; if
-        ``FitOptions.method`` is unknown (checked after the initial model
-        evaluation). An unknown ``FitOptions.target`` or
-        ``lsq_negative_scale``, or a model output with the wrong number of
-        values, raises ``ValueError`` only at the final evaluation, after the
+        or fields, ``lb > ub``, or ``p0`` lies outside ``[lb, ub]``; if a
+        varied parameter has an infinite bound and the method needs finite
+        ones; if ``FitOptions.method``, ``autoscale``, ``lsq_negative_scale``,
+        ``target``, ``workers``, ``n_workers`` or ``baseline`` is invalid
+        (checked before any model evaluation); for ``'grid'``, if the grid has
+        more than ``max_iter`` points. A model output with the wrong number of
+        values raises ``ValueError`` only at the final evaluation, after the
         optimizer has run (see Notes).
     TypeError
         In the dict style, if a varied field is neither a number nor a
@@ -3068,6 +3093,7 @@ def esfit(
     data = np.asarray(data).ravel()
     if options is None:
         options = FitOptions()
+    _validate_fit_options(options)
 
     # Resolve target='auto' (opt-in since B131; the default is 'fcn', as in
     # EasySpin 6): 'int' for derivative-like data (mean << std, typical of
@@ -3096,6 +3122,12 @@ def esfit(
     pvec_0 = param_handler.to_vector(p0)
     lb_vec, ub_vec = param_handler.get_bounds()
     pnames = param_handler.get_names()
+    if options.method not in _UNBOUNDED_OK and not (np.all(np.isfinite(lb_vec)) and np.all(np.isfinite(ub_vec))):
+        # B111: these methods returned NaN parameters, raised mid-run, or (grid)
+        # returned p0 with success=True
+        raise ValueError(
+            f"esfit: method '{options.method}' needs finite bounds for every varied "
+            f"parameter; give both lb and ub (or vary), or use one of {_UNBOUNDED_OK}.")
     
     if options.verbosity > 0:
         print(f"  Parameters: {param_handler.n_active} variable, {param_handler.n_params - param_handler.n_active} fixed")
@@ -3122,8 +3154,6 @@ def esfit(
     # 6. Run optimization
     if options.verbosity > 0:
         print("\nOptimizing...")
-    if options.method not in ('simplex', 'lbfgsb', 'powell', 'grid', 'montecarlo', 'genetic', 'swarm', 'global', 'levmar', 'trf'):
-        raise ValueError(f"Unknown method: '{options.method}'")
 
     # FitOptions.devices for the worker pools of this fit only; reset on every exit path,
     # so a later pool (another fit, ml.simulate_batch) is not pinned to this fit's GPUs
@@ -3200,7 +3230,7 @@ def esfit(
             }
     
         # 9. Compute fit diagnostics
-        diagnostics = _compute_fit_diagnostics(info['residuals_raw'], info['fit'], len(pfit_vec))
+        diagnostics = _compute_fit_diagnostics(info['residuals_raw'], data, len(pfit_vec))
     
         # 10. Construct result object
         result = FitResult(
