@@ -207,6 +207,98 @@ def _interp_matrix(symmetry: str, N_c: int, N_f: int, mode: str, linear: bool) -
     return M
 
 
+@lru_cache(maxsize=32)
+def _grid_interp_ops(symmetry: str, N_c: int, N_f: int, linear: bool):
+    """Small operators of ``pepper._interp_grid`` (EasySpin gridinterp G3 / L1 on
+    the rectified (θ row × φ column) array), so that it can be applied to many
+    slots on the graph without a dense ``(n_fine, n_coarse)`` matrix (29041 × 1861,
+    432 MB and ~9 s to build by columns for Ci at [31 4]).
+
+    Returns ``(rows, fine)``: ``rows[r] = (idx, B)`` gives row ``r`` of the
+    rectified array as ``values[idx] @ B.T`` (φ resampling with the cubic or linear
+    row interpolation of ``_interp_grid``); ``fine`` is ``('cubic', Lx, Ly)`` with
+    the not-a-knot cubic interpolation weights in θ-row and φ-column index
+    (FITPACK's ``s = 0`` bicubic of ``RectBivariateSpline`` is that tensor-product
+    spline, as in ``pepper._d2h_interp_matrix``), or ``('linear', r0, c0, fr, fc)``
+    for the bilinear evaluation.  Returns None where the dense route must be kept
+    (fewer than 4 rows or columns for the cubic)."""
+    from scipy.interpolate import CubicSpline
+    maxPhi, closedPhi, nOct = _pep.gridparam(symmetry)
+    periodic = not closedPhi
+    full = nOct == 8
+    dlen = 4 if full else nOct
+    nr = 2 * N_c - 1 if full else N_c
+    nc = dlen * (N_c - 1) + 1
+    cubic = not linear
+    if cubic and (nr < 4 or nc < 4):
+        return None
+
+    def row_op(m, is_periodic, reverse=False):
+        E = np.eye(m)
+        if is_periodic:
+            E = np.vstack([E, E[:1]])
+        n = E.shape[0]
+        xx = np.linspace(1.0, float(n), nc)
+        if cubic:
+            S = CubicSpline(np.arange(1, n + 1), E, axis=0,
+                            bc_type='periodic' if is_periodic else 'clamped')(xx)
+        else:
+            k = np.minimum(np.maximum(np.floor(xx - 1).astype(int), 0), n - 2)
+            S = E[k] + (xx - (k + 1))[:, None] * (E[k + 1] - E[k])
+        return S[:, ::-1].copy() if reverse else S
+
+    rows = [(np.array([0]), np.ones((nc, 1)))]
+    idx = 1
+    ln = dlen + 1 - int(periodic)
+    for _ in range(1, N_c - 1):
+        rows.append((np.arange(idx, idx + ln), row_op(ln, periodic)))
+        idx += ln
+        ln += dlen
+    eq = np.eye(ln)
+    rows.append((np.arange(idx, idx + ln), np.vstack([eq, eq[:1]]) if periodic else eq))
+    if full:
+        idx += ln
+        ln -= dlen
+        for _ in range(N_c, 2 * N_c - 2):
+            rows.append((np.arange(idx, idx + ln), row_op(ln, periodic, reverse=True)))
+            idx += ln
+            ln -= dlen
+        rows.append((np.array([idx]), np.ones((nc, 1))))
+    assert len(rows) == nr and all(B.shape[0] == nc for _, B in rows)
+
+    phi_f, theta_f, _, _ = sphgrid(symmetry, N_f)
+    phi_f = phi_f.numpy(); theta_f = theta_f.numpy()
+    if full:
+        iphi = (1 + 4 * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + 2 * (N_c - 1) * (theta_f / math.pi)) - 1
+    else:
+        iphi = (1 + nOct * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + (N_c - 1) * (theta_f / (math.pi / 2))) - 1
+    iphi = np.clip(iphi, 0, nc - 1); ithe = np.clip(ithe, 0, nr - 1)
+    if cubic:
+        Lx = CubicSpline(np.arange(nr), np.eye(nr), axis=0)(ithe)      # (n_f, nr)
+        Ly = CubicSpline(np.arange(nc), np.eye(nc), axis=0)(iphi)      # (n_f, nc)
+        return rows, ('cubic', Lx, Ly)
+    r0 = np.minimum(np.floor(ithe).astype(int), nr - 2); c0 = np.minimum(np.floor(iphi).astype(int), nc - 2)
+    return rows, ('linear', r0, c0, ithe - r0, iphi - c0)
+
+
+def _grid_interp_apply_t(vals: torch.Tensor, ops) -> torch.Tensor:
+    """Apply :func:`_grid_interp_ops` to ``(n_slots, n_coarse)`` finite values."""
+    dev = vals.device
+    rows, fine = ops
+    Z = torch.stack([vals[:, torch.as_tensor(idx, device=dev)] @ torch.as_tensor(B, dtype=_F64, device=dev).T
+                     for idx, B in rows], dim=1)                               # (S, nr, nc)
+    if fine[0] == 'cubic':
+        Lx = torch.as_tensor(fine[1], dtype=_F64, device=dev)
+        Ly = torch.as_tensor(fine[2], dtype=_F64, device=dev)
+        return ((Z @ Ly.T) * Lx.T.unsqueeze(0)).sum(dim=1)
+    r0, c0, fr, fc = (torch.as_tensor(a, device=dev) for a in fine[1:])
+    fr = fr.to(_F64); fc = fc.to(_F64)
+    return ((1 - fr) * (1 - fc) * Z[:, r0, c0] + (1 - fr) * fc * Z[:, r0, c0 + 1]
+            + fr * (1 - fc) * Z[:, r0 + 1, c0] + fr * fc * Z[:, r0 + 1, c0 + 1])
+
+
 def _interp_l3_t(y: torch.Tensor, N_f: int) -> torch.Tensor:
     """Torch port of ``pepper._interp_l3`` (EasySpin gridinterp 'L3', axial grids)
     for a batch of slots ``y`` ``(n_slots, n)``; NaNs propagate."""
@@ -263,11 +355,19 @@ def _interp_rows_t(vals: torch.Tensor, symmetry: str, N_c: int, N_f: int, mode: 
     dev = vals.device
     if symmetry == 'Dinfh' and linear:
         return _interp_l3_t(vals, N_f)
-    M = torch.as_tensor(_interp_matrix(symmetry, N_c, N_f, mode, linear), dtype=_F64, device=dev)
+    lin = linear or mode == 'val'
+    # open-phi grids: separable operators (their dense matrix is large and slow to build)
+    grid_route = symmetry != 'Dinfh' and symmetry not in _pep._CLOSEDPHI_1OCT
+    ops = _grid_interp_ops(symmetry, N_c, N_f, lin) if grid_route else None
+    if ops is not None:
+        apply = lambda v: _grid_interp_apply_t(v, ops)              # noqa: E731
+    else:
+        M = torch.as_tensor(_interp_matrix(symmetry, N_c, N_f, mode, linear), dtype=_F64, device=dev)
+        apply = lambda v: v @ M.T                                     # noqa: E731
     nan_c = torch.isnan(vals.detach())
     if not bool(nan_c.any()):
-        return vals @ M.T
-    out = torch.nan_to_num(vals, nan=0.0) @ M.T
+        return apply(vals)
+    out = apply(torch.nan_to_num(vals, nan=0.0))
     vnp = vals.detach().cpu().numpy()
     mask = np.stack([np.isnan(_numpy_interp(vnp[s], symmetry, N_c, N_f, mode, linear)) for s in range(vals.shape[0])])
     return torch.where(torch.as_tensor(mask, device=dev), torch.full_like(out, float('nan')), out)

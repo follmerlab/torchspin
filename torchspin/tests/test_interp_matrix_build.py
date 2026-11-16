@@ -30,3 +30,28 @@ def test_interp_matrix_equals_column_build(sym, nc, nf, mode, linear):
     _pa._interp_matrix.cache_clear()
     got = _pa._interp_matrix(sym, nc, nf, mode, linear)
     assert np.array_equal(got, _by_columns(sym, nc, nf, mode, linear))
+
+
+@pytest.mark.parametrize('sym,nc,nf', [('Ci', 7, 25), ('Ci', 10, 37), ('C2h', 9, 33), ('C1', 7, 19),
+                                       ('C4h', 8, 29), ('S6', 7, 25), ('C6h', 7, 19)])
+@pytest.mark.parametrize('mode,linear', [('pos', False), ('val', True), ('pos', True)])
+def test_open_phi_separable_operators(sym, nc, nf, mode, linear):
+    """Open-phi grids are interpolated with separable operators (perf train P2a,
+    B1b) instead of the dense column-built matrix: same values to roundoff, same
+    NaN pattern for slots with missing knots, gradients flow."""
+    import torch
+    rng = np.random.default_rng(nc)
+    n_c = sphgrid(sym, nc)[0].numel()
+    V = torch.as_tensor(rng.standard_normal((3, n_c)) + 300.0)
+    ref = V.numpy() @ _by_columns(sym, nc, nf, mode, linear).T
+    got = _pa._interp_rows_t(V, sym, nc, nf, mode, linear)
+    assert np.abs(got.numpy() - ref).max() <= 1e-13 * np.abs(ref).max()
+    Vn = V.clone(); Vn[1, 3] = float('nan')
+    gotn = _pa._interp_rows_t(Vn, sym, nc, nf, mode, True).numpy()
+    refn = np.stack([_pa._numpy_interp(v, sym, nc, nf, mode, True) for v in Vn.numpy()])
+    assert np.array_equal(np.isnan(gotn), np.isnan(refn))
+    ok = ~np.isnan(refn)
+    assert np.abs(gotn[ok] - refn[ok]).max() <= 1e-13 * np.abs(refn[ok]).max()
+    Vg = V.clone().requires_grad_(True)
+    _pa._interp_rows_t(Vg, sym, nc, nf, mode, linear).sum().backward()
+    assert torch.isfinite(Vg.grad).all()
