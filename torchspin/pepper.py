@@ -53,9 +53,6 @@ _CLOSEDPHI_1OCT = frozenset({'D2h', 'D4h', 'D6h', 'D3d', 'Th', 'Oh'})
 
 
 _INTERP_MATRIX_MAX = 8_000_000     # n_coarse × n_fine above which the scipy splines are used
-# Facets per slot from which the slot projections run in parallel workers; below,
-# the per-op Python overhead dominates and the GIL serializes a thread pool.
-_POOL_MIN_FACETS = 4000
 
 
 @functools.lru_cache(maxsize=16)
@@ -2482,10 +2479,12 @@ def _pepper_single(
                 if use_proj:
                     # SOPHE triangle/zone projection: each facet contributes a
                     # tent/rect density → smooth spectrum without quantization noise.
-                    # The slots are independent: interpolate and project them in
-                    # single-threaded workers (hundreds of mid-sized tensor ops lose
-                    # time with intra-op threads, B128) and accumulate in slot order,
-                    # so the result equals the 1-thread result at any thread count.
+                    # Interpolate and project the slots on one thread (hundreds of
+                    # mid-sized tensor ops lose time with intra-op threads, B128) and
+                    # accumulate in slot order, so the result equals the 1-thread
+                    # result at any thread count.  A pool of single-threaded workers
+                    # was slower (Cu + 2 14N 3.7 s vs 0.8 s at 8 threads) and kept
+                    # ~1.8 MB per call in its worker threads (2 GB after 600 calls).
                     def _proj_slot(i_t):
                         B_c = slot_B[i_t]
                         B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f)
@@ -2498,15 +2497,9 @@ def _pepper_single(
                         if grid_sym == 'Dinfh':
                             return _projectzones(B_f, I_f, _seg_wts, x_np)
                         return _projecttriangles(_tri_f, _areas_f, B_f, I_f, x_np)
-                    from torchspin._linalg import pool_map as _pool_map, single_threaded as _single_threaded
-                    _n_fac = len(_seg_wts) if grid_sym == 'Dinfh' else int(np.asarray(_tri_f).shape[0])
-                    if _n_fac >= _POOL_MIN_FACETS:
-                        _contribs = _pool_map(_proj_slot, list(range(len(slot_B))))
-                    else:
-                        # small slots: Python overhead dominates and the GIL would
-                        # serialize a pool anyway; one thread, no wake-ups
-                        with _single_threaded():
-                            _contribs = [_proj_slot(i_t) for i_t in range(len(slot_B))]
+                    from torchspin._linalg import single_threaded as _single_threaded
+                    with _single_threaded():
+                        _contribs = [_proj_slot(i_t) for i_t in range(len(slot_B))]
                     for i_t, contrib in enumerate(_contribs):
                         if contrib is None:
                             continue
