@@ -389,6 +389,32 @@ def sf_evolve(inc_scheme_id: int,
         n1, n2 = F.shape[0], P2.shape[0]
         return (F * DT).reshape(n1, -1) @ P2.reshape(n2, -1).T
 
+    def _chain_2d(dims, El, Er, pairs, n_pts, dts):
+        """2D signal of free evolutions a = 0..m-1 (evolution a incremented in dimension
+        dims[a]) separated by the mixing pairs (Tl, Tr):
+            signal[k1, k2] = Σ_ip D[p, i]·[P_m Tl_m-1 ... Tl_1 P_1 G Q_1 Tr_1 ... Q_m]_ip,
+        P_a = diag(exp(-2πi El_a t)), Q_a = diag(exp(+2πi Er_a t)), t = k_dims[a]·dt_dims[a];
+        the peaks are those of sf_peaks.  Built in chunks of dimension-1 points."""
+        n1, n2 = int(n_pts[0]), int(n_pts[1])
+        N = G.shape[-1]
+        k2 = torch.arange(n2, dtype=torch.float64, device=device).unsqueeze(1)
+        chunk = max(1, (1 << 22) // max(1, n2 * N * N))
+        out = []
+        for s0 in range(0, n1, chunk):
+            k1 = torch.arange(s0, min(n1, s0 + chunk), dtype=torch.float64, device=device).unsqueeze(1)
+            M = G.to(dtype).reshape(1, 1, N, N)
+            for a, d in enumerate(dims):
+                kk, sh = (k1, (-1, 1, N)) if d == 0 else (k2, (1, -1, N))
+                el = torch.exp((-2j * math.pi * dts[d]) * kk * El[a].unsqueeze(0)).reshape(sh)
+                er = torch.exp((+2j * math.pi * dts[d]) * kk * Er[a].unsqueeze(0)).reshape(sh)
+                M = el.unsqueeze(-1) * M * er.unsqueeze(-2)
+                if a < len(dims) - 1:
+                    Tl, Tr = pairs[a]
+                    M = Tl @ M @ Tr
+            M = M.expand(k1.shape[0], n2, N, N)
+            out.append((M * DT).sum(dim=(-2, -1)))
+        return torch.cat(out, dim=0)
+
     if inc_scheme_id == 1:
         # [1]: 3-pulse ESEEM (sf_evolve case 1)
         nP = n_points[0] if isinstance(n_points, (list, tuple)) else n_points
@@ -415,40 +441,18 @@ def sf_evolve(inc_scheme_id: int,
         P2 = _steps(nP2, E[free_l[1] - 1], E[free_r[1] - 1], -1.0, +1.0, dt[1])
         return _detect_2d(T1l @ (P1 * G) @ T1r, P2)
 
-    elif inc_scheme_id in (12, 14):
-        # [1 2 1] (dim1: E1 + E3, dim2: E2) or [1 1 2] (dim1: E1 + E2, dim2: E3)
-        nP1, nP2 = n_points
-        T1l, T1r, T2l, T2r = mixing_mats[0], mixing_mats[1], mixing_mats[2], mixing_mats[3]
+    elif inc_scheme_id in (12, 14, 15, 17):
+        # B130: three or four free evolutions separated by the mixing pairs, each evolution
+        # incremented in its own dimension (EasySpin sf_peaks.c frequencies):
+        #   [1 2 1] (12), [1 1 2] (14), [1 2 2 1] (15), [1 1 2 2] (17).
+        # Up to 0.9.38 schemes 12, 15 and 17 placed the evolutions in the wrong order (and
+        # 15/17 kept only the diagonal phases of dimension 2); only 14 was right.  EasySpin
+        # has no time-domain route for these schemes.
+        dims = {12: (0, 1, 0), 14: (0, 0, 1), 15: (0, 1, 1, 0), 17: (0, 0, 1, 1)}[inc_scheme_id]
         El = [E[fl - 1] for fl in free_l]
         Er = [E[fr - 1] for fr in free_r]
-        a, b = (2, 1) if inc_scheme_id == 12 else (1, 2)      # second dim-1 evolution, dim-2 evolution
-        P1l = _steps(nP1, El[a], El[0], -1.0, -1.0, dt[0])
-        P1r = _steps(nP1, Er[0], Er[a], +1.0, +1.0, dt[0])
-        P2 = _steps(nP2, El[b], Er[b], -1.0, +1.0, dt[1])
-        return _detect_2d(T2l @ (P1l * T1l) @ G @ (P1r * T1r) @ T2r, P2)
-
-    elif inc_scheme_id in (15, 17):
-        # [1 2 2 1] (dim1: E1 + E4, dim2: E2 + E3) or [1 1 2 2] (dim1: E1 + E2, dim2: E3 + E4).
-        # As in the loop this replaces, the dimension-2 evolution acts through
-        # UU2 ⊙ (identity), i.e. only the diagonal phases of UU2 enter.
-        nP1, nP2 = n_points
-        T1l, T1r, T2l, T2r, T3l, T3r = (mixing_mats[0], mixing_mats[1], mixing_mats[2],
-                                        mixing_mats[3], mixing_mats[4], mixing_mats[5])
-        El = [E[fl - 1] for fl in free_l]
-        Er = [E[fr - 1] for fr in free_r]
-        if inc_scheme_id == 15:
-            i1, i2a, i2b = 3, 2, 1
-            r1, r2a, r2b = 3, 1, 2
-        else:
-            i1, i2a, i2b = 1, 3, 2
-            r1, r2a, r2b = 1, 2, 3
-        P1l = _steps(nP1, El[i1], El[0], -1.0, -1.0, dt[0])
-        P1r = _steps(nP1, Er[0], Er[r1], +1.0, +1.0, dt[0])
-        dl = torch.diagonal(_steps(nP2, El[i2a], El[i2b], -1.0, -1.0, dt[1]), dim1=1, dim2=2)   # (nP2, N)
-        dr = torch.diagonal(_steps(nP2, Er[r2a], Er[r2b], +1.0, +1.0, dt[1]), dim1=1, dim2=2)
-        F = T3l @ (T2l @ (P1l * T1l)) @ G @ ((P1r * T1r) @ T2r) @ T3r                      # (nP1, N, N)
-        P2 = dl.unsqueeze(2) * dr.unsqueeze(1)                                             # (nP2, N, N)
-        return _detect_2d(F, P2)
+        pairs = [(mixing_mats[2 * a], mixing_mats[2 * a + 1]) for a in range(len(dims) - 1)]
+        return _chain_2d(dims, El, Er, pairs, n_points, dt)
 
     else:
         raise NotImplementedError(

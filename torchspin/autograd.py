@@ -627,8 +627,8 @@ def differentiable_spectrum(
         Hyperfine couplings in MHz, any form ``SpinSystem.A`` accepts for one
         electron spin, typically principal values ``(nNuclei, 3)`` or full
         tensors ``(3*nNuclei, 3)``; a 1-D ``(3,)`` tensor is one nucleus.  Used
-        only together with ``Nucs`` (with ``method='pepper'`` an ``A`` without
-        ``Nucs`` is ignored).  Must be on the same device as ``g``.
+        only together with ``Nucs`` (``A`` without ``Nucs`` raises
+        ``ValueError``).  Must be on the same device as ``g``.
     D : torch.Tensor, optional
         Zero-field splitting in MHz (needs ``S >= 1``): a 0-d or ``(1,)``
         tensor ``D`` (E = 0), ``(2,)`` ``[D, E]`` or ``(3,)`` principal values
@@ -721,6 +721,9 @@ def differentiable_spectrum(
             raise ValueError(
                 f"{_name} is on device '{_t.device}' but g is on '{g.device}'. "
                 f"Move all tensors to the same device before calling differentiable_spectrum().")
+    if A is not None and Nucs is None:
+        # B108: method='pepper' used to drop A silently (SpinSystem raises the same)
+        raise ValueError("differentiable_spectrum: A needs Nucs (the nuclei it couples to).")
     if method == 'pepper':
         return _pepper_autograd_spectrum(g, lw_mT, mwFreq_GHz, B_range, nPoints, Harmonic, GridSize, GridSymmetry,
                                          device, S, Nucs, A, D, Temperature)

@@ -1264,7 +1264,7 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
                 if explicit:
                     om = [omega[iB], -np.conj(omega[iB])] if mirror else [omega[iB]]
                     r = [np.vdot(start, spla.spsolve(Lc - 1j * o * I, start)) for o in om]
-                    thisspec[iB] = 0.5 * (r[0] + np.conj(r[1])) if mirror else r[0]
+                    thisspec[iB] = (0.5 * (r[0] + np.conj(r[1])) if mirror else r[0]) / scale
                     continue
                 thisspec_i = np.empty(omega_eval.size, dtype=complex)
                 for k in range(omega_eval.size):
@@ -1278,11 +1278,16 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
             elif solver != 'L':
                 raise ValueError(f"Unknown Opt.Solver '{solver}'. Use 'L', '\\\\' or 'E'.")
             if not explicit:
-                thisspec = 0.5 * (thisspec_i[:nPoints] + np.conj(thisspec_i[nPoints:])) if mirror else thisspec_i
+                thisspec = (0.5 * (thisspec_i[:nPoints] + np.conj(thisspec_i[nPoints:])) if mirror
+                            else thisspec_i) / scale
         spec = spec + thisspec * weights[iOri]
 
     # ---- output scaling (chili.m) -------------------------------------------------
-    spec = spec / scale * 1e10 / 2
+    # B129: each solve is undone with its own scale (above).  EasySpin's chili.m divides
+    # the whole powder sum by the scale of the LAST orientation (and, for an explicit
+    # field sweep, of the last field point), which weights every other orientation by
+    # scale_i / scale_last: a deliberate deviation.
+    spec = spec * 1e10 / 2
     if opt.highField:
         spec = spec / 2
     if not field_sweep:

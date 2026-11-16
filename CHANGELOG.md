@@ -19,6 +19,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   picked `'int'` for derivative-like data; integrating the residuals turns white noise into a random
   walk, so on synthetic nitroxide fits the parameters landed up to 8 sigma from the truth (within
   about 2 sigma with `'fcn'`). `'int'` and `'auto'` stay available for rugged fits from a poor start.
+- **`Experiment.Harmonic` default by sweep mode only** (B101): 1 for field sweeps, 0 for frequency
+  sweeps and fixed-field experiments. A frequency sweep that also set `mwFreq` used to come back as a
+  first derivative.
+- **`Experiment.Temperature <= 0` raises `ValueError`** (B102). pepper, salt and the perturbative
+  paths treated it as infinite temperature (no Boltzmann factor) while garlic raised; `None` or `inf`
+  is infinite temperature.
+- **`torchspin.isotopologues` is the EasySpin port** from `torchspin.isotopologues` (all isotope
+  combinations, natural or custom abundances; returns `SpinSystem`s carrying `weight`) (B104). The old
+  export was a legacy helper that returned one `(weight, sys)` pair for the given isotopes and failed
+  for element names such as `'Cu'`; it stays available as `torchspin.spinsystem.isotopologues`.
+- **`esfit` checks its options and bounds before any model evaluation** (B111-B113): an unknown
+  `method`, `autoscale` (`'LSQ'` used to mean no scaling), `lsq_negative_scale`, `target`, `workers`,
+  `n_workers` or `baseline` raises `ValueError`; so does an infinite bound with a method that needs
+  finite ones (all but `'lbfgsb'`, `'powell'`, `'trf'`; they returned NaN parameters, raised mid-run, or,
+  for `'grid'`, returned `p0` with `success=True`).
+- **`esfit` grid search evaluates the whole grid or raises** (B110): a grid larger than `max_iter`
+  used to be cut to its first `max_iter` points, which never leave the lowest values of the leading
+  parameters.
 
 ### Fixed
 
@@ -26,6 +44,40 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   transformed residuals as independent and understated `pstd` 2-25x for `'int'` (Monte Carlo, 300 noise
   realizations of a three-line derivative spectrum); its middle term is now `J' T diag(r^2) T' J` with
   the untransformed residuals `r`. `'fcn'` uncertainties are unchanged.
+- **`FitResult.r_squared`** (B100) is `1 - SS_res/SS_tot` about the mean of the data. It used to
+  rebuild the data as `fit + residuals` (= `2 fit - data`) and could be far off for poor fits (reported
+  -1.5e12 where the true value was 0.7); `nan` for constant data.
+- **`SpinSystem.Ham` accepts EasySpin's `'Ham112'` keys** (B103), stored as `'112'`; the prefixed form
+  used to pass construction and crash in the Hamiltonian. Malformed or duplicate keys raise.
+- **Fast-motion garlic line widths use `gFrame` and `AFrame`** (B105). The widths depend on the relative
+  orientation of g and A and ignored both frames (a 90 degree A tilt on a nitroxide changed nothing,
+  now 58 % of the peak). Checked: rotating g and A together leaves the widths unchanged to 4e-15, an
+  `AFrame` equals the rotated full A matrix exactly, and the tilt effect on the line heights agrees with
+  chili in the fast limit (low-field/center height ratio changes by 0.59x in both).
+- **Fast-motion garlic with a full 3x3 `Q`** (B106) crashed; the quadrupole width uses the rotation
+  invariant sum of Q_ij^2 and equals the principal-value result exactly.
+- **garlic reads `Diff`/`logDiff` and `mwMode`** (B107). `Diff` (isotropic) selects the fast-motion regime
+  with `tcorr = 1/(6 Diff)`, as in EasySpin, instead of being ignored (an 85 % different spectrum);
+  `mwMode` overrides `Mode` (`'parallel'` gives the zero spectrum of S = 1/2), other geometries raise
+  `NotImplementedError`.
+- **`differentiable_spectrum` with `A` but no `Nucs` raises** (B108) instead of dropping `A`.
+- **`grid_convergence` with parameters that require grad** (B109) crashed in `np.asarray`.
+- **chili powder spectra with `Rescale=True` (the default)** (B129): every orientation (and, for an
+  explicit field sweep, every field point) is divided by the scale of its own Liouvillian. The powder
+  sum used to be divided by the last orientation's scale, as EasySpin's `chili.m` does, which weighted
+  each orientation by `scale_i/scale_last`: Rescale on vs off differed by 2.7e-4 (nitroxide, ordering
+  potential, 20 ns) and 7.5e-3 (Cu(II), potential, 5 ns); now 9e-8 and 3.8e-5 (Lanczos threshold).
+  Deliberate deviation from EasySpin (KNOWN_LIMITATIONS).
+- **saffron time-domain signal for 2D incrementation schemes `[1 2 1]`, `[1 2 2 1]` and `[1 1 2 2]`**
+  (B130; `Opt.TimeDomain=True`, and every saffron gradient, which forces the time domain). The free
+  evolutions were applied in the wrong order (and `[1 2 2 1]`/`[1 1 2 2]` kept only the diagonal
+  phases of the second dimension), so the ESEEM modulation was 50-155 % wrong. Now one routine chains
+  the evolutions and mixing steps in sequence order with the frequencies of EasySpin's `sf_peaks.c`.
+  Checked: on an exact frequency grid the time signal equals the inverse DFT of the frequency-domain
+  peaks to 4e-14 for every 2D scheme (`[1 2]`, `[1 1 2]` included); end to end (14N and 1H, custom
+  sequences) the frequency-domain result converges to the time-domain one as `Opt.Expand` grows
+  (1-2 % at Expand 7, as for HYSCORE), where before it stayed 50-155 % off. EasySpin has no
+  time-domain route for these schemes.
 
 ## [0.9.38] — 2026-11-15
 

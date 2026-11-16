@@ -99,13 +99,15 @@ def garlic(
           the Gaussian part is convolved.
         - ``tcorr`` (s) or ``logtcorr`` (log10 of s): rotational correlation
           time; selects the fast-motion regime when > 0.  Must lie in
-          [1e-13, 1e-3] s.
+          [1e-13, 1e-3] s.  ``Diff``/``logDiff`` (isotropic rotational
+          diffusion rate, s^-1) may be given instead: ``tcorr = 1/(6 Diff)``.
+        - ``gFrame``, ``AFrame``: tensor orientations, used by the fast-motion
+          widths (which depend on the relative orientation of g and A).
         - ``weight``, ``Abund``: component weight and custom isotope
           abundances.
 
-        Not used: frames (``gFrame``, ``AFrame``, ``QFrame``; for a relative
-        g/A orientation in the fast-motion regime give full 3x3 matrices),
-        ``D``, strains, ``Diff``/``logDiff``, ``sigma``, ``initState``.  Rejected
+        Not used: ``QFrame`` (the quadrupole term depends only on the Q
+        principal values), ``D``, strains, ``sigma``, ``initState``.  Rejected
         (``ValueError``): nonzero ``ee`` or ``nn``, ``Ham``, ``H0Extra``.
     exp : Experiment
         Field sweep: ``mwFreq`` (GHz) with ``Range`` or ``CenterSweep`` (mT).
@@ -120,8 +122,10 @@ def garlic(
         requires ``AccumMethod='explicit'``, the fast-motion default);
         ``Temperature`` (K; multiplies the intensities by the Boltzmann
         polarization, ``None`` or ``inf`` = no factor); ``Mode``
-        (``'perpendicular'``, or ``'parallel'``, which gives an all-zero
-        spectrum for S = 1/2).  Not used: ``mwMode``, ``SampleFrame``,
+        or ``mwMode`` (``'perpendicular'``, or ``'parallel'``, which gives an
+        all-zero spectrum for S = 1/2; ``mwMode`` overrides ``Mode``, other
+        ``mwMode`` geometries raise ``NotImplementedError``).  Not used:
+        ``SampleFrame``,
         ``CrystalSymmetry``, ``MolFrame``, ``SampleRotation``, ``Ordering``,
         ``lightBeam``, ``lightScatter``, ``ExciteWidth``, ``Orientations``,
         ``OrientationWeights``.
@@ -263,7 +267,20 @@ def _garlic_single(
     # -----------------------------------------------------------------------
     _validate_system(sys)
 
-    if sys.logtcorr is not None:
+    # B107: Diff/logDiff select the fast-motion regime as tcorr does
+    # (EasySpin garlic: tcorr = 1/(6 Diff)); isotropic diffusion only.
+    # (the log forms take precedence over the linear ones, as for tcorr/logtcorr)
+    if (sys.tcorr is not None or sys.logtcorr is not None) and (sys.Diff is not None or sys.logDiff is not None):
+        raise ValueError("garlic: give a correlation time (tcorr/logtcorr) or a diffusion rate "
+                         "(Diff/logDiff), not both.")
+    if sys.Diff is not None or sys.logDiff is not None:
+        diff = (10.0 ** torch.as_tensor(sys.logDiff, dtype=dt) if sys.logDiff is not None
+                else torch.as_tensor(sys.Diff, dtype=dt)).reshape(-1)
+        if diff.numel() != 1:
+            raise ValueError("garlic: the fast-motion regime needs an isotropic Diff "
+                             "(one value); use chili for anisotropic diffusion.")
+        tcorr = 1.0 / (6.0 * diff[0])
+    elif sys.logtcorr is not None:
         tcorr = 10.0 ** torch.as_tensor(sys.logtcorr, dtype=dt).reshape(-1)[0]
     elif sys.tcorr is not None:
         tcorr = torch.as_tensor(sys.tcorr, dtype=dt).reshape(-1)[0]
@@ -282,7 +299,7 @@ def _garlic_single(
                 "Please specify each nucleus separately (e.g., Nucs='1H,1H' instead of n=[2])"
             )
     on_graph = any(t is not None and torch.is_tensor(t) and t.requires_grad
-                   for t in (sys.g, sys.A, sys.Q, sys.tcorr, sys.logtcorr,
+                   for t in (sys.g, sys.A, sys.Q, sys.tcorr, sys.logtcorr, sys.Diff, sys.logDiff,
                              *(sys.lw if isinstance(sys.lw, (list, tuple)) else [sys.lw]),
                              *(sys.lwpp if isinstance(sys.lwpp, (list, tuple)) else [sys.lwpp])))
     # NB: a differentiable spectrum uses AccumMethod 'linear' (or 'explicit') below
@@ -315,6 +332,13 @@ def _garlic_single(
         mod_harmonic = 0
         conv_harmonic = harmonic
     mode = getattr(exp, 'Mode', 'perpendicular') or 'perpendicular'
+    mw_mode = getattr(exp, 'mwMode', None)
+    if mw_mode is not None:                          # B107: overrides Mode, as in pepper
+        if not isinstance(mw_mode, str) or mw_mode not in ('perpendicular', 'parallel'):
+            raise NotImplementedError(
+                "garlic supports Exp.mwMode 'perpendicular' and 'parallel' only; "
+                "use pepper for other excitation geometries.")
+        mode = mw_mode
     if mode not in ('perpendicular', 'parallel'):
         raise ValueError("exp.Mode must be 'perpendicular' or 'parallel'.")
     parallel_mode = mode == 'parallel'

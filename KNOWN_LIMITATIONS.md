@@ -1124,6 +1124,16 @@ Not ported: the `fast` C builder (`chili_lm.c`), `Sys.Exchange`,
 size (`Opt.LLMK`) must be chosen by the user, exactly as in EasySpin (there is
 no adaptive basis selection in EasySpin either).
 
+**`Rescale` per orientation (0.9.39, B129, deliberate deviation).** EasySpin's
+`chili.m` rescales each orientation's Liouvillian by its own `max|L|` but divides
+the summed powder spectrum by the scale of the last orientation only (and, for an
+explicit field sweep, of the last field point), so every other orientation is
+weighted by `scale_i/scale_last`. torchspin divides each solve by its own scale,
+which makes `Rescale` a pure numerical device: on and off agree to the solver
+tolerance. Powder spectra with an orienting potential or strongly anisotropic
+interactions move by up to about 1 % against EasySpin (Cu(II), potential,
+5 ns: 7.5e-3).
+
 ## ENDOR (`salt`)
 
 Since 2026-09-01 `salt()` implements EasySpin's fixed-field, rf-swept powder
@@ -1347,6 +1357,10 @@ and `Options.separate`. (Before the 0.9.38 docs this paragraph listed the last
 four as not ported; they had been ported earlier.) Equivalent nuclei are not allowed in the fast-motion regime (same as
 EasySpin). When no broadening is given, a requested derivative harmonic
 falls back to the absorption stick spectrum (EasySpin's auto-harmonic).
+In the fast-motion regime the Kivelson–Freed widths use `gFrame`, `AFrame` and
+full g/A/Q matrices, and `Diff`/`logDiff` (isotropic) select the regime with
+`tcorr = 1/(6 Diff)`; before 0.9.39 the frames and `Diff` were ignored and a
+full Q matrix crashed (B105–B107).
 
 ## Pulse EPR — saffron, spidyan and saffron_thyme are MATLAB-validated
 

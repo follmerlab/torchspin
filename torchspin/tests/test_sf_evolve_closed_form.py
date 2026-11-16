@@ -1,6 +1,6 @@
 """saffron_peaks.sf_evolve (perf train P2b, B2): the vectorized time-domain
 evolution must reproduce the 0.9.38 per-time-point loops (copied below as the
-reference) for every incrementation scheme, to roundoff, values and gradients,
+reference) for every incrementation scheme those loops got right (not 12, 15, 17: B130), to roundoff, values and gradients,
 on random Hermitian-derived inputs."""
 import math
 
@@ -274,11 +274,10 @@ CASES = [  # scheme, n_points, dt, free_l, free_r, n_mix
     (2, [41], [0.011], [1, 2], [2, 1], 2),
     (3, [29], [0.017], [2, 1], [1, 2], 2),
     (11, [13, 17], [0.02, 0.03], [1, 2], [2, 1], 2),
-    (12, [11, 9], [0.02, 0.025], [1, 2, 1], [2, 1, 2], 4),
     (14, [9, 12], [0.015, 0.02], [2, 1, 2], [1, 2, 1], 4),
-    (15, [8, 10], [0.02, 0.03], [1, 2, 2, 1], [2, 1, 1, 2], 6),
-    (17, [10, 7], [0.025, 0.02], [1, 1, 2, 2], [2, 2, 1, 1], 6),
 ]
+# Schemes 12, 15 and 17: the 0.9.38 loops (above) ordered the evolutions wrongly (B130);
+# test_sf_evolve_td_vs_fd.py checks every 2D scheme against the frequency-domain peaks.
 
 
 @pytest.mark.parametrize('scheme,npts,dt,fl,fr,nm', CASES, ids=[str(c[0]) for c in CASES])

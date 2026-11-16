@@ -80,16 +80,16 @@ class Experiment:
     Harmonic : int, optional
         Detection harmonic: 0 = absorption, 1 = first derivative,
         2 = second derivative.  Default ``None``, resolved on construction to
-        0 when ``Field`` is set and ``mwFreq`` is not (frequency sweep or
-        fixed field), and to 1 otherwise.  pepper falls back to 0 when the
-        system has no line width and no strain.
+        1 for a field sweep and to 0 otherwise (frequency sweep or fixed
+        field), whether or not ``mwFreq`` is also given.  pepper falls back to
+        0 when the system has no line width and no strain.
     mwPhase : float, default 0.0
         Detection phase in radians: 0 = absorption, ``pi/2`` = dispersion.
         Read by pepper, garlic and chili.
     Temperature : float, optional
         Sample temperature in K for Boltzmann populations of the levels.
         ``None`` (default) = infinite temperature (equal populations).
-        pepper treats a value ``<= 0`` as infinite temperature; garlic raises.
+        ``inf`` is the same as ``None``; a value ``<= 0`` raises ``ValueError``.
     lightBeam : str or tuple, optional
         Photoselection by a polarized light beam (pepper only; requires
         ``SpinSystem.tdm``): ``''``/``None`` (default, none),
@@ -172,7 +172,8 @@ class Experiment:
         is not ``[center, width]`` with width ``> 0``; ``ModAmp < 0``;
         ``Field < 0`` in a frequency sweep or fixed-field experiment; ``mwRange`` (frequency sweep) or ``Range`` (field
         sweep) is not an increasing pair; a field sweep has no positive
-        ``mwFreq``; ``Harmonic`` is not 0, 1 or 2; ``nPoints < 2``; or
+        ``mwFreq``; ``Harmonic`` is not 0, 1 or 2; ``nPoints < 2``;
+        ``Temperature <= 0``; or
         ``Orientations``/``OrientationWeights`` have the wrong shape, are not
         finite, or the weights are negative or all zero (or given without
         ``Orientations``).
@@ -214,7 +215,7 @@ class Experiment:
     MolFrame: Optional[list] = None            # Euler angles sample->molecule (EasySpin Exp.MolFrame)
     SampleRotation: Optional[tuple] = None     # (axis letter or 3-vector, rho or list of rho) (EasySpin Exp.SampleRotation)
     nPoints: int = 1024
-    Harmonic: Optional[int] = None  # detection harmonic; None -> 0 if Field is set and mwFreq is not, else 1
+    Harmonic: Optional[int] = None  # detection harmonic; None -> 1 for field sweeps, 0 otherwise
     mwPhase: float = 0.0
     Temperature: Optional[float] = None
     lightBeam: Optional[object] = None   # photoexcitation: '', 'perpendicular', 'parallel', 'unpolarized' or (k, alpha) (EasySpin Exp.lightBeam)
@@ -283,8 +284,18 @@ class Experiment:
                 raise ValueError("Experiment.Range[1] must be larger than Range[0].")
             if self.mwFreq is None or self.mwFreq <= 0:
                 raise ValueError("mwFreq must be positive (GHz) for field-swept mode.")
+        if self.Temperature is not None:
+            # B102: pepper and salt used to treat T <= 0 as infinite temperature
+            # (no Boltzmann factor) while garlic raised
+            t = self.Temperature
+            t = float(t.detach()) if hasattr(t, 'detach') else float(t)
+            if not t > 0:
+                raise ValueError("Experiment.Temperature must be positive (K); "
+                                 "use None (or inf) for infinite temperature.")
         if self.Harmonic is None:
-            self.Harmonic = 0 if (self.Field is not None and self.mwFreq is None) else 1
+            # B101: by sweep mode only (a frequency sweep with mwFreq also set
+            # used to come back as a first derivative)
+            self.Harmonic = 0 if (self.is_freq_swept or self.is_fixed_field) else 1
         self.Harmonic = int(self.Harmonic)
         if self.Harmonic not in (0, 1, 2):
             raise ValueError("Harmonic must be 0, 1, or 2.")

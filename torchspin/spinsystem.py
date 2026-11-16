@@ -289,8 +289,8 @@ class SpinSystem:
         ``log10(tcorr / s)``, alternative to ``tcorr``.  Default ``None``.
     Diff : float or array_like, optional
         Rotational diffusion rate in s^-1, alternative to ``tcorr``
-        (``tcorr = 1/(6 Diff)``); chili and cardamom only (garlic ignores
-        it).  Default ``None``.
+        (``tcorr = 1/(6 Diff)``); chili, cardamom and garlic (fast-motion
+        regime, isotropic only).  Default ``None``.
     logDiff : float or array_like, optional
         ``log10(Diff / s^-1)``.  Default ``None``.
     T1, T2 : float, optional
@@ -326,7 +326,8 @@ class SpinSystem:
         Default ``None``.
     Ham : dict, optional
         Higher-order Zeeman terms (McGavin-Tennant-Weil), keys ``'{lB}{lS}{l}'``
-        (orders in field and spin and coupling rank, e.g. ``'112'``), values
+        (orders in field and spin and coupling rank, e.g. ``'112'``; EasySpin's
+        ``'Ham112'`` is accepted and stored as ``'112'``), values
         ``(nElectrons, 2l+1)`` coefficient arrays.  A linear term
         (``'110'``/``'112'``) replaces ``g`` (giving both raises).  Field
         orders 2 and 3 enter the resonance search only with
@@ -546,9 +547,18 @@ class SpinSystem:
         if self.Ham is not None:
             ham_dict = {}
             for key, val in self.Ham.items():
-                ham_dict[key] = _to_tensor(val, torch.float64)
-                if ham_dict[key].ndim == 1:
-                    ham_dict[key] = ham_dict[key].unsqueeze(0)
+                # B103: 'Ham112' (EasySpin field name) and '112' are the same
+                # term; the Hamiltonian code reads the digits only
+                k = str(key)
+                k = k[3:] if k.startswith('Ham') else k
+                if len(k) < 3 or not k.isdigit():
+                    raise ValueError(f"SpinSystem.Ham: key {key!r} is not of the form "
+                                     "'{lB}{lS}{l}' (e.g. '112' or 'Ham112').")
+                if k in ham_dict:
+                    raise ValueError(f"SpinSystem.Ham: term {k!r} given twice.")
+                ham_dict[k] = _to_tensor(val, torch.float64)
+                if ham_dict[k].ndim == 1:
+                    ham_dict[k] = ham_dict[k].unsqueeze(0)
             self.Ham = ham_dict
 
         n_e = self.nElectrons
