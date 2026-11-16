@@ -8,6 +8,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **saffron `ProductRule=True`: time signals from the occupied frequency bins only** (B12). Each zero-filled
+  peak buffer (512 x 512 for a 128-point HYSCORE) used to go through a full `ifft2` for every
+  orientation; the first `nPoints` are now taken as `E1 @ B[rows][:, cols] @ E2.T` over the few occupied
+  rows and columns, with exact twiddle phases (FFT when more than a quarter is occupied). Roundoff only
+  (within 1e-12). Product-rule HYSCORE (14N + 1H, 128 points) 0.47 -> 0.06 s; the default (no product
+  rule) path is unchanged.
+
 - **`esfit` levmar with `n_workers > 1`** evaluates its trial point and the Jacobian column-refresh probe
   in one pool round (B4); results are bit-identical to the serial fit. On cheap models the serial default
   is still as fast; the gain is for expensive ones.

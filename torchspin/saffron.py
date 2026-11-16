@@ -164,6 +164,46 @@ _INC_SCHEME_MAP = {
 }
 
 
+def _partial_idft(buf_re: torch.Tensor, buf_im: torch.Tensor, n_out) -> torch.Tensor:
+    """``(ifftn(buf) * buf.numel())[:n_out]`` from the occupied bins of the peak buffer (B12).
+
+    The product rule turns one zero-filled peak buffer per pathway and subspace into a
+    time signal for every orientation (a 512 × 512 ``ifft2`` for a 128-point HYSCORE at the
+    default Expand).  A one-nucleus subspace occupies only a few dozen rows and columns, so
+        td[k1, k2] = Σ_{m1, m2} B[m1, m2] · exp(2πi m1 k1 / N1) · exp(2πi m2 k2 / N2)
+    is evaluated as E1[:, rows] @ B[rows][:, cols] @ E2[:, cols]^T with exact twiddles
+    (phase index m·k mod N).  Same values up to roundoff; falls back to the FFT when more
+    than a quarter of the rows (or columns) are occupied.
+    """
+    shape = buf_re.shape
+    n_out = [int(n) for n in n_out]
+    occ = (buf_re != 0) | (buf_im != 0)
+    if buf_re.ndim == 1:
+        (rows,) = torch.nonzero(occ, as_tuple=True)
+        N = shape[0]
+        if rows.numel() * 4 > N:
+            return (torch.fft.ifft(torch.complex(buf_re, buf_im)) * N)[:n_out[0]]
+        k = torch.arange(n_out[0], dtype=torch.long, device=buf_re.device)
+        E = _twiddle(k, rows, N)
+        return E @ torch.complex(buf_re[rows], buf_im[rows])
+    N1, N2 = shape
+    rows = torch.nonzero(occ.any(dim=1), as_tuple=True)[0]
+    cols = torch.nonzero(occ.any(dim=0), as_tuple=True)[0]
+    if rows.numel() * 4 > N1 or cols.numel() * 4 > N2:
+        return (torch.fft.ifft2(torch.complex(buf_re, buf_im)) * (N1 * N2))[:n_out[0], :n_out[1]]
+    B = torch.complex(buf_re[rows][:, cols], buf_im[rows][:, cols])
+    dev = buf_re.device
+    E1 = _twiddle(torch.arange(n_out[0], dtype=torch.long, device=dev), rows, N1)
+    E2 = _twiddle(torch.arange(n_out[1], dtype=torch.long, device=dev), cols, N2)
+    return E1 @ B @ E2.T
+
+
+def _twiddle(k: torch.Tensor, m: torch.Tensor, N: int) -> torch.Tensor:
+    """exp(2πi·k·m/N) for every (k, m), phase reduced exactly as (k·m) mod N."""
+    ph = (k[:, None] * m[None, :]) % N
+    return torch.exp((2j * math.pi / N) * ph.to(torch.float64))
+
+
 # =====================================================================
 # Pathway parser (port of MATLAB pathwayparser)
 # =====================================================================
@@ -1538,14 +1578,10 @@ def saffron(
                         if opt.TimeDomain:
                             this_td = pw_td[(ip, isp)]
                         else:
-                            buf = (pw_buff_re[(ip, isp)] +
-                                   1j * pw_buff_im[(ip, isp)])
-                            if n_dims == 1:
-                                this_td = torch.fft.ifft(buf) * len(buf)
-                                this_td = this_td[:exp.nPoints[0]]
-                            else:
-                                this_td = torch.fft.ifft2(buf) * buf.numel()
-                                this_td = this_td[:exp.nPoints[0], :exp.nPoints[1]]
+                            # B12: the first nPoints of the inverse DFT of the zero-filled
+                            # peak buffer, from its occupied bins only
+                            this_td = _partial_idft(pw_buff_re[(ip, isp)], pw_buff_im[(ip, isp)],
+                                                    exp.nPoints[:n_dims])
                             # Reset buffers for next orientation
                             pw_buff_re[(ip, isp)].zero_()
                             pw_buff_im[(ip, isp)].zero_()
