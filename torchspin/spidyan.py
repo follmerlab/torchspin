@@ -942,6 +942,42 @@ def _liouvillian(Ham, Gamma, eq_state_vec, dt):
     return L, sigma_ss
 
 
+def _sequence_product(lv, U_of, n):
+    """U_of[lv[-1]] @ ... @ U_of[lv[0]] for a sequence of amplitude levels (B10b).
+
+    A carrier sampled on the lab-frame time grid repeats its levels exactly every period
+    of p samples: the product is then (one period)^(len // p) times the remainder,
+    p + log2(len / p) products instead of len.  Without an exact period of at most a
+    quarter of the length, runs of equal levels become matrix powers (a rectangular pulse
+    is one run).  Same propagator up to roundoff (association order of the products).
+    """
+    lv = np.asarray(lv)
+    m = lv.size
+    I = np.eye(n, dtype=complex)
+
+    def prod(seq):
+        out = I
+        start = 0
+        while start < seq.size:
+            stop = start + 1
+            while stop < seq.size and seq[stop] == seq[start]:
+                stop += 1
+            Ul = U_of[seq[start]]
+            out = (np.linalg.matrix_power(Ul, stop - start) if stop - start > 1 else Ul) @ out
+            start = stop
+        return out
+
+    period = None
+    for p in range(1, m // 4 + 1):
+        if np.array_equal(lv[p:], lv[:-p]):
+            period = p
+            break
+    if period is None:
+        return prod(lv)
+    reps, rest = divmod(m, period)
+    return prod(lv[reps * period:]) @ np.linalg.matrix_power(prod(lv[:period]), reps)
+
+
 def _build_propagator_table(Ham0, xOp, dt, vert_res, scale, levels=None):
     """Pre-compute propagators for the discrete amplitude levels ``levels``
     (default: all ``vert_res + 1``; the others stay ``None``).  A pulse whose
@@ -1247,12 +1283,12 @@ def _build_pulse_propagators(evt, Ham0_rad, relaxation, n):
                     U_total[ipc][iw] = U_table[real_binary[ipc, iw]]
         else:
             # Combine into single propagator per phase cycle
+            # B10b: consecutive steps at the same amplitude level form one run,
+            # applied as a matrix power (repeated squaring) instead of one product
+            # per time step (a rectangular pulse is a single run)
             U_total = [[None] for _ in range(n_phase_cycle)]
             for ipc in range(n_phase_cycle):
-                U_combined = np.eye(n, dtype=complex)
-                for iw in range(n_wave):
-                    U_combined = U_table[real_binary[ipc, iw]] @ U_combined
-                U_total[ipc][0] = U_combined
+                U_total[ipc][0] = _sequence_product(real_binary[ipc], U_table, n)
 
         evt.Propagation = {'Utotal': U_total}
 
@@ -1291,29 +1327,36 @@ def _build_pulse_propagators(evt, Ham0_rad, relaxation, n):
                     ss_total[ipc][iw] = ss
             evt.Propagation = {'Ltotal': L_total, 'SigmaSStotal': ss_total}
         else:
+            # B10b: one matrix exponential per distinct (real, imag) amplitude level
+            # (same input, so the same propagator), and for an undetected pulse each run
+            # of equal levels as a matrix power (a rectangular pulse is a single run)
+            level_U = {}
+
+            def _U(ipc, iw):
+                key = (int(real_binary[ipc, iw]), int(imag_binary[ipc, iw]))
+                U = level_U.get(key)
+                if U is None:
+                    Ham1 = (scale / 2 * (key[0] - vert_res / 2) * np.real(evt.xOp) +
+                            1j * scale / 2 * (key[1] - vert_res / 2) * np.imag(evt.xOp))
+                    U = level_U[key] = _propagator(Ham0_rad + Ham1, evt.TimeStep)
+                return U, key
+
             if evt.Detection:
-                U_total = [[None] * n_wave for _ in range(n_phase_cycle)]
-                for ipc in range(n_phase_cycle):
-                    for iw in range(n_wave):
-                        Ham1 = (scale / 2 * (real_binary[ipc, iw] - vert_res / 2) *
-                                np.real(evt.xOp) +
-                                1j * scale / 2 * (imag_binary[ipc, iw] - vert_res / 2) *
-                                np.imag(evt.xOp))
-                        U_total[ipc][iw] = _propagator(
-                            Ham0_rad + Ham1, evt.TimeStep
-                        )
+                U_total = [[_U(ipc, iw)[0] for iw in range(n_wave)] for ipc in range(n_phase_cycle)]
             else:
-                U_total = [[None] for _ in range(n_phase_cycle)]
-                for ipc in range(n_phase_cycle):
-                    U_combined = np.eye(n, dtype=complex)
-                    for iw in range(n_wave):
-                        Ham1 = (scale / 2 * (real_binary[ipc, iw] - vert_res / 2) *
-                                np.real(evt.xOp) +
-                                1j * scale / 2 * (imag_binary[ipc, iw] - vert_res / 2) *
-                                np.imag(evt.xOp))
-                        U = _propagator(Ham0_rad + Ham1, evt.TimeStep)
-                        U_combined = U @ U_combined
-                    U_total[ipc][0] = U_combined
+                base = vert_res + 1
+
+                class _ByCode:                 # level code re * base + im -> propagator
+                    def __getitem__(self, code):
+                        re, im = divmod(int(code), base)
+                        U = level_U.get((re, im))
+                        if U is None:
+                            Ham1 = (scale / 2 * (re - vert_res / 2) * np.real(evt.xOp) +
+                                    1j * scale / 2 * (im - vert_res / 2) * np.imag(evt.xOp))
+                            U = level_U[(re, im)] = _propagator(Ham0_rad + Ham1, evt.TimeStep)
+                        return U
+                U_total = [[_sequence_product(real_binary[ipc] * base + imag_binary[ipc], _ByCode(), n)]
+                           for ipc in range(n_phase_cycle)]
             evt.Propagation = {'Utotal': U_total}
 
 

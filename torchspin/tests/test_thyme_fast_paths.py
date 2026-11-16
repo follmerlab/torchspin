@@ -40,3 +40,35 @@ def test_caches_do_not_change_repeated_results():
     a = np.asarray(saffron(NX, e, SaffronOptions(GridSize=5))[1])          # cold cache
     b = np.asarray(saffron(NX, e, SaffronOptions(GridSize=5))[1])          # warm cache
     np.testing.assert_array_equal(a, b)
+
+
+def _naive(lv, U, n):
+    out = np.eye(n, dtype=complex)
+    for k in lv:
+        out = U[k] @ out
+    return out
+
+
+@pytest.mark.parametrize('kind', ['carrier', 'carrier_ragged', 'rectangular', 'random', 'two_runs'])
+def test_sequence_product_equals_step_product(kind):
+    from scipy.linalg import expm
+    sp = sys.modules['torchspin.spidyan']
+    rng = np.random.default_rng(3)
+    n = 6
+    H = [(lambda a: (a + a.conj().T) / 2)(rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n)))
+         for _ in range(9)]
+    U = [expm(-1j * 0.05 * h) for h in H]
+    m = 4001
+    if kind == 'carrier':
+        lv = np.round(4 + 4 * np.cos(2 * np.pi * np.arange(m) / 16)).astype(int)          # period 16
+    elif kind == 'carrier_ragged':
+        lv = np.round(4 + 4 * np.cos(2 * np.pi * np.arange(m - 7) / 12)).astype(int)      # remainder
+    elif kind == 'rectangular':
+        lv = np.full(m, 7)
+    elif kind == 'random':
+        lv = rng.integers(0, 9, m)
+    else:
+        lv = np.r_[np.full(1500, 2), np.full(m - 1500, 5)]
+    got = sp._sequence_product(lv, U, n)
+    ref = _naive(lv, U, n)
+    assert np.abs(got - ref).max() <= 1e-10

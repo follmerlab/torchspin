@@ -16,6 +16,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   The caches are bit-identical; the closed form agrees with the step loop to 7e-13 (it does not
   accumulate roundoff). Nitroxide two-pulse sweep 0.43 -> 0.34 s, three-pulse 32 x 32 1.83 -> 1.00 s,
   transient echo detection 2.2 -> 0.29 s (1 thread).
+- **Real-pulse engine: pulse propagators from the waveform's period** (B10b). A lab-frame carrier sampled
+  on the simulation grid repeats its amplitude levels exactly every period: the undetected pulse
+  propagator is now (one period)^k times the remainder instead of one product per time step (4000 for a
+  32 ns pulse), runs of a constant level become matrix powers, and complex excitations compute one
+  matrix exponential per distinct level. Roundoff only (within 8e-13 end to end). Together with B11:
+  nitroxide two-pulse sweep 0.43 -> 0.15 s, three-pulse 32 x 32 1.83 -> 0.82 s, transient echo
+  2.2 -> 0.24 s.
 
 - **saffron `ProductRule=True`: time signals from the occupied frequency bins only** (B12). Each zero-filled
   peak buffer (512 x 512 for a 128-point HYSCORE) used to go through a full `ifft2` for every
