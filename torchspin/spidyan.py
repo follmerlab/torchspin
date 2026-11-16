@@ -276,6 +276,24 @@ def _predefined_experiments(exp):
 # Event reordering (s_reorder_events.m)
 # ---------------------------------------------------------------------------
 
+_REORDER_CACHE: dict = {}
+_REORDER_CACHE_MAX = 1 << 16
+
+
+def _reorder_events_cached(event_lengths, pulse_list):
+    """:func:`_reorder_events` memoized on the exact event lengths and pulse flags (B11:
+    every orientation repeats the same per-point sequences).  Overlap errors are not
+    cached.  Returns fresh copies, so callers may modify them."""
+    key = (tuple(float(v) for v in event_lengths), tuple(bool(p) for p in pulse_list))
+    hit = _REORDER_CACHE.get(key)
+    if hit is None:
+        hit = _reorder_events(event_lengths, pulse_list)
+        if len(_REORDER_CACHE) >= _REORDER_CACHE_MAX:
+            _REORDER_CACHE.clear()
+        _REORDER_CACHE[key] = (list(hit[0]), np.array(hit[1], copy=True))
+    return list(hit[0]), np.array(hit[1], copy=True)
+
+
 def _reorder_events(event_lengths, pulse_list):
     """Reorder events chronologically, detect pulse overlaps.
 
@@ -995,6 +1013,7 @@ def _thyme(sigma, Ham0, det_ops, events, relaxation, vary):
         n_points = 1
 
     initial_sigma = sigma.copy()
+    prop_cache = {}                       # delay propagators of this Ham0 by exact step (B11)
     final_states_list = []
     all_signals = []
     all_times = []
@@ -1049,7 +1068,7 @@ def _thyme(sigma, Ham0, det_ops, events, relaxation, vary):
             # Overlapping pulses raise (EasySpin s_reorder_events.m:
             # 'Pulse Overlap'); they used to fall back silently to the
             # unreordered sequence (B80).
-            sequence, new_event_lengths = _reorder_events(
+            sequence, new_event_lengths = _reorder_events_cached(
                 event_lengths, is_pulse
             )
         else:
@@ -1092,7 +1111,7 @@ def _thyme(sigma, Ham0, det_ops, events, relaxation, vary):
             else:
                 sigma, sig_part, t_part, dm_part = _propagate_delay(
                     sigma, evt, evt_length, Ham0_rad, det_ops, n_det,
-                    relaxation, t_total
+                    relaxation, t_total, prop_cache
                 )
 
             if sig_part is not None:
@@ -1395,7 +1414,7 @@ def _propagate_pulse(sigma, evt, det_ops, n_det, t_offset):
 
 
 def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
-                     relaxation, t_offset):
+                     relaxation, t_offset, prop_cache=None):
     """Propagate through a free evolution event.
 
     Returns (sigma, signal, time, density_matrices).
@@ -1435,7 +1454,14 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
         if 'Utotal' in evt.Propagation and evt.Propagation['Utotal'] is not None:
             U = evt.Propagation['Utotal']
         else:
-            U = _propagator(Ham0_rad, time_step)
+            # B11: the same delay recurs at many acquisition points of a sweep;
+            # prop_cache (one per _thyme call, i.e. one Ham0) keys on the exact step
+            key = ('U', time_step)
+            U = None if prop_cache is None else prop_cache.get(key)
+            if U is None:
+                U = _propagator(Ham0_rad, time_step)
+                if prop_cache is not None:
+                    prop_cache[key] = U
             evt.Propagation['Utotal'] = U
     else:
         eq_vec = relaxation.equilibriumState.reshape(-1)
@@ -1443,9 +1469,13 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
             L = evt.Propagation['Ltotal']
             ss = evt.Propagation['SigmaSStotal']
         else:
-            L, ss = _liouvillian(
-                Ham0_rad, relaxation.Gamma, eq_vec, time_step
-            )
+            key = ('L', time_step)
+            hit = None if prop_cache is None else prop_cache.get(key)
+            if hit is None:
+                hit = _liouvillian(Ham0_rad, relaxation.Gamma, eq_vec, time_step)
+                if prop_cache is not None:
+                    prop_cache[key] = hit
+            L, ss = hit
             evt.Propagation['Ltotal'] = L
             evt.Propagation['SigmaSStotal'] = ss
 
@@ -1470,6 +1500,19 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
                 signal[:, i_t + 1] = det_array @ sigma_vec
             if evt.StateTrajectories:
                 density_matrices.append(sigma.copy())
+    elif (evt.Detection and not evt.StateTrajectories and n_steps >= _CLOSED_FORM_MIN_STEPS
+          and np.allclose(Ham0_rad, Ham0_rad.conj().T, rtol=0, atol=1e-12 * max(1.0, np.abs(Ham0_rad).max()))):
+        # B11: closed form in the eigenbasis of Ham0 instead of n_steps products
+        # U σ U†: σ'(k) = σ' ⊙ exp(-i (E_i - E_j) k dt), and each detection operator D
+        # reads Σ_ij (V^T D V*)_ij σ'_ij(k).  Same signal up to roundoff (no accumulation).
+        E, V = _eigh_cached(Ham0_rad, prop_cache)
+        sp_ = V.conj().T @ sigma @ V
+        dE = E[:, None] - E[None, :]
+        k = np.arange(1, n_steps + 1, dtype=float)
+        W = np.stack([V.T @ det_array[i].reshape(n, n) @ V.conj() for i in range(n_det)])   # (n_det, n, n)
+        ph = np.exp(-1j * time_step * k[:, None] * dE.reshape(1, -1))                         # (n_steps, n*n)
+        signal[:, 1:] = ((W.reshape(n_det, -1) * sp_.reshape(1, -1)) @ ph.T)
+        sigma = V @ (sp_ * np.exp(-1j * time_step * n_steps * dE)) @ V.conj().T
     else:
         for i_t in range(n_steps):
             sigma = U @ sigma @ U.conj().T
@@ -1479,6 +1522,20 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
                 density_matrices.append(sigma.copy())
 
     return sigma, signal, t_vec, density_matrices if density_matrices else None
+
+
+# detected delays with at least this many steps use the eigenbasis closed form (B11)
+_CLOSED_FORM_MIN_STEPS = 8
+
+
+def _eigh_cached(H, prop_cache):
+    """eigh of the (Hermitian) static Hamiltonian, once per _thyme call."""
+    if prop_cache is not None and 'eigh' in prop_cache:
+        return prop_cache['eigh']
+    E, V = np.linalg.eigh(0.5 * (H + H.conj().T))
+    if prop_cache is not None:
+        prop_cache['eigh'] = (E, V)
+    return E, V
 
 
 # ---------------------------------------------------------------------------

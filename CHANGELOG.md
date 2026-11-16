@@ -8,6 +8,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **Real-pulse engine (thyme/spidyan): less work per acquisition point** (B11). The chronological event
+  order is cached on the exact event lengths (every orientation repeats the same per-point sequences),
+  free-evolution propagators are cached per orientation on the exact step (a 32 x 32 sweep needs about
+  65 distinct ones instead of 3000), and a detected free evolution is evaluated in the eigenbasis of the
+  static Hamiltonian, all time points at once, instead of one `U sigma U^dagger` product per step.
+  The caches are bit-identical; the closed form agrees with the step loop to 7e-13 (it does not
+  accumulate roundoff). Nitroxide two-pulse sweep 0.43 -> 0.34 s, three-pulse 32 x 32 1.83 -> 1.00 s,
+  transient echo detection 2.2 -> 0.29 s (1 thread).
+
 - **saffron `ProductRule=True`: time signals from the occupied frequency bins only** (B12). Each zero-filled
   peak buffer (512 x 512 for a 128-point HYSCORE) used to go through a full `ifft2` for every
   orientation; the first `nPoints` are now taken as `E1 @ B[rows][:, cols] @ E2.T` over the few occupied
