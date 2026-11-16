@@ -316,6 +316,10 @@ def hil2liouv(H):
     return (sp.kron(I, H, format='csr') - sp.kron(H.T, I, format='csr')).tocsr()
 
 
+# orientations from which chili builds _OrientedLiouvillian pieces (B7)
+_ORIENTED_PIECES_MIN = 8
+
+
 def rbos(T, F, angles, fielddep):
     """EasySpin ``rbos``: (Q0B, Q1B, Q2B, Q0G, Q1G, Q2G) in Liouville space.
 
@@ -594,6 +598,89 @@ def liouvhamiltonian(basis: Basis, Q0, Q1, Q2, jjj0, jjj1, jjj2):
         H2 = sp.triu(H2)
         H2 = H2 + sp.triu(H2, 1).T
     return (H0 + H1 + H2).tocsr()
+
+
+class _OrientedLiouvillian:
+    """B7: the orientation-dependent Liouville Hamiltonian as a weighted sum of fixed pieces.
+
+    ``rbos`` gives Q1[mp][mq] = Σ_m D1[m, mp]·S1[m][mq] and Q2[mp][mq] = Σ_m D2[m, mp]·S2[m][mq]
+    with orientation-independent S (Q0 does not depend on the orientation), and
+    ``liouvhamiltonian`` is linear in (Q0, Q1, Q2).  So
+        H(angles) = H0 + Σ_{m,mp} D1[m, mp]·H1_{m,mp} + Σ_{m,mp} D2[m, mp]·H2_{m,mp},
+    with up to 1 + 9 + 25 pieces built once (``keep`` applied).  Every orientation is then
+    one weighted sum on the union sparsity pattern instead of 50 Hilbert-to-Liouville
+    conversions and 25 Kronecker products.  Same matrix up to roundoff (summation order).
+    ``part``: 'B' field-dependent terms, 'G' the others, None all.
+    """
+
+    def __init__(self, basis, T, F, fielddep, jjj, keep, part=None):
+        jjj0, jjj1, jjj2 = jjj
+        F0, F1, F2 = F['F0'], F['F1'], F['F2']
+        n = T['T0'][0].shape[0]
+        terms = [t for t in range(F0.size)
+                 if part is None or (bool(fielddep[t]) == (part == 'B'))]
+        Zh = sp.csr_matrix((n, n), dtype=complex)
+        conv = lambda M: hil2liouv(sp.csr_matrix(M))
+        Q0 = Zh.copy()
+        for t in terms:
+            Q0 = Q0 + np.conj(F0[t]) * T['T0'][t]
+        nL = n * n
+        ZL = sp.csr_matrix((nL, nL), dtype=complex)
+        Z2 = [[ZL] * 5 for _ in range(5)]
+        pieces, tags = [], []
+        H0 = liouvhamiltonian(basis, conv(Q0), None, Z2, jjj0, jjj1, jjj2)
+        pieces.append(H0); tags.append((0, 0, 0))
+        if bool(np.any(F1)):
+            for m in range(3):
+                S = []
+                for mq in range(3):
+                    acc = Zh.copy()
+                    for t in terms:
+                        acc = acc + (-1) * np.conj(F1[t, mq]) * T['T1'][t][m]
+                    S.append(conv(acc))
+                if all(x.nnz == 0 for x in S):
+                    continue
+                for mp in range(3):
+                    Q1 = [[S[mq] if r == mp else ZL for mq in range(3)] for r in range(3)]
+                    pieces.append(liouvhamiltonian(basis, ZL, Q1, Z2, jjj0, jjj1, jjj2)); tags.append((1, m, mp))
+        for m in range(5):
+            S = []
+            for mq in range(5):
+                acc = Zh.copy()
+                for t in terms:
+                    if F2[t, mq] != 0:
+                        acc = acc + np.conj(F2[t, mq]) * T['T2'][t][m]
+                S.append(conv(acc))
+            if all(x.nnz == 0 for x in S):
+                continue
+            for mp in range(5):
+                Q2 = [[S[mq] if r == mp else ZL for mq in range(5)] for r in range(5)]
+                pieces.append(liouvhamiltonian(basis, ZL, None, Q2, jjj0, jjj1, jjj2)); tags.append((2, m, mp))
+        rows, cols, data, pid = [], [], [], []
+        for i, P in enumerate(pieces):
+            P = P[keep][:, keep].tocoo()
+            rows.append(P.row); cols.append(P.col); data.append(P.data)
+            pid.append(np.full(P.nnz, i, dtype=np.int64))
+        self.n = int(np.count_nonzero(keep))
+        r = np.concatenate(rows).astype(np.int64); c = np.concatenate(cols).astype(np.int64)
+        key = r * self.n + c
+        uniq, self._inv = np.unique(key, return_inverse=True)
+        self._data = np.concatenate(data)
+        self._pid = np.concatenate(pid)
+        self._indices = (uniq % self.n).astype(np.int32)
+        self._indptr = np.searchsorted(uniq // self.n, np.arange(self.n + 1)).astype(np.int32)
+        self._nu = uniq.size
+        self._tags = tags
+
+    def __call__(self, angles):
+        D1 = wignerd(1, angles[0], angles[1], angles[2])
+        D2 = wignerd(2, angles[0], angles[1], angles[2])
+        w = np.array([1.0 if r == 0 else (D1[m, mp] if r == 1 else D2[m, mp]) for r, m, mp in self._tags],
+                     dtype=complex)
+        v = self._data * w[self._pid]
+        vals = (np.bincount(self._inv, weights=v.real, minlength=self._nu)
+                + 1j * np.bincount(self._inv, weights=v.imag, minlength=self._nu))
+        return sp.csr_matrix((vals, self._indices, self._indptr), shape=(self.n, self.n))
 
 
 # =============================================================================
@@ -1218,12 +1305,27 @@ def chili_sle(sys, exp, opt: Optional[ChiliSLEOptions] = None):
     # ---- orientation loop --------------------------------------------------------
     spec = np.zeros(nPoints, dtype=complex)
     warned_fallback = False
+    # B7: with many orientations, build the orientation-independent pieces once
+    # (about five orientations' worth of work) and sum them per orientation
+    pieces = None
+    if phi.size >= _ORIENTED_PIECES_MIN:
+        jjj = (jjj0, jjj1, jjj2)
+        pieces = ((_OrientedLiouvillian(basis, T, F, fielddep, jjj, keep_full, 'B'),
+                   _OrientedLiouvillian(basis, T, F, fielddep, jjj, keep_full, 'G')) if explicit
+                  else _OrientedLiouvillian(basis, T, F, fielddep, jjj, keep_full))
     for iOri in range(phi.size):
-        Q0B, Q1B, Q2B, Q0G, Q1G, Q2G = rbos(T, F, [phi[iOri], theta[iOri], 0.0], fielddep)
-        if explicit:
+        ang = [phi[iOri], theta[iOri], 0.0]
+        if pieces is not None:
+            if explicit:
+                HB, HG = pieces[0](ang), pieces[1](ang)
+            else:
+                H = pieces(ang)
+        elif explicit:
+            Q0B, Q1B, Q2B, Q0G, Q1G, Q2G = rbos(T, F, ang, fielddep)
             HB = liouvhamiltonian(basis, Q0B, Q1B, Q2B, jjj0, jjj1, jjj2)[keep_full][:, keep_full]
             HG = liouvhamiltonian(basis, Q0G, Q1G, Q2G, jjj0, jjj1, jjj2)[keep_full][:, keep_full]
         else:
+            Q0B, Q1B, Q2B, Q0G, Q1G, Q2G = rbos(T, F, ang, fielddep)
             Q0 = Q0B + Q0G
             Q1 = None if Q1B is None else [[Q1B[i][j] + Q1G[i][j] for j in range(3)] for i in range(3)]
             Q2 = [[Q2B[i][j] + Q2G[i][j] for j in range(5)] for i in range(5)]

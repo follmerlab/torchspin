@@ -12,6 +12,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   in one pool round (B4); results are bit-identical to the serial fit. On cheap models the serial default
   is still as fast; the gain is for expensive ones.
 
+- **chili powder spectra build the orientation-dependent Liouvillian from fixed pieces** (B7). The
+  Hamiltonian is linear in the Wigner D-matrix of the orientation, so its 1 + 9 + 25 orientation-independent
+  pieces are built once (from 8 orientations on) and each orientation is one weighted sum on their union
+  sparsity pattern, instead of 50 Hilbert-to-Liouville conversions and 25 Kronecker products. Roundoff
+  only in the Liouvillian (within 4e-16; direct-solver spectra within 7e-15). The Lanczos solver
+  amplifies last-digit changes, and at its default `Threshold` (1e-6) one can move the step at which it
+  stops: default chili powder spectra change by up to 4e-5 relative (Cu(II) with a potential), below
+  the solver's own tolerance; with `Threshold=1e-9` the two routes agree to 5e-9.
+
 - **Projection kernel: both half-hats in one pass** (A4, `_projection.hat_segments_t`). The edge bins
   of every linear piece are integrated in one `(m, 8)` pass with fewer operations (Simpson as
   `L/6 (Lp (2wp + wq) + Lq (2wq + wp))`, signed weights, one scatter). Roundoff only: outputs within
