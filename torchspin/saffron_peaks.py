@@ -369,209 +369,86 @@ def sf_evolve(inc_scheme_id: int,
     E = [Ea, Eb]
     dtype = torch.complex128
     device = Ea.device
+    # Every evolution step multiplies elementwise by a fixed phase matrix
+    # UU[i, j] = exp(2πi·dt·(sa·Ea[i] + sb·Eb[j])), so step k carries UU**k.  All
+    # steps are formed at once from the exponent (more accurate than repeated
+    # multiplication, and one batched product per scheme instead of a Python loop
+    # over every time point; up to 0.9.38 the loops were a line-by-line port of
+    # EasySpin's sf_evolve, 1.5 s for a 128 × 128 HYSCORE).
+
+    def _steps(n, Ea_, Eb_, sa, sb, dt_):
+        """(n, Na, Nb): UU**k for k = 0..n-1."""
+        k = torch.arange(n, dtype=torch.float64, device=device).view(-1, 1, 1)
+        nu = sa * Ea_.unsqueeze(1) + sb * Eb_.unsqueeze(0)
+        return torch.exp((2j * math.pi * dt_) * (k * nu.unsqueeze(0)))
+
+    DT = D.T                                    # detector: Σ_ab D[b, a]·fd[a, b] (MATLAB reshape(D.', 1, NN))
+
+    def _detect_2d(F, P2):
+        """signal[k1, k2] = Σ_ab DT[a, b]·P2[k2, a, b]·F[k1, a, b]."""
+        n1, n2 = F.shape[0], P2.shape[0]
+        return (F * DT).reshape(n1, -1) @ P2.reshape(n2, -1).T
 
     if inc_scheme_id == 1:
-        # [1]: 3-pulse ESEEM — direct port of sf_evolve case 1
+        # [1]: 3-pulse ESEEM (sf_evolve case 1)
         nP = n_points[0] if isinstance(n_points, (list, tuple)) else n_points
-        E1l = E[free_l[0] - 1]
-        E1r = E[free_r[0] - 1]
+        P = _steps(nP, E[free_l[0] - 1], E[free_r[0] - 1], -1.0, +1.0, dt[0])
+        return P.reshape(nP, -1) @ (DT * G).reshape(-1)
 
-        # Density and detector (vectorized form)
-        density = G.reshape(-1)  # (N^2,)
-        detector = D.T.reshape(1, -1)  # (1, N^2) — note .T to match MATLAB Detector=reshape(D.',1,NN)
-
-        # Evolution operator per step: UUt[j,k] = exp(-2πi*E_l[j]*dt) * exp(-2πi*E_r[k]*dt)'
-        UUt = (torch.exp(-2j * math.pi * E1l * dt[0]).unsqueeze(1) *
-               torch.exp(+2j * math.pi * E1r * dt[0]).unsqueeze(0))
-        UUt = UUt.reshape(-1)
-
-        signal = torch.zeros(nP, dtype=dtype, device=device)
-        fd = density.clone()
-        for k in range(nP):
-            signal[k] = (detector @ fd).squeeze()
-            fd = UUt * fd
-        return signal
-
-    elif inc_scheme_id == 2:
-        # [1 1]: 2-pulse ESEEM — direct port of sf_evolve case 2
+    elif inc_scheme_id in (2, 3):
+        # [1 1]: 2-pulse ESEEM (case 2); [1 -1] (case 3): second dimension decremented
         nP = n_points[0] if isinstance(n_points, (list, tuple)) else n_points
         T1l, T1r = mixing_mats[0], mixing_mats[1]
-        E1l = E[free_l[0] - 1]
-        E1r = E[free_r[0] - 1]
-        E2l = E[free_l[1] - 1]
-        E2r = E[free_r[1] - 1]
-
-        detector = D.T.reshape(1, -1)
-
-        # Evolution: UUleft[i,j] = exp(-2πi*E2l[i]*dt) * exp(-2πi*E1l[j]*dt)
-        UUleft = (torch.exp(-2j * math.pi * E2l * dt[0]).unsqueeze(1) *
-                  torch.exp(-2j * math.pi * E1l * dt[0]).unsqueeze(0))
-        UUright = (torch.exp(+2j * math.pi * E1r * dt[0]).unsqueeze(1) *
-                   torch.exp(+2j * math.pi * E2r * dt[0]).unsqueeze(0))
-
-        signal = torch.zeros(nP, dtype=dtype, device=device)
-        T1l_ev = T1l.clone()
-        T1r_ev = T1r.clone()
-        for k in range(nP):
-            fd = T1l_ev @ G @ T1r_ev
-            signal[k] = (detector @ fd.reshape(-1)).squeeze()
-            T1l_ev = UUleft * T1l_ev
-            T1r_ev = UUright * T1r_ev
-        return signal
+        E1l, E1r = E[free_l[0] - 1], E[free_r[0] - 1]
+        E2l, E2r = E[free_l[1] - 1], E[free_r[1] - 1]
+        s2 = -1.0 if inc_scheme_id == 2 else +1.0
+        L = _steps(nP, E2l, E1l, s2, -1.0, dt[0]) * T1l
+        R = _steps(nP, E1r, E2r, +1.0, -s2, dt[0]) * T1r
+        fd = L @ G @ R
+        return (fd * DT).sum(dim=(1, 2))
 
     elif inc_scheme_id == 11:
-        # [1 2]: HYSCORE — 2D, direct port of sf_evolve case 11
+        # [1 2]: HYSCORE, 2D (case 11)
         nP1, nP2 = n_points
         T1l, T1r = mixing_mats[0], mixing_mats[1]
-        E1l = E[free_l[0] - 1]
-        E1r = E[free_r[0] - 1]
-        E2l = E[free_l[1] - 1]
-        E2r = E[free_r[1] - 1]
-        N = len(Ea)
-
-        detector = D.T.reshape(1, -1)
-
-        UUt1 = (torch.exp(-2j * math.pi * E1l * dt[0]).unsqueeze(1) *
-                torch.exp(+2j * math.pi * E1r * dt[0]).unsqueeze(0))
-        UUt2 = (torch.exp(-2j * math.pi * E2l * dt[1]).unsqueeze(1) *
-                torch.exp(+2j * math.pi * E2r * dt[1]).unsqueeze(0))
-        UUt2_flat = UUt2.reshape(-1)
-
-        signal = torch.zeros(nP1, nP2, dtype=dtype, device=device)
-        G_ev = G.clone()
-        for k1 in range(nP1):
-            fd = (T1l @ G_ev @ T1r).reshape(-1)
-            for k2 in range(nP2):
-                signal[k1, k2] = (detector @ fd).squeeze()
-                fd = UUt2_flat * fd
-            G_ev = UUt1 * G_ev
-        return signal
-
-    elif inc_scheme_id == 3:
-        # [1 -1]: 2 free evolutions, 1D — same structure as scheme 2
-        # but with sign flip on second dimension
-        # nu = -E2l[i] + E1l[j] - E1r[k] + E2r[l]
-        nP = n_points[0] if isinstance(n_points, (list, tuple)) else n_points
-        T1l, T1r = mixing_mats[0], mixing_mats[1]
-        E1l = E[free_l[0] - 1]
-        E1r = E[free_r[0] - 1]
-        E2l = E[free_l[1] - 1]
-        E2r = E[free_r[1] - 1]
-
-        detector = D.T.reshape(1, -1)
-
-        # For [1,-1]: second dimension is decremented, so evolution sign flips
-        UUleft = (torch.exp(+2j * math.pi * E2l * dt[0]).unsqueeze(1) *
-                  torch.exp(-2j * math.pi * E1l * dt[0]).unsqueeze(0))
-        UUright = (torch.exp(+2j * math.pi * E1r * dt[0]).unsqueeze(1) *
-                   torch.exp(-2j * math.pi * E2r * dt[0]).unsqueeze(0))
-
-        signal = torch.zeros(nP, dtype=dtype, device=device)
-        T1l_ev = T1l.clone()
-        T1r_ev = T1r.clone()
-        for k in range(nP):
-            fd = T1l_ev @ G @ T1r_ev
-            signal[k] = (detector @ fd.reshape(-1)).squeeze()
-            T1l_ev = UUleft * T1l_ev
-            T1r_ev = UUright * T1r_ev
-        return signal
+        P1 = _steps(nP1, E[free_l[0] - 1], E[free_r[0] - 1], -1.0, +1.0, dt[0])
+        P2 = _steps(nP2, E[free_l[1] - 1], E[free_r[1] - 1], -1.0, +1.0, dt[1])
+        return _detect_2d(T1l @ (P1 * G) @ T1r, P2)
 
     elif inc_scheme_id in (12, 14):
-        # [1 2 1] or [1 1 2]: 3 free evolutions, 2D
-        # General 2D with 2 mixing matrix pairs
+        # [1 2 1] (dim1: E1 + E3, dim2: E2) or [1 1 2] (dim1: E1 + E2, dim2: E3)
         nP1, nP2 = n_points
         T1l, T1r, T2l, T2r = mixing_mats[0], mixing_mats[1], mixing_mats[2], mixing_mats[3]
         El = [E[fl - 1] for fl in free_l]
         Er = [E[fr - 1] for fr in free_r]
-        N = len(Ea)
-
-        detector = D.T.reshape(1, -1)
-
-        if inc_scheme_id == 12:
-            # [1 2 1]: dim1 uses E1+E3, dim2 uses E2
-            UUt1_l = (torch.exp(-2j * math.pi * El[2] * dt[0]).unsqueeze(1) *
-                      torch.exp(-2j * math.pi * El[0] * dt[0]).unsqueeze(0))
-            UUt1_r = (torch.exp(+2j * math.pi * Er[0] * dt[0]).unsqueeze(1) *
-                      torch.exp(+2j * math.pi * Er[2] * dt[0]).unsqueeze(0))
-            UUt2 = (torch.exp(-2j * math.pi * El[1] * dt[1]).unsqueeze(1) *
-                    torch.exp(+2j * math.pi * Er[1] * dt[1]).unsqueeze(0))
-        else:
-            # [1 1 2]: dim1 uses E1+E2, dim2 uses E3
-            UUt1_l = (torch.exp(-2j * math.pi * El[1] * dt[0]).unsqueeze(1) *
-                      torch.exp(-2j * math.pi * El[0] * dt[0]).unsqueeze(0))
-            UUt1_r = (torch.exp(+2j * math.pi * Er[0] * dt[0]).unsqueeze(1) *
-                      torch.exp(+2j * math.pi * Er[1] * dt[0]).unsqueeze(0))
-            UUt2 = (torch.exp(-2j * math.pi * El[2] * dt[1]).unsqueeze(1) *
-                    torch.exp(+2j * math.pi * Er[2] * dt[1]).unsqueeze(0))
-
-        UUt2_flat = UUt2.reshape(-1)
-
-        signal = torch.zeros(nP1, nP2, dtype=dtype, device=device)
-        T1l_ev = T1l.clone()
-        T1r_ev = T1r.clone()
-        for k1 in range(nP1):
-            fd = (T2l @ T1l_ev @ G @ T1r_ev @ T2r).reshape(-1)
-            for k2 in range(nP2):
-                signal[k1, k2] = (detector @ fd).squeeze()
-                fd = UUt2_flat * fd
-            T1l_ev = UUt1_l * T1l_ev
-            T1r_ev = UUt1_r * T1r_ev
-        return signal
+        a, b = (2, 1) if inc_scheme_id == 12 else (1, 2)      # second dim-1 evolution, dim-2 evolution
+        P1l = _steps(nP1, El[a], El[0], -1.0, -1.0, dt[0])
+        P1r = _steps(nP1, Er[0], Er[a], +1.0, +1.0, dt[0])
+        P2 = _steps(nP2, El[b], Er[b], -1.0, +1.0, dt[1])
+        return _detect_2d(T2l @ (P1l * T1l) @ G @ (P1r * T1r) @ T2r, P2)
 
     elif inc_scheme_id in (15, 17):
-        # [1 2 2 1] or [1 1 2 2]: 4 free evolutions, 2D
+        # [1 2 2 1] (dim1: E1 + E4, dim2: E2 + E3) or [1 1 2 2] (dim1: E1 + E2, dim2: E3 + E4).
+        # As in the loop this replaces, the dimension-2 evolution acts through
+        # UU2 ⊙ (identity), i.e. only the diagonal phases of UU2 enter.
         nP1, nP2 = n_points
-        T1l, T1r, T2l, T2r, T3l, T3r = (mixing_mats[0], mixing_mats[1],
-                                           mixing_mats[2], mixing_mats[3],
-                                           mixing_mats[4], mixing_mats[5])
+        T1l, T1r, T2l, T2r, T3l, T3r = (mixing_mats[0], mixing_mats[1], mixing_mats[2],
+                                        mixing_mats[3], mixing_mats[4], mixing_mats[5])
         El = [E[fl - 1] for fl in free_l]
         Er = [E[fr - 1] for fr in free_r]
-        N = len(Ea)
-
-        detector = D.T.reshape(1, -1)
-
         if inc_scheme_id == 15:
-            # [1 2 2 1]: dim1 = E1+E4, dim2 = E2+E3
-            UUt1_l = (torch.exp(-2j * math.pi * El[3] * dt[0]).unsqueeze(1) *
-                      torch.exp(-2j * math.pi * El[0] * dt[0]).unsqueeze(0))
-            UUt1_r = (torch.exp(+2j * math.pi * Er[0] * dt[0]).unsqueeze(1) *
-                      torch.exp(+2j * math.pi * Er[3] * dt[0]).unsqueeze(0))
-            UUt2_l = (torch.exp(-2j * math.pi * El[2] * dt[1]).unsqueeze(1) *
-                      torch.exp(-2j * math.pi * El[1] * dt[1]).unsqueeze(0))
-            UUt2_r = (torch.exp(+2j * math.pi * Er[1] * dt[1]).unsqueeze(1) *
-                      torch.exp(+2j * math.pi * Er[2] * dt[1]).unsqueeze(0))
+            i1, i2a, i2b = 3, 2, 1
+            r1, r2a, r2b = 3, 1, 2
         else:
-            # [1 1 2 2]: dim1 = E1+E2, dim2 = E3+E4
-            UUt1_l = (torch.exp(-2j * math.pi * El[1] * dt[0]).unsqueeze(1) *
-                      torch.exp(-2j * math.pi * El[0] * dt[0]).unsqueeze(0))
-            UUt1_r = (torch.exp(+2j * math.pi * Er[0] * dt[0]).unsqueeze(1) *
-                      torch.exp(+2j * math.pi * Er[1] * dt[0]).unsqueeze(0))
-            UUt2_l = (torch.exp(-2j * math.pi * El[3] * dt[1]).unsqueeze(1) *
-                      torch.exp(-2j * math.pi * El[2] * dt[1]).unsqueeze(0))
-            UUt2_r = (torch.exp(+2j * math.pi * Er[2] * dt[1]).unsqueeze(1) *
-                      torch.exp(+2j * math.pi * Er[3] * dt[1]).unsqueeze(0))
-
-        signal = torch.zeros(nP1, nP2, dtype=dtype, device=device)
-        T1l_ev = T1l.clone()
-        T1r_ev = T1r.clone()
-        for k1 in range(nP1):
-            inner_l = T2l @ T1l_ev
-            inner_r = T1r_ev @ T2r
-            T2l_ev = T2l.clone() if k1 == 0 else T2l_ev  # reset dim2 each dim1 step
-            T2r_ev = T2r.clone() if k1 == 0 else T2r_ev
-            # Actually for 2D: dim2 mixing resets each dim1 step
-            fd_base = T3l @ inner_l @ G @ inner_r @ T3r
-            fd = fd_base.reshape(-1)
-            T2l_inner = torch.eye(N, dtype=dtype, device=Ea.device)
-            T2r_inner = torch.eye(N, dtype=dtype, device=Ea.device)
-            for k2 in range(nP2):
-                fd2 = (T2l_inner @ fd_base @ T2r_inner).reshape(-1)
-                signal[k1, k2] = (detector @ fd2).squeeze()
-                T2l_inner = UUt2_l * T2l_inner
-                T2r_inner = UUt2_r * T2r_inner
-            T1l_ev = UUt1_l * T1l_ev
-            T1r_ev = UUt1_r * T1r_ev
-        return signal
+            i1, i2a, i2b = 1, 3, 2
+            r1, r2a, r2b = 1, 2, 3
+        P1l = _steps(nP1, El[i1], El[0], -1.0, -1.0, dt[0])
+        P1r = _steps(nP1, Er[0], Er[r1], +1.0, +1.0, dt[0])
+        dl = torch.diagonal(_steps(nP2, El[i2a], El[i2b], -1.0, -1.0, dt[1]), dim1=1, dim2=2)   # (nP2, N)
+        dr = torch.diagonal(_steps(nP2, Er[r2a], Er[r2b], +1.0, +1.0, dt[1]), dim1=1, dim2=2)
+        F = T3l @ (T2l @ (P1l * T1l)) @ G @ ((P1r * T1r) @ T2r) @ T3r                      # (nP1, N, N)
+        P2 = dl.unsqueeze(2) * dr.unsqueeze(1)                                             # (nP2, N, N)
+        return _detect_2d(F, P2)
 
     else:
         raise NotImplementedError(
