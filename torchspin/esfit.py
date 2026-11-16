@@ -1038,7 +1038,32 @@ class ModelWrapper:
             return dataclasses.replace(opt, AccumMethod='linear')
         return opt
 
+    # The fit drivers evaluate some points more than once (levmar re-evaluates
+    # the accepted point at the end, esfit the final point for the residuals,
+    # the uncertainty estimate the center of its stencil): 5 of 24 simulations in
+    # a 4-parameter levmar fit.  The last few outputs are kept, keyed by the exact
+    # bytes of the parameter vector, so a repeat costs nothing and returns the very
+    # same array.  Only exact repeats hit; stochastic models (cardamom without a
+    # seed) then return the earlier draw instead of a new one.
+    _MEMO_SIZE = 8
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        state.pop('_memo', None)          # not shipped to worker processes
+        return state
+
     def __call__(self, pvec_active: np.ndarray, param_handler: ParameterHandler) -> np.ndarray:
+        key = (id(param_handler), np.asarray(pvec_active, dtype=float).tobytes())
+        memo = getattr(self, '_memo', ())
+        for k, out in memo:
+            if k == key:
+                return out.copy()
+        output = self._evaluate(pvec_active, param_handler)
+        # replace the list as a whole: concurrent callers (thread backend) read snapshots
+        self._memo = ([(key, output.copy())] + [e for e in memo if e[0] != key])[:self._MEMO_SIZE]
+        return output
+
+    def _evaluate(self, pvec_active: np.ndarray, param_handler: ParameterHandler) -> np.ndarray:
         """
         Evaluate model with active parameter vector.
         
