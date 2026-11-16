@@ -219,6 +219,9 @@ def _propagate(
     has_wigner_pot = LMK is not None and lam is not None
     has_numeric_pot = interpGrad is not None
 
+    if not (has_wigner_pot or has_numeric_pot):
+        return _propagate_free(q, rand_steps, nSteps)
+
     for iStep in range(1, nSteps):
         qLast = q[:, :, iStep - 1]  # (4, nTraj)
         curr_rand = rand_steps[:, :, iStep]  # (3, nTraj)
@@ -251,6 +254,34 @@ def _propagate(
         q[2, :, iStep] = (q3 * ct + q4 * ux * st + q1 * uy * st - q2 * uz * st).ravel()
         q[3, :, iStep] = (q4 * ct - q3 * ux * st + q2 * uy * st + q1 * uz * st).ravel()
 
+    return q
+
+
+def _propagate_free(q: np.ndarray, rand_steps: np.ndarray, nSteps: int) -> np.ndarray:
+    """:func:`_propagate` without an ordering potential.
+
+    The angular steps are then the pre-drawn random steps, so their rotation
+    angles, axes and half-angle sines/cosines are computed for all steps at once;
+    only the quaternion recursion runs step by step, on a contiguous
+    ``(nSteps, 4, nTraj)`` buffer.  Every value is formed by the same expression as
+    in the step loop of :func:`_propagate`, so the trajectories are identical."""
+    theta = np.sqrt(np.sum(rand_steps ** 2, axis=0, keepdims=True))      # (1, nTraj, nSteps)
+    theta_safe = np.where(theta < 1e-30, 1e-30, theta)
+    U = np.ascontiguousarray((rand_steps / theta_safe).transpose(2, 0, 1))   # (nSteps, 3, nTraj)
+    st = np.ascontiguousarray(np.sin(theta / 2.0).transpose(2, 0, 1))      # (nSteps, 1, nTraj)
+    ct = np.ascontiguousarray(np.cos(theta / 2.0).transpose(2, 0, 1))
+    qs = np.empty((nSteps,) + q.shape[:2], dtype=q.dtype)
+    qs[0] = q[:, :, 0]
+    for iStep in range(1, nSteps):
+        q1, q2, q3, q4 = qs[iStep - 1, 0:1], qs[iStep - 1, 1:2], qs[iStep - 1, 2:3], qs[iStep - 1, 3:4]
+        ux, uy, uz = U[iStep, 0:1], U[iStep, 1:2], U[iStep, 2:3]
+        s_, c_ = st[iStep], ct[iStep]
+        out = qs[iStep]
+        out[0] = (q1 * c_ - q2 * ux * s_ - q3 * uy * s_ - q4 * uz * s_).ravel()
+        out[1] = (q2 * c_ + q1 * ux * s_ - q4 * uy * s_ + q3 * uz * s_).ravel()
+        out[2] = (q3 * c_ + q4 * ux * s_ + q1 * uy * s_ - q2 * uz * s_).ravel()
+        out[3] = (q4 * c_ - q3 * ux * s_ + q2 * uy * s_ + q1 * uz * s_).ravel()
+    q[:, :, 1:] = qs[1:].transpose(1, 2, 0)
     return q
 
 
