@@ -450,6 +450,40 @@ def _replace_pairs(lists, new, bad):
     return out
 
 
+def _merge_line_lists(a, b, width):
+    """Per orientation, the union of two ``(B, I, W, pairs)`` line lists; a
+    resonance of the same level pair within ``1e-6 * width`` of one already
+    present (found again at the joint of two adjacent search windows) is dropped.
+    Tensors stay on the autograd graph (concatenation and indexing only)."""
+    out = ([], [], [], [])
+    for k in range(len(a[0])):
+        parts = [(x[0][k], x[1][k], x[2][k], x[3][k]) for x in (a, b)
+                 if x[0][k] is not None and x[0][k].numel() and x[3][k] is not None]
+        if not parts:
+            for i in range(4):
+                out[i].append(a[i][k])
+            continue
+        if len(parts) == 1:
+            for i in range(4):
+                out[i].append(parts[0][i])
+            continue
+        B = torch.cat([p[0] for p in parts]); I = torch.cat([p[1] for p in parts])
+        P = torch.cat([p[3] for p in parts])
+        W = None if any(p[2] is None for p in parts) else torch.cat([p[2] for p in parts])
+        Pd = P.detach()
+        code = Pd[:, 0] * (int(Pd[:, 1].max()) + 1) + Pd[:, 1]
+        o = torch.argsort(B.detach(), stable=True)
+        o = o[torch.argsort(code[o], stable=True)]                  # by pair, then field
+        B, I, P, code = B[o], I[o], P[o], code[o]
+        W = None if W is None else W[o]
+        dup = torch.zeros(B.shape[0], dtype=torch.bool, device=B.device)
+        dup[1:] = (code[1:] == code[:-1]) & ((B.detach()[1:] - B.detach()[:-1]).abs() < 1e-6 * width)
+        keep = ~dup
+        out[0].append(B[keep]); out[1].append(I[keep])
+        out[2].append(None if W is None else W[keep]); out[3].append(P[keep])
+    return out
+
+
 def _research_missing_knots(lists, rng, search, verbose=False):
     """Search again the level pairs that miss resonances at some orientations
     (B88, B75).
@@ -457,41 +491,61 @@ def _research_missing_knots(lists, rng, search, verbose=False):
     ``lists = (B, I, W, pairs)`` per orientation from the search over
     ``rng = Exp.Range``; ``search(window, pairs)`` repeats that search over
     all orientations for the given level pairs and field window and returns
-    the same layout.  The partly missing pairs are searched over
-    Range ± f·W (W = sweep width, f in ``_RESEARCH_PADS``, lower edge clamped
-    at 0) and their resonances replaced wholesale, all orientations at once so
-    that the occurrence index of a looping transition means the same at every
-    knot.  A pair's new resonances are kept only if they leave fewer of its
-    resonances missing and none of its orientations loses one; pairs that improved but are still incomplete are
-    searched again over a doubled window, the others keep what they have
-    (what is still missing then does not resonate at those orientations at
-    any field nearby, e.g. a looping transition, and very wide windows make
-    the detection of its near-tangent resonances roundoff-sensitive).
-    Out-of-range positions are kept: projection and summation clip them to
-    the sweep window, and the interpolation sees the transition at every
-    knot.  Returns ``lists`` itself (same objects) when no
-    pair is partly missing, so such spectra are unchanged bit for bit.
+    the same layout.  The partly missing pairs are searched in the bands that
+    extend the range to Range ± f·W (W = sweep width, f in ``_RESEARCH_PADS``,
+    lower edge clamped at 0): at each f only the two bands added since the
+    previous f, ``[lo - f·W, previous lo]`` and ``[previous hi, hi + f·W]``, are
+    searched (the range itself and the earlier bands have been searched), and a
+    pair's resonances become those of the main search plus every band so far,
+    all orientations at once, so that the occurrence index of a looping
+    transition means the same at every knot.  A pair's new resonances are kept
+    only if they leave fewer of its resonances missing and none of its
+    orientations loses one; pairs that improved but are still incomplete go on
+    to the next, wider band, the others keep what they have (what is still
+    missing then does not resonate at those orientations at any field nearby,
+    e.g. a looping transition, and very wide windows make the detection of its
+    near-tangent resonances roundoff-sensitive).  Out-of-range positions are
+    kept: projection and summation clip them to the sweep window, and the
+    interpolation sees the transition at every knot.  Returns ``lists`` itself
+    (same objects) when no pair is partly missing or none improves, so such
+    spectra are unchanged bit for bit.
+
+    Up to 0.9.38 each round searched the whole window Range ± f·W again (for
+    the S = 5/2 Mn(II) benchmark 44.6k diagonalizations against 23.1k in the
+    main search); the band search finds the same resonances (spectra agree to
+    ~1e-11) at about half the cost.
     """
     missing = _missing_resonances(lists[0], lists[3])
     if not missing:
         return lists
-    W = float(rng[1]) - float(rng[0])
+    lo0, hi0 = float(rng[0]), float(rng[1])
+    W = hi0 - lo0
     active = list(missing)
+    acc = lists                       # main search plus every band searched so far
+    lo_prev, hi_prev = lo0, hi0
     for f in _RESEARCH_PADS:
-        window = [max(0.0, float(rng[0]) - f * W), float(rng[1]) + f * W]
-        if verbose:
-            print(f"pepper: {len(active)} level pair(s) miss resonances at some knots; "
-                  f"searching them again over [{window[0]:.6g}, {window[1]:.6g}] mT")
-        found = search(window, active)
+        lo_n, hi_n = max(0.0, lo0 - f * W), hi0 + f * W
+        found = None
+        for band in ([lo_n, lo_prev], [hi_prev, hi_n]):
+            if band[1] - band[0] <= 0:
+                continue
+            if verbose:
+                print(f"pepper: {len(active)} level pair(s) miss resonances at some knots; "
+                      f"searching them again over [{band[0]:.6g}, {band[1]:.6g}] mT")
+            r = search(band, active)
+            found = r if found is None else _merge_line_lists(found, r, W)
+        lo_prev, hi_prev = lo_n, hi_n
+        if found is None:
+            break
+        acc = _merge_line_lists(acc, found, W)
         old = _pair_counts(lists[0], lists[3])
-        trial = _replace_pairs(lists, found, active)
-        trial = _pair_counts(trial[0], trial[3])
-        # the wider window contains the old one: a pair improves if it has no
-        # fewer resonances at any orientation and fewer missing
+        trial = _pair_counts(acc[0], acc[3])
+        # the bands only add resonances: a pair improves if it has no fewer
+        # resonances at any orientation and fewer missing
         better = [uv for uv in active if uv in trial and (trial[uv] >= old[uv]).all()
                   and int((trial[uv].max() - trial[uv]).sum()) < missing[uv]]
         if better:
-            lists = _replace_pairs(lists, found, better)
+            lists = _replace_pairs(lists, acc, better)
             missing = _missing_resonances(lists[0], lists[3])
         active = [uv for uv in better if uv in missing]
         if not active:
@@ -514,6 +568,29 @@ def _filter_slots(B_arrs, I_arrs, W_arrs, threshold):
         _slot_state.keys = [keys[k] for k in keep]
     return ([B_arrs[k] for k in keep], [I_arrs[k] for k in keep],
             None if W_arrs is None else [W_arrs[k] for k in keep])
+
+
+def _gauss_bin_chunk(p, sg, a, half, nw: int, x0: float, dx: float, n: int) -> torch.Tensor:
+    """Bin-integrated Gaussians of a chunk of lines (column tensors ``p``, ``sg``
+    = σ√2, ``a``, ``half`` = window half-width) on the axis ``x0 + k·dx``:
+    ``a/2 · [erf((e_{k+1} − p)/sg) − erf((e_k − p)/sg)]`` with bin edges
+    ``e_k = x0 + (k − 1/2)·dx``, evaluated over a common window of ``nw`` bins
+    starting just below ``p − half`` (all ``n`` bins if ``nw >= n``).  Adjacent bins
+    share an edge, so erf is evaluated once per edge (nw + 1 per line) rather than
+    twice per bin.  Differentiable in ``p``, ``sg`` and ``a`` (window detached)."""
+    dev = p.device
+    if nw >= n:
+        start = torch.zeros(p.shape, dtype=torch.long, device=dev)
+        nw = n
+    else:
+        start = ((p.detach() - half.detach() - x0) / dx).floor().to(torch.long) - 1
+    je = start + torch.arange(nw + 1, dtype=torch.long, device=dev)[None, :]    # edge indices
+    e = torch.erf((x0 + (je.to(torch.float64) - 0.5) * dx - p) / sg)
+    vals = (0.5 * a) * (e[:, 1:] - e[:, :-1])
+    k = je[:, :-1]
+    vals = torch.where((k >= 0) & (k < n), vals, torch.zeros((), dtype=torch.float64, device=dev))
+    return torch.zeros(n, dtype=torch.float64, device=dev).index_add(
+        0, k.clamp(0, n - 1).reshape(-1), vals.reshape(-1))
 
 
 def _gaussian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np.ndarray,
@@ -544,27 +621,11 @@ def _gaussian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np.n
     amp_t = torch.from_numpy(np.asarray(amp, dtype=float)[order]).to(dev)
     half_all = 7.0 * sg_all                                      # window half-width (mT)
     nw_np = ((2.0 * half_all / dx).ceil().to(torch.long) + 3).cpu().numpy()   # bins per window
-    ar = torch.arange(n, dtype=torch.long, device=dev)
-    xr = x.to(dev)
 
     def _chunk(k0: int) -> torch.Tensor:
         sl = slice(k0, k0 + chunk)
-        p = pos_t[sl, None]
-        sg = sg_all[sl, None]
-        a = amp_t[sl, None]
-        nw = int(nw_np[sl].max())
-        if nw >= n:
-            hi = torch.erf((xr[None, :] + 0.5 * dx - p) / sg)
-            lo = torch.erf((xr[None, :] - 0.5 * dx - p) / sg)
-            return (0.5 * a * (hi - lo)).sum(dim=0)
-        start = ((p - half_all[sl, None] - x0) / dx).floor().to(torch.long) - 1
-        idx = start + ar[None, :nw]
-        idxc = idx.clamp(0, n - 1)
-        z = (xr[idxc] - p) / sg                                   # bin centers
-        d = (0.5 * dx) / sg                                       # half bin in σ√2 units
-        vals = (0.5 * a) * (torch.erf(z + d) - torch.erf(z - d))
-        vals = torch.where((idx >= 0) & (idx < n), vals, torch.zeros((), dtype=torch.float64, device=dev))
-        return torch.bincount(idxc.reshape(-1), weights=vals.reshape(-1), minlength=n)
+        return _gauss_bin_chunk(pos_t[sl, None], sg_all[sl, None], amp_t[sl, None], half_all[sl, None],
+                                int(nw_np[sl].max()), x0, dx, n)
 
     starts = list(range(0, pos_t.shape[0], chunk))
     if dev.type == 'cpu':

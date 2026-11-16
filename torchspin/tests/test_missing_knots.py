@@ -8,8 +8,9 @@ the coarse-grid facets, and (b) dropped every triangle or zone with a NaN
 vertex, so triangles crossing the range ends were lost even without
 interpolation (B75; EasySpin too).  Since 0.9.28 the level pairs with partly
 missing resonances are searched again over Range +- 0.5 W (W = sweep width,
-lower edge clamped at 0; doubling up to 4 W while a pair keeps improving)
-and replaced wholesale; projection stays on Exp.Range and clips the
+lower edge clamped at 0; widening up to 4 W while a pair keeps improving;
+after 0.9.38 only the bands added at each step are searched) and replaced
+wholesale; projection stays on Exp.Range and clips the
 out-of-range vertices; only slots that still miss knots go linear.
 
 References: tests/data/ref_missing_knots.npz, generate_missing_knots_refs.py
@@ -250,10 +251,13 @@ def test_no_research_without_missing_knots(research_calls, monkeypatch, func, gr
     assert np.isfinite(y.detach().numpy()).all()
 
 
-def test_research_window_widens():
-    """_research_missing_knots: windows Range +- 0.5 W, 1 W, 2 W, 4 W (lower
-    edge clamped at 0) while a pair improves; a pair's new resonances are kept
-    only if fewer are missing; stops when complete or nothing improves."""
+def test_research_bands_widen():
+    """_research_missing_knots searches the bands that extend Range to
+    Range +- 0.5 W, 1 W, 2 W, 4 W (lower edge clamped at 0; at each step only
+    the two bands added since the previous one) while a pair improves; the
+    resonances of a pair become those of the main search plus every band so
+    far; stops when complete or nothing improves.  The mock search returns the
+    true resonances of the requested pairs whose field lies in the band."""
     t = lambda *v: torch.tensor(v, dtype=torch.float64)
     pr = lambda *p: torch.tensor(p, dtype=torch.long).reshape(-1, 2)
     E = (t(), t(), None, None)                  # no resonance at an orientation
@@ -266,37 +270,43 @@ def test_research_window_widens():
 
     def lists_of(*oris):
         return tuple(list(c) for c in zip(*oris))
-    # pair (0, 1) resonates at orientation 0 only, (0, 2) everywhere
-    start = lists_of(ori((0, 1, 10.0), (0, 2, 20.0)), ori((0, 2, 21.0)), ori((0, 2, 22.0)))
+
     windows = []
 
-    def search(found_at):
+    def search(true_fields):                    # true_fields[k]: fields of pair (0, 1) at orientation k
         def _s(window, pairs):
             windows.append(list(window))
             assert pairs == [(0, 1)]
-            n = found_at[min(len(windows), len(found_at)) - 1]
-            return lists_of(*[ori((0, 1, 10.0 + 0.1 * k)) if k < n else E for k in range(3)])
+            lo, hi = window
+            return lists_of(*[ori(*[(0, 1, b) for b in fk if lo <= b <= hi]) for fk in true_fields])
         return _s
-    # improves (2 of 3, then 3 of 3): two rounds
-    out = _pep._research_missing_knots(start, (5.0, 25.0), search([2, 3]))
-    assert windows == [[0.0, 35.0], [0.0, 45.0]]
+
+    # pair (0, 1) resonates in range at orientation 0 only, (0, 2) everywhere
+    start = lists_of(ori((0, 1, 10.0), (0, 2, 20.0)), ori((0, 2, 21.0)), ori((0, 2, 22.0)))
+    # complete after two steps; the lower band of the second step is empty (clamped at 0)
+    out = _pep._research_missing_knots(start, (5.0, 25.0), search([[10.0], [30.0], [42.0]]))
+    assert windows == [[0.0, 5.0], [25.0, 35.0], [35.0, 45.0]]
     assert _pep._missing_resonances(out[0], out[3]) == {}
-    assert sorted(out[0][2].tolist()) == [10.2, 22.0]
-    # improves once, then never again: all four windows, then stop
+    assert sorted(out[0][0].tolist()) == [10.0, 20.0]          # in-range resonance kept from the main search
+    assert sorted(out[0][1].tolist()) == [21.0, 30.0] and sorted(out[0][2].tolist()) == [22.0, 42.0]
+    # improves once, then never again: stop after the step that brought nothing
     windows.clear()
-    out = _pep._research_missing_knots(start, (100.0, 120.0), search([2, 2, 2, 2]))
-    assert windows == [[90.0, 130.0]] + [[80.0, 140.0]]
+    start2 = lists_of(ori((0, 1, 110.0), (0, 2, 105.0)), ori((0, 2, 106.0)), ori((0, 2, 107.0)))
+    out = _pep._research_missing_knots(start2, (100.0, 120.0), search([[110.0], [125.0], []]))
+    assert windows == [[90.0, 100.0], [120.0, 130.0], [80.0, 90.0], [130.0, 140.0]]
     assert _pep._missing_resonances(out[0], out[3]) == {(0, 1): 1}
-    windows.clear()
-    out = _pep._research_missing_knots(start, (100.0, 120.0), search([2, 2, 2, 3]))
-    assert windows == [[90.0, 130.0], [80.0, 140.0]]
+    assert sorted(out[0][1].tolist()) == [106.0, 125.0]
     # no improvement at all: the very same objects come back
     windows.clear()
-    out = _pep._research_missing_knots(start, (100.0, 120.0), search([1]))
-    assert windows == [[90.0, 130.0]] and out is start
-    # a worse search result is not taken
-    out = _pep._research_missing_knots(start, (100.0, 120.0), search([0]))
-    assert out is start
+    out = _pep._research_missing_knots(start2, (100.0, 120.0), search([[110.0], [], []]))
+    assert windows == [[90.0, 100.0], [120.0, 130.0]] and out is start2
+    # a resonance on the range edge, found by the main search and again by the
+    # adjacent band, is kept once
+    windows.clear()
+    start3 = lists_of(ori((0, 1, 25.0)), E, E)
+    out = _pep._research_missing_knots(start3, (5.0, 25.0), search([[25.0], [30.0], [31.0]]))
+    assert _pep._missing_resonances(out[0], out[3]) == {}
+    assert out[0][0].tolist() == [25.0]
     # nothing missing: no search, same objects
     full = lists_of(ori((0, 1, 10.0)), ori((0, 1, 11.0)))
     assert _pep._research_missing_knots(full, (0.0, 50.0), lambda w, p: 1 / 0) is full
