@@ -2896,7 +2896,9 @@ def _validate_fit_options(options: 'FitOptions') -> None:
         v = getattr(options, name)
         if v not in allowed:
             raise ValueError(f"FitOptions.{name} must be one of {allowed}, got {v!r}.")
-    _one_of('method', _METHODS)
+    if options.method not in _METHODS:
+        raise ValueError(f"Unknown method: {options.method!r} "
+                         f"(FitOptions.method must be one of {_METHODS}).")
     _one_of('autoscale', ('lsq', 'maxabs', 'none'))
     _one_of('lsq_negative_scale', ('clip', 'abs'))
     _one_of('target', ('fcn', 'int', 'diff', 'auto'))

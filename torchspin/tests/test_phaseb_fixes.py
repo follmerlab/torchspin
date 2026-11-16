@@ -216,7 +216,7 @@ def test_invalid_options_raise_before_any_model_evaluation(kw):
     def model(p):
         calls.append(1)
         return _gauss(p)
-    with pytest.raises(ValueError, match='FitOptions'):
+    with pytest.raises(ValueError, match='FitOptions|Unknown method'):
         esfit(_gauss([340.0, 3.0]), model, p0=np.array([335.0, 2.5]), vary=np.array([5.0, 1.0]),
               options=FitOptions(verbosity=0, **kw))
     assert calls == []

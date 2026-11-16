@@ -269,12 +269,13 @@ def _garlic_single(
 
     # B107: Diff/logDiff select the fast-motion regime as tcorr does
     # (EasySpin garlic: tcorr = 1/(6 Diff)); isotropic diffusion only.
-    n_set = sum(v is not None for v in (sys.tcorr, sys.logtcorr, sys.Diff, sys.logDiff))
-    if n_set > 1:
-        raise ValueError("garlic: give only one of tcorr, logtcorr, Diff and logDiff.")
+    # (the log forms take precedence over the linear ones, as for tcorr/logtcorr)
+    if (sys.tcorr is not None or sys.logtcorr is not None) and (sys.Diff is not None or sys.logDiff is not None):
+        raise ValueError("garlic: give a correlation time (tcorr/logtcorr) or a diffusion rate "
+                         "(Diff/logDiff), not both.")
     if sys.Diff is not None or sys.logDiff is not None:
-        diff = (torch.as_tensor(sys.Diff, dtype=dt) if sys.Diff is not None
-                else 10.0 ** torch.as_tensor(sys.logDiff, dtype=dt)).reshape(-1)
+        diff = (10.0 ** torch.as_tensor(sys.logDiff, dtype=dt) if sys.logDiff is not None
+                else torch.as_tensor(sys.Diff, dtype=dt)).reshape(-1)
         if diff.numel() != 1:
             raise ValueError("garlic: the fast-motion regime needs an isotropic Diff "
                              "(one value); use chili for anisotropic diffusion.")
