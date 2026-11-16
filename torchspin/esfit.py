@@ -76,15 +76,21 @@ class FitOptions:
         Order of the polynomial baseline fitted together with the scale, on
         the abscissa ``linspace(0, 1, n_data)``: ``-1`` no baseline, ``0``
         constant, ``1`` linear, ``2`` quadratic, and so on.
-    target : {'auto', 'fcn', 'int', 'diff'}, default 'auto'
+    target : {'fcn', 'int', 'diff', 'auto'}, default 'fcn'
         Transformation of the residual vector ``fit - data`` before the RMSD
-        is computed. ``'fcn'``: the residuals as they are. ``'int'``: their
-        cumulative sum (smooths the loss of derivative spectra and removes
-        oscillating local minima). ``'diff'``: their first difference
+        is computed. ``'fcn'`` (EasySpin's default): the residuals as they
+        are; with white noise this is the maximum-likelihood fit. ``'int'``:
+        their cumulative sum (smooths the loss of derivative spectra with
+        many resolved lines, which helps a poor start converge, but weights
+        the noise as a random walk, so the fitted parameters scatter more
+        than with ``'fcn'``). ``'diff'``: their first difference
         (``numpy.diff`` with a leading 0). ``'auto'``: ``'int'`` when the data
         look like a derivative spectrum (``|mean(data)| < 0.1 * std(data)``),
-        else ``'fcn'``. The choice is made from the data alone, not from the
-        simulator's ``Harmonic``.
+        else ``'fcn'``; the choice is made from the data alone, not from the
+        simulator's ``Harmonic``. For ``'int'`` and ``'diff'`` the reported
+        uncertainties account for the noise correlation the transformation
+        introduces. A rugged derivative fit can be started with ``'int'`` (or
+        ``method='global'``) and finished with ``'fcn'`` from its ``pfit``.
     max_iter : int, default 2000
         Iteration or evaluation budget. Its meaning depends on ``method``:
         SciPy's ``maxiter`` for ``'simplex'``, ``'lbfgsb'`` and ``'powell'``;
@@ -262,13 +268,13 @@ class FitOptions:
     >>> from torchspin import FitOptions
     >>> opt = FitOptions(method='levmar', baseline=0)
     >>> opt.target, opt.max_iter
-    ('auto', 2000)
+    ('fcn', 2000)
     """
     method: str = 'simplex'
     autoscale: str = 'lsq'
     lsq_negative_scale: str = 'clip'
     baseline: int = -1
-    target: str = 'auto'
+    target: str = 'fcn'
     max_iter: int = 2000
     tol_fun: float = 1e-6
     tol_x: float = 1e-6
@@ -1215,6 +1221,20 @@ def _fit_scale_baseline_lsq(
     if return_negative:
         return scale, baseline, negative
     return scale, baseline
+
+
+def _target_transform_adjoint(X: np.ndarray, target: str) -> np.ndarray:
+    """``T' X`` along axis 0, where ``T`` is the linear map of
+    :func:`_apply_target_transform` (``T r`` = transformed residuals)."""
+    if target == 'fcn':
+        return X
+    if target == 'int':                      # T = lower-triangular ones: reverse cumsum
+        return np.cumsum(X[::-1], axis=0)[::-1]
+    if target == 'diff':                     # (T r)_i = r_i - r_{i-1}: (T'y)_i = y_i - y_{i+1}
+        out = X.copy()
+        out[:-1] -= X[1:]
+        return out
+    raise ValueError(f"Unknown target: '{target}'. Use 'fcn', 'int', or 'diff'")
 
 
 def _apply_target_transform(residuals: np.ndarray, target: str) -> np.ndarray:
@@ -2731,8 +2751,12 @@ def _estimate_uncertainties(
                 'corr': np.full((len(pfit),) * 2, np.nan)}
     J = J_all[:, live]
 
-    # Compute residuals at optimum
-    residuals = residuals_fn(pfit)
+    # Residuals at the optimum, before the target transformation T: the noise
+    # is (close to) independent there, so the sandwich's middle term is
+    # J' T diag(r_raw^2) T' J (for 'fcn', T = I: the usual HC1). Using the
+    # transformed residuals instead would treat the random walk of 'int' as
+    # independent noise and understate the uncertainties (B131).
+    residuals = compute_residuals(pfit, data, model_wrapper, param_handler, options)[2]['residuals_raw']
     n_data = len(residuals)
     n_params = len(pfit)
 
@@ -2745,9 +2769,10 @@ def _estimate_uncertainties(
     try:
         JtJ_inv = np.linalg.pinv(J.T @ J)
         # HC1 sandwich estimator: avoid building O(n²) diagonal matrix
-        # (J.T @ diag(r²) @ J) == (J.T * r²) @ J
+        # (M.T @ diag(r²) @ M) == (M.T * r²) @ M, M = T' J
         W   = residuals ** 2                          # (n_data,)
-        JtWJ = (J.T * W) @ J                          # (n_params, n_params)
+        M   = _target_transform_adjoint(J, options.target)
+        JtWJ = (M.T * W) @ M                          # (n_params, n_params)
         cov  = JtJ_inv @ JtWJ @ JtJ_inv
         cov *= n_data / max(n_data - n_params, 1)     # degrees-of-freedom correction
 
@@ -2997,7 +3022,10 @@ def esfit(
     respect to the active parameters is taken by central differences (step
     ``1e-7 * max(|p|, 1)``), the covariance is the HC1 sandwich estimator
     ``(J'J)^-1 J' diag(r^2) J (J'J)^-1 * n_data / (n_data - n_active)``, and
-    ``ci95`` is ``pfit +/- 1.96 * pstd``.
+    ``ci95`` is ``pfit +/- 1.96 * pstd``. ``r`` are the untransformed
+    residuals; for ``target='int'`` or ``'diff'`` the middle term is
+    ``J' T diag(r^2) T' J`` with ``T`` the transformation, which accounts for
+    the correlation it gives the noise.
 
     Examples
     --------
@@ -3041,11 +3069,10 @@ def esfit(
     if options is None:
         options = FitOptions()
 
-    # Resolve target='auto': pick 'int' for derivative-like data
-    # (mean << std, characteriztic of field-modulated CW EPR with
-    # Harmonic=1) so the loss landscape is smooth enough for local
-    # optimizers. Matches MATLAB EasySpin esfit.m:382-390 which sets
-    # TargetID=2 (integral) for pepper/garlic with Harmonic>0.
+    # Resolve target='auto' (opt-in since B131; the default is 'fcn', as in
+    # EasySpin 6): 'int' for derivative-like data (mean << std, typical of
+    # field-modulated CW EPR), whose integrated loss is smoother for local
+    # optimizers from a poor start.
     if options.target == 'auto':
         data_mean = float(np.abs(np.mean(data)))
         data_std = float(np.std(data))

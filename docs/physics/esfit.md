@@ -5,8 +5,8 @@
 - local: `levmar` (a port of EasySpin's `esfit_levmar.m`), `simplex`, `lbfgsb`, `powell` and `trf`;
 - global: `global` (swarm plus simplex polish), `swarm`, `genetic`, `montecarlo` and `grid`.
 
-It has an automatic target choice (`target='auto'`), progress reporting, early stopping, and worker
-pools.
+It has residual targets (`'fcn'`, the default as in EasySpin 6, `'int'`, `'diff'` and an automatic
+`'auto'`), progress reporting, early stopping, and worker pools.
 
 **How well it is validated.** On 6 EasySpin fits started from offset values, torchspin reaches
 EasySpin's residual or better. The other evidence is self-consistency: agreement with SciPy's
