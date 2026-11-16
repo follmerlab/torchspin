@@ -570,6 +570,29 @@ def _filter_slots(B_arrs, I_arrs, W_arrs, threshold):
             None if W_arrs is None else [W_arrs[k] for k in keep])
 
 
+def _gauss_bin_chunk(p, sg, a, half, nw: int, x0: float, dx: float, n: int) -> torch.Tensor:
+    """Bin-integrated Gaussians of a chunk of lines (column tensors ``p``, ``sg``
+    = σ√2, ``a``, ``half`` = window half-width) on the axis ``x0 + k·dx``:
+    ``a/2 · [erf((e_{k+1} − p)/sg) − erf((e_k − p)/sg)]`` with bin edges
+    ``e_k = x0 + (k − 1/2)·dx``, evaluated over a common window of ``nw`` bins
+    starting just below ``p − half`` (all ``n`` bins if ``nw >= n``).  Adjacent bins
+    share an edge, so erf is evaluated once per edge (nw + 1 per line) rather than
+    twice per bin.  Differentiable in ``p``, ``sg`` and ``a`` (window detached)."""
+    dev = p.device
+    if nw >= n:
+        start = torch.zeros(p.shape, dtype=torch.long, device=dev)
+        nw = n
+    else:
+        start = ((p.detach() - half.detach() - x0) / dx).floor().to(torch.long) - 1
+    je = start + torch.arange(nw + 1, dtype=torch.long, device=dev)[None, :]    # edge indices
+    e = torch.erf((x0 + (je.to(torch.float64) - 0.5) * dx - p) / sg)
+    vals = (0.5 * a) * (e[:, 1:] - e[:, :-1])
+    k = je[:, :-1]
+    vals = torch.where((k >= 0) & (k < n), vals, torch.zeros((), dtype=torch.float64, device=dev))
+    return torch.zeros(n, dtype=torch.float64, device=dev).index_add(
+        0, k.clamp(0, n - 1).reshape(-1), vals.reshape(-1))
+
+
 def _gaussian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np.ndarray,
                    min_fwhm: float, chunk: int = 256) -> torch.Tensor:
     """Sum of bin-integrated Gaussians (EasySpin lisum1i with a Gaussian template).
@@ -598,27 +621,11 @@ def _gaussian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np.n
     amp_t = torch.from_numpy(np.asarray(amp, dtype=float)[order]).to(dev)
     half_all = 7.0 * sg_all                                      # window half-width (mT)
     nw_np = ((2.0 * half_all / dx).ceil().to(torch.long) + 3).cpu().numpy()   # bins per window
-    ar = torch.arange(n, dtype=torch.long, device=dev)
-    xr = x.to(dev)
 
     def _chunk(k0: int) -> torch.Tensor:
         sl = slice(k0, k0 + chunk)
-        p = pos_t[sl, None]
-        sg = sg_all[sl, None]
-        a = amp_t[sl, None]
-        nw = int(nw_np[sl].max())
-        if nw >= n:
-            hi = torch.erf((xr[None, :] + 0.5 * dx - p) / sg)
-            lo = torch.erf((xr[None, :] - 0.5 * dx - p) / sg)
-            return (0.5 * a * (hi - lo)).sum(dim=0)
-        start = ((p - half_all[sl, None] - x0) / dx).floor().to(torch.long) - 1
-        idx = start + ar[None, :nw]
-        idxc = idx.clamp(0, n - 1)
-        z = (xr[idxc] - p) / sg                                   # bin centers
-        d = (0.5 * dx) / sg                                       # half bin in σ√2 units
-        vals = (0.5 * a) * (torch.erf(z + d) - torch.erf(z - d))
-        vals = torch.where((idx >= 0) & (idx < n), vals, torch.zeros((), dtype=torch.float64, device=dev))
-        return torch.bincount(idxc.reshape(-1), weights=vals.reshape(-1), minlength=n)
+        return _gauss_bin_chunk(pos_t[sl, None], sg_all[sl, None], amp_t[sl, None], half_all[sl, None],
+                                int(nw_np[sl].max()), x0, dx, n)
 
     starts = list(range(0, pos_t.shape[0], chunk))
     if dev.type == 'cpu':

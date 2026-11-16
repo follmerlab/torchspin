@@ -313,26 +313,30 @@ def _slots_t(all_B: list, all_I: list, all_pairs: list, n_orient: int, threshold
 
 def gaussian_bins_t(x: torch.Tensor, pos: torch.Tensor, fwhm: torch.Tensor, amp: torch.Tensor,
                     min_fwhm: float, chunk: int = 256) -> torch.Tensor:
-    """Sum of bin-integrated Gaussians, torch port of ``pepper._gaussian_bins``:
-    each line contributes ``amp × [Φ(upper bin edge) − Φ(lower bin edge)]`` (its
-    sum over the axis equals ``amp``); widths below ``min_fwhm`` are clipped
-    (lisum1i).  Differentiable in ``pos``, ``fwhm`` and ``amp``; the lines are
-    evaluated densely in chunks (the ±7σ√2 window of the NumPy version only
-    skips bins that are zero to double precision)."""
+    """Sum of bin-integrated Gaussians, the torch counterpart of ``pepper._gaussian_bins``
+    (same kernel, ``pepper._gauss_bin_chunk``): each line contributes
+    ``amp × [Φ(upper bin edge) − Φ(lower bin edge)]`` (its sum over the axis equals
+    ``amp``); widths below ``min_fwhm`` are clipped (lisum1i).  Differentiable in
+    ``pos``, ``fwhm`` and ``amp``.  Lines are sorted by width and every chunk is
+    evaluated over a ±7σ√2 window (erfc(7) ≈ 4e-23: the bins left out are zero to
+    double precision); up to 0.9.38 every line was evaluated over the whole axis."""
     n = x.shape[0]
     dev = pos.device
     if pos.numel() == 0:
         return torch.zeros(n, dtype=_F64, device=dev)
     dx = float(x[1] - x[0])
-    xr = x.to(dev)
+    x0 = float(x[0])
     sig = torch.clamp(fwhm, min=min_fwhm) / math.sqrt(8.0 * math.log(2.0))
     sg = sig * math.sqrt(2.0)
+    order = torch.argsort(sg.detach(), stable=True)
+    pos, sg, amp = pos[order], sg[order], amp[order]
+    half = 7.0 * sg.detach()
+    nw_all = ((2.0 * half / dx).ceil().to(torch.long) + 3).cpu().numpy()
     out = torch.zeros(n, dtype=_F64, device=dev)
     for k0 in range(0, pos.numel(), chunk):
-        p = pos[k0:k0 + chunk, None]; g = sg[k0:k0 + chunk, None]; a = amp[k0:k0 + chunk, None]
-        hi = torch.erf((xr[None, :] + 0.5 * dx - p) / g)
-        lo = torch.erf((xr[None, :] - 0.5 * dx - p) / g)
-        out = out + (0.5 * a * (hi - lo)).sum(dim=0)
+        sl = slice(k0, k0 + chunk)
+        out = out + _pep._gauss_bin_chunk(pos[sl, None], sg[sl, None], amp[sl, None], half[sl, None],
+                                          int(nw_all[sl].max()), x0, dx, n)
     return out
 
 
