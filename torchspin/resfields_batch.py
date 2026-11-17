@@ -7,6 +7,9 @@ Replaces the previous Python loop with fully vectorized matrix operations:
    batched eigvalsh call to locate resonance-field brackets.
 3. Refine each bracket with n_bisect bisection steps — all brackets in parallel.
 4. Compute intensities via one final batched eigh (also handles Boltzmann).
+   On the autograd graph (B14) every diagonalization runs without the graph and
+   the candidate results are attached to it by first-order perturbation theory
+   (``_on_graph``): forward values unchanged, backward O(dim²) per line.
 5. Reassemble per-orientation result lists; compute strain widths sequentially
    when requested (unchanged from the original per-orientation path).
 
@@ -34,6 +37,11 @@ _N_COARSE = 20
 # Bisection iterations.  25 steps reduce a 3 mT bracket to < 1e-7 mT,
 # well below the Brent tolerance of 1e-5 mT used in the original code.
 _N_BISECT = 25
+
+
+def _expect(op: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """Real expectation values <v_k|op_k|v_k> for op (K, n, n) and v (K, n)."""
+    return (v.conj() * (op @ v.unsqueeze(-1)).squeeze(-1)).sum(dim=-1).real
 
 
 def _companion_roots(C3n, C2n, C1n, C0n):
@@ -227,22 +235,39 @@ def resfields_batch(
         Q3 = Q3.to(device=dev, dtype=muzL.dtype) if Q3 is not None else None
     has_ho = Q2 is not None or Q3 is not None
 
-    def _ho_H(Bb: torch.Tensor, idx=None):
+    # On the autograd graph (B14) the knot search and the model roots run on
+    # detached operators: which fields are candidates is piecewise constant in the
+    # parameters, and the resonance field gets its derivative from the implicit
+    # function theorem at the candidate diagonalization below, so the backward pass
+    # no longer replays every knot diagonalization.
+    on_graph = torch.is_grad_enabled() and any(
+        t is not None and t.requires_grad for t in (H0, muzL, Q2, Q3))
+    if on_graph:
+        H0_s, muzL_s = H0.detach(), muzL.detach()
+        Q2_s = Q2.detach() if Q2 is not None else None
+        Q3_s = Q3.detach() if Q3 is not None else None
+    else:
+        H0_s, muzL_s, Q2_s, Q3_s = H0, muzL, Q2, Q3
+    muzL_cs = muzL_s.to(torch.complex128) if not muzL_s.is_complex() else muzL_s
+
+    def _ho_H(Bb: torch.Tensor, idx=None, detached=False):
         """Nonlinear part B² Q2 + B³ Q3 for fields Bb broadcast as (..., 1, 1)."""
+        q2, q3 = (Q2_s, Q3_s) if detached else (Q2, Q3)
         out = 0.0
-        if Q2 is not None:
-            out = out + Bb ** 2 * (Q2 if idx is None else Q2[idx])
-        if Q3 is not None:
-            out = out + Bb ** 3 * (Q3 if idx is None else Q3[idx])
+        if q2 is not None:
+            out = out + Bb ** 2 * (q2 if idx is None else q2[idx])
+        if q3 is not None:
+            out = out + Bb ** 3 * (q3 if idx is None else q3[idx])
         return out
 
-    def _ho_dH(Bb: torch.Tensor, idx=None):
+    def _ho_dH(Bb: torch.Tensor, idx=None, detached=False):
         """Field derivative of the nonlinear part, 2B Q2 + 3B² Q3."""
+        q2, q3 = (Q2_s, Q3_s) if detached else (Q2, Q3)
         out = 0.0
-        if Q2 is not None:
-            out = out + 2.0 * Bb * (Q2 if idx is None else Q2[idx])
-        if Q3 is not None:
-            out = out + 3.0 * Bb ** 2 * (Q3 if idx is None else Q3[idx])
+        if q2 is not None:
+            out = out + 2.0 * Bb * (q2 if idx is None else q2[idx])
+        if q3 is not None:
+            out = out + 3.0 * Bb ** 2 * (q3 if idx is None else q3[idx])
         return out
 
     # ── Step 2: Segment model of the level diagram (EasySpin resfields.m) ──────
@@ -258,9 +283,9 @@ def resfields_batch(
     pair_j_arr = torch.tensor([p[1] for p in all_pairs], dtype=torch.long, device=dev)
     nP = pair_i_arr.numel()
     tol = mwFreq_MHz * float(getattr(opt, 'ModellingAccuracy', 2e-6))
-    muzL_c = muzL.to(torch.complex128) if not muzL.is_complex() else muzL
 
     _chunk_elems = 2.5e7          # complex128 elements per batched eigh (~400 MB)
+
 
     def _diag_at(Bk: torch.Tensor):
         """Energies (M, nB, n) and slopes dE/dB (M, nB, n) at fields Bk (nB,)."""
@@ -268,11 +293,11 @@ def resfields_batch(
         Es, Ds = [], []
         for b0 in range(0, Bk.numel(), per):
             Bc = Bk[b0:b0 + per]
-            H = H0.unsqueeze(0).unsqueeze(0) - Bc.view(1, -1, 1, 1) * muzL.unsqueeze(1)
+            H = H0_s.unsqueeze(0).unsqueeze(0) - Bc.view(1, -1, 1, 1) * muzL_s.unsqueeze(1)
             if has_ho:
                 Bb = Bc.view(1, -1, 1, 1)
-                Q2u = Q2.unsqueeze(1) if Q2 is not None else None
-                Q3u = Q3.unsqueeze(1) if Q3 is not None else None
+                Q2u = Q2_s.unsqueeze(1) if Q2_s is not None else None
+                Q3u = Q3_s.unsqueeze(1) if Q3_s is not None else None
                 if Q2u is not None:
                     H = H + Bb ** 2 * Q2u
                 if Q3u is not None:
@@ -280,14 +305,14 @@ def resfields_batch(
             E, V = eigh(H)
             Es.append(E)
             if has_ho:
-                dH = -muzL_c.unsqueeze(1)
+                dH = -muzL_cs.unsqueeze(1)
                 if Q2u is not None:
                     dH = dH + 2.0 * Bb * Q2u
                 if Q3u is not None:
                     dH = dH + 3.0 * Bb ** 2 * Q3u
                 Ds.append((V.conj() * (dH @ V)).sum(dim=-2).real)
             else:
-                Ds.append(-(V.conj() * (muzL_c.unsqueeze(1) @ V)).sum(dim=-2).real)
+                Ds.append(-(V.conj() * (muzL_cs.unsqueeze(1) @ V)).sum(dim=-2).real)
             del H, V
         return torch.cat(Es, dim=1), torch.cat(Ds, dim=1)
 
@@ -301,6 +326,78 @@ def resfields_batch(
         (endpoint values within the slope-bounded excursion of the cubic)."""
         bound = 1.5 * h * torch.maximum(da.abs(), db.abs()) + tol
         return (fa * fb <= 0) | (torch.minimum(fa.abs(), fb.abs()) <= bound)
+
+    # Moment operators in the eigenvector dtype; muzL[m] @ v is applied as
+    # n_x[m] (mux v) + n_y[m] (muy v) + n_z[m] (muz v), without gathering one
+    # (dim, dim) matrix per candidate.
+    _cdt = torch.complex128
+    _n_xyz = (n_x.view(M), n_y.view(M), n_z.view(M))
+    _mu_g = tuple(op.to(_cdt) for op in (mux, muy, muz))
+    _mu_d = tuple(op.detach() for op in _mu_g)
+    _H0_g = H0.to(_cdt)
+
+    def _muzL_apply(v, mv, ops):
+        """muzL[mv] @ v for vectors v (K, dim) or matrices v (K, dim, k) given as (K, k, dim)."""
+        out = 0.0
+        for nc, op in zip(_n_xyz, ops):
+            w = nc[mv].to(v.real.dtype)
+            out = out + w.view(-1, *([1] * (v.ndim - 1))) * (v @ op.transpose(-1, -2))
+        return out
+
+    def _dHdB_apply(v, Bb, mv, detached):
+        """(dH/dB at the candidate fields) @ v for v (K, dim) or (K, k, dim) (rows)."""
+        out = -_muzL_apply(v, mv, _mu_d if detached else _mu_g)
+        if has_ho:
+            hoD = _ho_dH(Bb, mv, detached=detached).to(_cdt)
+            out = out + (v @ hoD.transpose(-1, -2) if v.ndim == 3 else (hoD @ v.unsqueeze(-1)).squeeze(-1))
+        return out
+
+    def _H_apply(v, Bv, mv):
+        """H(B) @ v on the graph at fixed fields Bv, for v (K, dim) or (K, k, dim) (rows)."""
+        shp = (-1,) + (1,) * (v.ndim - 1)
+        out = v @ _H0_g.transpose(-1, -2) - Bv.view(shp).to(v.real.dtype) * _muzL_apply(v, mv, _mu_g)
+        if has_ho:
+            hoH = _ho_H(Bv.view(-1, 1, 1), mv).to(_cdt)
+            out = out + (v @ hoH.transpose(-1, -2) if v.ndim == 3 else (hoH @ v.unsqueeze(-1)).squeeze(-1))
+        return out
+
+    def _on_graph(Bv, B_new, mv, ii, jj, E, V, vi, vj, Zi, Zj, fd, all_levels):
+        """Graph-connected resonance field, energies and transition eigenvectors at
+        the candidate diagonalization (B14).  Values are those of the detached
+        diagonalization, bit for bit; the derivatives are first-order perturbation
+        theory, the derivative that ``eigh`` itself has (same degeneracy rule as
+        ``torchspin._linalg``), plus the implicit derivative of the field,
+        dB/dθ = −(∂f/∂θ)/(∂f/∂B) for f = E_j − E_i − ν (Hellmann–Feynman ∂f/∂θ).
+        Where ∂f/∂B vanishes (turning point of a looping transition) the field
+        gets no derivative."""
+        Yi = _H_apply(vi, Bv, mv); Yi = Yi - Yi.detach()            # ∂H/∂θ v_i (value 0)
+        Yj = _H_apply(vj, Bv, mv); Yj = Yj - Yj.detach()
+        df = (vj.conj() * Yj).sum(-1).real - (vi.conj() * Yi).sum(-1).real
+        ok = fd.abs() > 1e-12
+        dB = -torch.where(ok, df / torch.where(ok, fd, torch.ones_like(fd)), torch.zeros_like(df))
+        Xi = Yi + dB.unsqueeze(-1) * Zi                                 # total dH v_i (θ and field)
+        Xj = Yj + dB.unsqueeze(-1) * Zj
+        scale = E.abs().amax(dim=-1, keepdim=True)
+        Vh = V.conj().transpose(-1, -2)
+
+        def _vec(v, X, n):
+            gap = E.gather(1, n.view(-1, 1)) - E                        # E_n − E_k
+            F = torch.where(gap.abs() > 1e-9 * (scale + 1e-300), 1.0 / torch.where(gap == 0, torch.ones_like(gap), gap),
+                            torch.zeros_like(gap))
+            return v + (V @ (F.to(_cdt) * (Vh @ X.unsqueeze(-1)).squeeze(-1)).unsqueeze(-1)).squeeze(-1)
+
+        psi_i, psi_j = _vec(vi, Xi, ii), _vec(vj, Xj, jj)
+        if all_levels:                                                  # Boltzmann: every level
+            Vr = V.transpose(-1, -2)                                    # rows = eigenvectors
+            Y = _H_apply(Vr, Bv, mv); Y = Y - Y.detach()
+            Z = _dHdB_apply(Vr, Bv.view(-1, 1, 1), mv, True)
+            E = E + ((Vr.conj() * (Y + dB.view(-1, 1, 1) * Z)).sum(-1)).real
+        else:
+            r = torch.arange(E.shape[0], device=E.device)
+            dE = torch.zeros_like(E)
+            dE = dE.index_put((r, ii), (vi.conj() * Xi).sum(-1).real).index_put((r, jj), (vj.conj() * Xj).sum(-1).real)
+            E = E + dE
+        return B_new + (dB - dB.detach()), E, psi_i, psi_j
 
     n_seg = 4
     Bk = torch.linspace(B_lo, B_hi, n_seg + 1, dtype=rdtype, device=dev)
@@ -385,21 +482,23 @@ def resfields_batch(
             # the two eigenvectors of each transition are kept for the intensities.
             # Chunked so that at most ~400 MB of eigenvectors exist at a time.
             per = max(1, int(_chunk_elems // (dim * dim)))
+            boltz = init_state is None and exp.Temperature is not None and exp.Temperature > 0
             for c0 in range(0, B_c.numel(), per):
                 sl = slice(c0, c0 + per)
                 Bv, mv, pv = B_c[sl], m_c[sl], p_c[sl]
-                H = H0.unsqueeze(0) - Bv.view(-1, 1, 1) * muzL[mv]
-                if has_ho:
-                    H = H + _ho_H(Bv.view(-1, 1, 1), mv)
-                E_v, V_v = eigh(H)
-                if has_ho:
-                    dE = (V_v.conj() * ((_ho_dH(Bv.view(-1, 1, 1), mv) - muzL_c[mv]) @ V_v)).sum(dim=-2).real
-                else:
-                    dE = -(V_v.conj() * (muzL_c[mv] @ V_v)).sum(dim=-2).real
                 ii = pair_i_arr[pv]; jj = pair_j_arr[pv]
                 r = torch.arange(Bv.numel(), device=dev)
+                Bb = Bv.view(-1, 1, 1)
+                H = H0_s.unsqueeze(0) - Bb * muzL_s[mv]
+                if has_ho:
+                    H = H + _ho_H(Bb, mv, detached=True)
+                E_v, V_v = eigh(H)
+                del H
+                vi, vj = V_v[r, :, ii], V_v[r, :, jj]                   # (K, dim)
+                # Hellmann-Feynman slopes dE/dB of the two transition levels
+                Zi, Zj = _dHdB_apply(vi, Bb, mv, True), _dHdB_apply(vj, Bb, mv, True)
+                fd_v = (vj.conj() * Zj).sum(-1).real - (vi.conj() * Zi).sum(-1).real
                 f_v = E_v[r, jj] - E_v[r, ii] - mwFreq_MHz
-                fd_v = dE[r, jj] - dE[r, ii]
                 step = torch.where(fd_v.abs() > 1e-12, f_v / fd_v, torch.zeros_like(f_v))
                 # apply only corrections that are small on the segment scale (looping
                 # transitions: the slope vanishes and Newton is unreliable)
@@ -407,10 +506,13 @@ def resfields_batch(
                 B_new = torch.where(small, Bv - step, Bv)
                 # accept: model root within the tolerance window and inside the range
                 keep = (f_v.abs() <= max(100 * tol, 1e-3)) & (B_new >= B_lo) & (B_new <= B_hi)
-                Vp = V_v.transpose(-1, -2)                    # rows = eigenvectors
-                B_list.append(B_new[keep]); m_list.append(mv[keep]); p_list.append(pv[keep])
-                E_list.append(E_v[keep]); psi_i_list.append(Vp[r, ii][keep]); psi_j_list.append(Vp[r, jj][keep])
-                del H, V_v, Vp, dE
+                Bk_, Ek_, vik, vjk = B_new[keep], E_v[keep], vi[keep], vj[keep]
+                if on_graph and Bk_.numel() > 0:
+                    Bk_, Ek_, vik, vjk = _on_graph(Bv[keep], Bk_, mv[keep], ii[keep], jj[keep], Ek_, V_v[keep],
+                                                   vik, vjk, Zi[keep], Zj[keep], fd_v[keep], boltz)
+                B_list.append(Bk_); m_list.append(mv[keep]); p_list.append(pv[keep])
+                E_list.append(Ek_); psi_i_list.append(vik); psi_j_list.append(vjk)
+                del V_v, vi, vj, Zi, Zj
     if B_list and sum(b.numel() for b in B_list) > 0:
         B_res_all = torch.cat(B_list); m_idx = torch.cat(m_list); p_idx = torch.cat(p_list)
         E_res = torch.cat(E_list); psi_i = torch.cat(psi_i_list); psi_j = torch.cat(psi_j_list)
