@@ -4,7 +4,7 @@ first-order perturbation theory: energies by Hellmann-Feynman, the two transitio
 eigenvectors by the sum over states with ``_linalg``'s degeneracy rule, and the resonance
 field by the implicit derivative dB/dθ = -(∂f/∂θ)/(∂f/∂B).  Before, every knot and candidate
 ``eigh`` was on the graph and the backward pass replayed them all (Cu + 2 14N, [10 4]:
-backward 11.8 s -> 2.3 s, peak memory 8.3 -> 5.5 GB).
+backward 10.7 s -> 2.1 s at 1 thread).
 
 Values are those of the detached diagonalization: resonance fields with and without grad
 are identical bit for bit; intensities differ by <= 1e-18 relative and spectra by ~1e-16, as

@@ -495,8 +495,14 @@ def resfields_batch(
                 E_v, V_v = eigh(H)
                 del H
                 vi, vj = V_v[r, :, ii], V_v[r, :, jj]                   # (K, dim)
-                # Hellmann-Feynman slopes dE/dB of the two transition levels
-                Zi, Zj = _dHdB_apply(vi, Bb, mv, True), _dHdB_apply(vj, Bb, mv, True)
+                # Hellmann-Feynman slopes dE/dB of the two transition levels:
+                # (dH/dB) v as one batched product per vector (few kernels, small systems)
+                dHb = -muzL_cs[mv]
+                if has_ho:
+                    dHb = dHb + _ho_dH(Bb, mv, detached=True).to(dHb.dtype)
+                Zi = (dHb @ vi.unsqueeze(-1)).squeeze(-1)
+                Zj = (dHb @ vj.unsqueeze(-1)).squeeze(-1)
+                del dHb
                 fd_v = (vj.conj() * Zj).sum(-1).real - (vi.conj() * Zi).sum(-1).real
                 f_v = E_v[r, jj] - E_v[r, ii] - mwFreq_MHz
                 step = torch.where(fd_v.abs() > 1e-12, f_v / fd_v, torch.zeros_like(f_v))

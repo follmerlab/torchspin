@@ -19,8 +19,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Hermite-model root's, which agrees with it to the model accuracy) and agree with central differences of
   `pepper` as before. Where the slope difference of a transition vanishes (turning point of a looping
   transition) its field gets no derivative; before, it got the Hermite-model root's. Cu(II) + 2 14N
-  gradient, GridSize [10 4]: forward 9.3 -> 7.6 s, backward 11.8 -> 2.3 s, peak memory 8.3 -> 5.5 GB
-  (1 thread); small systems 1.1-1.8x faster backward.
+  gradient, GridSize [10 4]: forward + backward 19.2 -> 9.9 s at 1 thread (backward 10.7 -> 2.1 s) and
+  13.9 -> 4.8 s at 8 threads; peak process memory 8.3-9.8 -> 7.3-8.2 GB. Small systems: backward 1.1-1.6x
+  faster. Forward-only pepper computes the slopes of the two transition levels only: Cu(II) + 2 14N
+  1.12-1.15x, Mn(II) 1.06-1.08x, small systems unchanged; outputs bit-identical.
 - **Real-pulse engine (thyme/spidyan): less work per acquisition point** (B11). The chronological event
   order is cached on the exact event lengths (every orientation repeats the same per-point sequences),
   free-evolution propagators are cached per orientation on the exact step (a 32 x 32 sweep needs about

@@ -18,8 +18,8 @@ derivative dB_res/dθ = −(∂f/∂θ)/(∂f/∂B), the level energies their He
 derivatives and the two transition eigenvectors the sum-over-states derivative, the
 derivative ``eigh``'s own backward gives (same degeneracy rule).  Values are those of the
 forward-only search; the backward pass costs O(dim²) per line instead of replaying every
-diagonalization (Cu(II) + 2 ¹⁴N, GridSize [10 4]: forward + backward 21 → 10 s at 1 thread,
-peak memory 8.3 → 5.5 GB).
+diagonalization (Cu(II) + 2 ¹⁴N, GridSize [10 4]: forward + backward 19 → 10 s at 1 thread,
+14 → 4.8 s at 8 threads).
 
 Differences to ``torchspin.autograd.differentiable_spectrum``'s broadband path (a
 separate forward model that sums a Gaussian per orientation and transition): the
