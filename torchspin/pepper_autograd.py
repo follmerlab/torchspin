@@ -10,9 +10,16 @@ harmonic -- but with every stage after the search written in torch, so that
 ``torch.autograd`` propagates gradients from the spectrum to the spin-system
 tensors (``sys.g``, ``sys.A``, ``sys.D``, ``sys.lw`` ...) that ``requires_grad``.
 
-Gradients through the resonance-field search need no custom backward: the search
-is pure torch and its final safeguarded Newton step at a converged root is the
-implicit-function derivative dB_res/dθ = −(∂f/∂θ)/(∂f/∂B).
+Gradients through the resonance-field search (B14): the search itself runs off the
+graph (which fields are candidates is piecewise constant in the parameters).  Each
+candidate is diagonalized once without the graph, and the graph is attached by
+first-order perturbation theory: the resonance field gets the implicit-function
+derivative dB_res/dθ = −(∂f/∂θ)/(∂f/∂B), the level energies their Hellmann–Feynman
+derivatives and the two transition eigenvectors the sum-over-states derivative, the
+derivative ``eigh``'s own backward gives (same degeneracy rule).  Values are those of the
+forward-only search; the backward pass costs O(dim²) per line instead of replaying every
+diagonalization (Cu(II) + 2 ¹⁴N, GridSize [10 4]: forward + backward 19 → 10 s at 1 thread,
+14 → 4.8 s at 8 threads).
 
 Differences to ``torchspin.autograd.differentiable_spectrum``'s broadband path (a
 separate forward model that sums a Gaussian per orientation and transition): the
