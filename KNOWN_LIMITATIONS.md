@@ -496,6 +496,45 @@ two nearest points. EasySpin's `projecttriangles.c`/`projectzones.c` integrate o
   raises for grad inputs); its isotropic fixed-field path uses exact-position templates since
   0.9.36 (B86). garlic rounds or splits linearly, makespec splits linearly.
 
+## Resonance eigenvector interpolation (`Options.RediagLimit`): deviation from EasySpin (0.9.39, B133)
+
+pepper's matrix route (`resfields_batch`) brackets each resonance between field knots where the
+Hamiltonian has been diagonalized. For spin systems of dimension 16 or more, a forward run then
+interpolates the two transition eigenvectors between the knots instead of diagonalizing at the
+resonance, when
+
+- both eigenvectors overlap with themselves across the segment by at least `Options.RediagLimit`
+  (default 0.999), and
+- both levels are separated from every other level by more than 1e-6 of max|E| at both knots.
+
+The interpolation is cubic Hermite, using eigenvector derivatives at the knots from perturbation
+theory with a phase alignment by overlap. The field is refined by one Rayleigh-quotient Newton step,
+and Boltzmann energies come from the cubic Hermite model of the levels. Every other resonance is
+diagonalized as before.
+
+- **Accuracy.** Against `RediagLimit = 1` (exact), 15 systems of dimension 16 to 216 differed
+  by at most 4.2e-7 of the spectrum maximum (nitroxide biradical with two 14N, [19 4]); 11 of
+  them by less than 5e-8. Of the 34 output-parity cases, the 3 that interpolate changed by
+  5.5e-7 (Cu(II) + 2 14N, [10 4]), 6.3e-7 (the same with separate transitions) and 1.5e-7
+  (Mn(II)); the other 31 are identical. Resonance
+  fields agree to ~1e-12 mT; the residual is in the transition intensities.
+- **Speed.** 1.0-2.0x at 1 thread. Systems whose transition levels are mostly degenerate gain
+  least (symmetric biradical 1.1x), because those resonances are diagonalized.
+- **Exact results.** Pass `Options(RediagLimit=1)` (any value >= 1); the result is identical bit
+  for bit to 0.9.38.
+- **Not affected.** Systems below dimension 16 (one diagonalization costs about as much as the
+  interpolation there), `Method='perturb'`/`'hybrid'`, and runs on the autograd graph
+  (`pepper_autograd` with parameters that require grad). Gradient runs therefore return the exact
+  value, which can differ from the forward-only value of the same model by up to the accuracy above.
+- **Deviation from EasySpin.** EasySpin interpolates linearly with `Opt.RediagLimit = 0.95` and
+  takes fields from the energy model. In a prototype of that scheme, Cu(II) + 2 14N was off by
+  1.3e-3 and Mn(II) by 5e-4. With the cubic scheme at 0.99, Cu(II) + 14N (lwpp 0.3 mT) still
+  reached 1.1e-4, at the same speed as 0.999. Without the degeneracy check, each knot's
+  diagonalization picks its own basis of a degenerate subspace: Cu(II) + 3 14N reached 4.4e-3 and
+  the symmetric biradical 2.5e-6 (now 4.9e-10 and 3.5e-12).
+
+Tests: `torchspin/tests/test_rediag_interpolation.py`.
+
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
 The edge-bin integrals of `projecttriangles` were written as differences of O(bin index)

@@ -39,6 +39,32 @@ _N_COARSE = 20
 _N_BISECT = 25
 
 
+# Resonance eigenvectors are interpolated between knots (Options.RediagLimit, B133)
+# only for Hamiltonians of at least this dimension: below it a diagonalization costs
+# about as much as the interpolation (S = 5/2 alone, 6x6: 0.8x measured).
+_INTERP_MIN_DIM = 16
+# ... and only when both transition levels are separated from every other level by more
+# than this fraction of max|E| at both knots: a degenerate level has no unique eigenvector,
+# so the two knots' bases of its subspace need not match (symmetric biradical, 2 x 14N:
+# grouped intensities off by 2e-4 of the strongest line without this check)
+_INTERP_DEGEN_REL = 1e-6
+
+
+def _isolated(E: torch.Tensor, n: torch.Tensor) -> torch.Tensor:
+    """Rows of ascending E (K, N) whose level n (K,) is non-degenerate (_INTERP_DEGEN_REL)."""
+    tol = _INTERP_DEGEN_REL * E.abs().amax(dim=-1)
+    En = E.gather(1, n.view(-1, 1)).squeeze(1)
+    inf = torch.full_like(En, math.inf)
+    below = torch.where(n > 0, En - E.gather(1, (n - 1).clamp(min=0).view(-1, 1)).squeeze(1), inf)
+    above = torch.where(n < E.shape[1] - 1, E.gather(1, (n + 1).clamp(max=E.shape[1] - 1).view(-1, 1)).squeeze(1) - En, inf)
+    return torch.minimum(below, above) > tol
+
+
+def _expect_rows(Hv: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """Real <v_k|H v_k> given the products Hv (K, n) and the vectors v (K, n)."""
+    return (v.conj() * Hv).sum(dim=-1).real
+
+
 def _expect(op: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     """Real expectation values <v_k|op_k|v_k> for op (K, n, n) and v (K, n)."""
     return (v.conj() * (op @ v.unsqueeze(-1)).squeeze(-1)).sum(dim=-1).real
@@ -288,9 +314,10 @@ def resfields_batch(
 
 
     def _diag_at(Bk: torch.Tensor):
-        """Energies (M, nB, n) and slopes dE/dB (M, nB, n) at fields Bk (nB,)."""
+        """Energies (M, nB, n), slopes dE/dB (M, nB, n) and, when resonance eigenvectors
+        are interpolated, eigenvectors (M, nB, n, n) at fields Bk (nB,)."""
         per = max(1, int(_chunk_elems // (M * dim * dim)))
-        Es, Ds = [], []
+        Es, Ds, Vs = [], [], []
         for b0 in range(0, Bk.numel(), per):
             Bc = Bk[b0:b0 + per]
             H = H0_s.unsqueeze(0).unsqueeze(0) - Bc.view(1, -1, 1, 1) * muzL_s.unsqueeze(1)
@@ -313,8 +340,10 @@ def resfields_batch(
                 Ds.append((V.conj() * (dH @ V)).sum(dim=-2).real)
             else:
                 Ds.append(-(V.conj() * (muzL_cs.unsqueeze(1) @ V)).sum(dim=-2).real)
+            if interp:
+                Vs.append(V)
             del H, V
-        return torch.cat(Es, dim=1), torch.cat(Ds, dim=1)
+        return torch.cat(Es, dim=1), torch.cat(Ds, dim=1), (torch.cat(Vs, dim=1) if interp else None)
 
     def _pair_f(E, D):
         f = E[..., pair_j_arr] - E[..., pair_i_arr] - mwFreq_MHz     # (M, nB, nP)
@@ -399,9 +428,73 @@ def resfields_batch(
             E = E + dE
         return B_new + (dB - dB.detach()), E, psi_i, psi_j
 
+    def _interpolate_candidates(B_c, m_c, p_c, s_c, t_c, lo, hi, boltz, B_list, m_list, p_list, E_list,
+                                psi_i_list, psi_j_list):
+        """Interpolated resonances (appended to the lists); returns the mask of the
+        candidates that were handled (the rest need a diagonalization)."""
+        stable_all = torch.zeros(B_c.numel(), dtype=torch.bool, device=dev)
+        per = max(1, int(_chunk_elems // (4 * dim * dim)))
+        for c0 in range(0, B_c.numel(), per):
+            sl = slice(c0, c0 + per)
+            Bv, mv, pv, sv, tv = B_c[sl], m_c[sl], p_c[sl], s_c[sl], t_c[sl]
+            ii = pair_i_arr[pv]; jj = pair_j_arr[pv]
+            r = torch.arange(Bv.numel(), device=dev)
+            Va, Vb = V_k[mv, sv], V_k[mv, sv + 1]                       # (K, n, n)
+            Ea, Eb = E_k[mv, sv], E_k[mv, sv + 1]
+            ua, ub, va, vb = Va[r, :, ii], Vb[r, :, ii], Va[r, :, jj], Vb[r, :, jj]
+            stab = torch.minimum((ua.conj() * ub).sum(-1).abs(), (va.conj() * vb).sum(-1).abs())
+            ok = ((stab >= rediag_limit) & _isolated(Ea, ii) & _isolated(Ea, jj)
+                  & _isolated(Eb, ii) & _isolated(Eb, jj))
+            if not ok.any():
+                continue
+            idx = torch.where(ok)[0]
+            Bv, mv, pv, sv, tv, ii, jj = Bv[idx], mv[idx], pv[idx], sv[idx], tv[idx], ii[idx], jj[idx]
+            Va, Vb, Ea, Eb, ua, ub, va, vb = Va[idx], Vb[idx], Ea[idx], Eb[idx], ua[idx], ub[idx], va[idx], vb[idx]
+            Bka, Bkb = Bk[sv], Bk[sv + 1]
+            hh = (Bkb - Bka).view(-1, 1)
+
+            def _dv(V, E, v, n, Bknot):
+                # dv_n/dB = sum_k v_k <v_k|dH/dB|v_n> / (E_n - E_k), _linalg's degeneracy rule
+                Z = _dHdB_apply(v, Bknot.view(-1, 1, 1), mv, True)
+                gap = E.gather(1, n.view(-1, 1)) - E
+                sc = E.abs().amax(dim=-1, keepdim=True)
+                F = torch.where(gap.abs() > 1e-9 * (sc + 1e-300), 1.0 / torch.where(gap == 0, torch.ones_like(gap), gap),
+                                torch.zeros_like(gap))
+                return (V @ (F.to(_cdt) * (V.conj().transpose(-1, -2) @ Z.unsqueeze(-1)).squeeze(-1)).unsqueeze(-1)).squeeze(-1)
+
+            t1 = tv.view(-1, 1)
+            h00, h10 = 2 * t1 ** 3 - 3 * t1 ** 2 + 1, t1 ** 3 - 2 * t1 ** 2 + t1
+            h01, h11 = -2 * t1 ** 3 + 3 * t1 ** 2, t1 ** 3 - t1 ** 2
+
+            def _herm(a, b, da_, db_):
+                ov = (a.conj() * b).sum(-1, keepdim=True)
+                ph = (ov / ov.abs()).conj()                             # align the phase of b to a
+                w = h00 * a + h10 * hh * da_ + h01 * (b * ph) + h11 * hh * (db_ * ph)
+                return w / torch.linalg.vector_norm(w, dim=-1, keepdim=True)
+
+            ui = _herm(ua, ub, _dv(Va, Ea, ua, ii, Bka), _dv(Vb, Eb, ub, ii, Bkb))
+            vj = _herm(va, vb, _dv(Va, Ea, va, jj, Bka), _dv(Vb, Eb, vb, jj, Bkb))
+            del Va, Vb
+            # Rayleigh-quotient Newton step for the field (energies second-order accurate)
+            Zi, Zj = _dHdB_apply(ui, Bv.view(-1, 1, 1), mv, True), _dHdB_apply(vj, Bv.view(-1, 1, 1), mv, True)
+            f_v = _expect_rows(_H_apply(vj, Bv, mv), vj) - _expect_rows(_H_apply(ui, Bv, mv), ui) - mwFreq_MHz
+            fd_v = _expect_rows(Zj, vj) - _expect_rows(Zi, ui)
+            step = torch.where(fd_v.abs() > 1e-12, f_v / fd_v, torch.zeros_like(f_v))
+            small = step.abs() <= 0.25 * (hi[sl][idx] - lo[sl][idx]).abs()
+            B_new = torch.where(small, Bv - step, Bv)
+            keep = (f_v.abs() <= max(100 * tol, 1e-3)) & (B_new >= B_lo) & (B_new <= B_hi)
+            # level energies (Boltzmann populations) from the cubic Hermite model
+            E_int = h00 * Ea + h10 * hh * D_k[mv, sv] + h01 * Eb + h11 * hh * D_k[mv, sv + 1]
+            B_list.append(B_new[keep]); m_list.append(mv[keep]); p_list.append(pv[keep])
+            E_list.append(E_int[keep]); psi_i_list.append(ui[keep]); psi_j_list.append(vj[keep])
+            stable_all[c0 + idx] = True
+        return stable_all
+
+    rediag_limit = float(getattr(opt, 'RediagLimit', 0.999))
+    interp = (not on_graph) and dim >= _INTERP_MIN_DIM and rediag_limit < 1.0
     n_seg = 4
     Bk = torch.linspace(B_lo, B_hi, n_seg + 1, dtype=rdtype, device=dev)
-    E_k, D_k = _diag_at(Bk)
+    E_k, D_k, V_k = _diag_at(Bk)
     max_rounds, max_knots = 8, 400
     for _round in range(max_rounds):
         f_k, fd_k = _pair_f(E_k, D_k)
@@ -414,7 +507,7 @@ def resfields_batch(
         # check the Hermite model at the midpoints of segments that host candidate transitions
         seg_ids = torch.where(rel.any(dim=(0, 2)))[0]
         Bm = 0.5 * (Bk[seg_ids] + Bk[seg_ids + 1])
-        E_m, D_m = _diag_at(Bm)
+        E_m, D_m, V_m = _diag_at(Bm)
         f_m, _ = _pair_f(E_m, D_m)
         pred = 0.5 * (fa[:, seg_ids] + fb[:, seg_ids]) + h[:, seg_ids] * (da[:, seg_ids] - db[:, seg_ids]) / 8.0
         dev_seg = torch.where(rel[:, seg_ids], (pred - f_m).abs(), torch.zeros_like(pred))
@@ -422,6 +515,9 @@ def resfields_batch(
         # merge the checked midpoints into the knot set (computed anyway)
         Bk = torch.cat([Bk, Bm]); order = torch.argsort(Bk); Bk = Bk[order]
         E_k = torch.cat([E_k, E_m], dim=1)[:, order]; D_k = torch.cat([D_k, D_m], dim=1)[:, order]
+        if interp:
+            V_k = torch.cat([V_k, V_m], dim=1)[:, order]
+        del V_m
         if not bad.any() or Bk.numel() >= max_knots:
             break
     f_k, fd_k = _pair_f(E_k, D_k)
@@ -483,6 +579,16 @@ def resfields_batch(
             # Chunked so that at most ~400 MB of eigenvectors exist at a time.
             per = max(1, int(_chunk_elems // (dim * dim)))
             boltz = init_state is None and exp.Temperature is not None and exp.Temperature > 0
+            if interp:
+                # B133 (Options.RediagLimit): where both transition states are stable
+                # across the segment, interpolate them between the knots instead of
+                # diagonalizing at the resonance (EasySpin resfields.m; cubic Hermite
+                # here, with dv/dB from perturbation theory at both knots, instead of
+                # EasySpin's linear interpolation), then a Rayleigh-quotient Newton
+                # step for the field.  Unstable ones go through the exact loop below.
+                stable = _interpolate_candidates(B_c, m_c, p_c, ss[kk], t, lo, hi, boltz,
+                                                 B_list, m_list, p_list, E_list, psi_i_list, psi_j_list)
+                B_c, m_c, p_c, lo, hi = B_c[~stable], m_c[~stable], p_c[~stable], lo[~stable], hi[~stable]
             for c0 in range(0, B_c.numel(), per):
                 sl = slice(c0, c0 + per)
                 Bv, mv, pv = B_c[sl], m_c[sl], p_c[sl]
