@@ -8,6 +8,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **Resonance eigenvectors interpolated between field knots** (B133; `Options.RediagLimit`, default
+  0.999; pepper matrix route, spin systems of dimension >= 16, forward runs). At a resonance whose two
+  transition levels overlap with themselves across the knot segment by at least `RediagLimit` and are
+  non-degenerate at both knots, the eigenvectors are interpolated (cubic Hermite, derivatives at the
+  knots by perturbation theory) and the field is refined by a Rayleigh-quotient Newton step instead of
+  diagonalizing the Hamiltonian there. Spectra change by <= 6.3e-7 of their maximum in the 18 cases
+  checked (15 systems plus 3 output-parity cases; S = 1/2 to 7/2, dimensions 16 to 216, dimers,
+  strain, 5 K populations); speed at 1 thread 1.0-2.0x (Cu(II) + 2 14N [19 4] 2.86 -> 1.45 s,
+  Mn(II) Q band 1.96x, Gd(III) 1.54x, Mn(II) at 5 K 1.48x). `RediagLimit >= 1` restores the exact
+  path bit for bit. Systems below dimension 16 and runs on the autograd graph always diagonalize, so
+  gradients do not change. EasySpin's `Opt.RediagLimit` defaults to 0.95 with linear interpolation
+  (1.3e-3 for Cu(II) + 2 14N in a prototype); the cubic scheme at 0.95-0.99 still reached 1.1e-4
+  ([§ Resonance eigenvector interpolation](KNOWN_LIMITATIONS.md#resonance-eigenvector-interpolation-optionsrediaglimit-deviation-from-easyspin-0939-b133)).
 - **Gradients through the resonance search without replaying it** (B14; `pepper_autograd`, `resfields`,
   `pepper` with graph inputs). The knot search and the model roots now run off the autograd graph; every
   candidate field is diagonalized once without the graph (pooled, as in the forward-only path) and the
