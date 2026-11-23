@@ -72,6 +72,12 @@ started from the `'int'` result.  The tutorials
 [blue copper](../tutorials/06_blue_copper_fitting.ipynb) compare the methods
 on hard cases.
 
+Fits with pepper's `matrix` method of S = 1/2 systems with a large metal hyperfine coupling and
+ligand nuclei (for example Cu(II) with 14N) can stall above the noise level: the simulated spectrum
+changes in small steps with the parameters there, which no local optimizer handles well.  Compare the
+final RMSD with the noise in your data, and try several nearby starts.  See
+[known limitations](../known_limitations.md) (matrix method, spectra with several nuclei).
+
 ## Uncertainties
 
 After a successful fit, esfit takes the Jacobian of the (target-transformed)
