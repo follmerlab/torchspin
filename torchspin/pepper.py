@@ -1880,8 +1880,13 @@ def _pepper_single(
         what the memory budget allows anyway; if it does not, say so rather than
         silently interpolating across inconsistent slots.
         """
+        if hybrid_info is None:
+            # The orientations of a batch share one field-knot set, which grows to
+            # the union of what each of them needs: budget 200 knots, not 10 (B138;
+            # S = 5/2 + 55Mn on a 1013-orientation Ci grid ran 4x faster).
+            return auto_batch_size(opt.BatchSize, dim, n_orient, knots=200)
         size = auto_batch_size(opt.BatchSize, dim, n_orient)
-        if hybrid_info is None or size >= n_orient:
+        if size >= n_orient:
             return size
         raise ValueError(
             f"Options.Method='hybrid' needs all {n_orient} orientations in one batch, but "
