@@ -164,6 +164,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (1-2 % at Expand 7, as for HYSCORE), where before it stayed 50-155 % off. EasySpin has no
   time-domain route for these schemes.
 
+### Documentation
+
+- **Matrix-method spectra with several nuclei are not smooth in the parameters** (B135). New section in
+  `KNOWN_LIMITATIONS.md` and a note in the fitting guide: for S = 1/2 systems with a large metal hyperfine
+  coupling and ligand nuclei the spectrum changes in steps (up to 7.9 % of its maximum for a 6e-6 change of
+  g∥ in a Cu(II) + 2 14N example), so least-squares fits can stall above the noise level. Present in 0.9.38
+  and in EasySpin's transition selection; no numbers change in this release.
+
 ## [0.9.38] — 2026-11-15
 
 ### Added

@@ -146,6 +146,43 @@ on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
 
+## Pepper matrix method: spectra with several nuclei are not smooth in the parameters (B135, open)
+
+For S = 1/2 systems with a large metal hyperfine coupling and one or more ligand nuclei, the
+`matrix` method's spectrum can change in steps when a parameter changes smoothly. Synthetic Cu(II)
+with two equivalent 14N (g = [2.05 2.05 2.25], A(Cu) = [30 30 500] MHz, A(N) = 40 MHz, lwpp 0.5 mT,
+9.5 GHz): along a straight line in (g∥, A∥, A(N), lwpp), steps of 6e-6 in g∥ and 0.009 MHz in A∥
+change the spectrum by 9e-5 of its maximum, except one such step that changes it by 7.9 %. The
+steps are at the same parameter values at `GridSize` [10 4], [19 4] and [40 4], so a finer grid does
+not remove them; `Options.RediagLimit = 1` does not either. `Method='perturb'` is smooth (1e-4 per
+step).
+
+**Cause.** Transitions are followed across the orientation grid by their energy-ordered level pair.
+With several nuclei the sublevels reorder between orientations, so the allowed intensity moves from
+one level pair to another (in the example one pair carries 0.98 of the largest intensity at the
+θ = 90° knot and none at the other nine), and at some parameter values it moves to a pair outside the
+pre-selected set. This is the mechanism behind the intensity lost with nuclei (see "choosing a
+method" above); EasySpin selects the same pairs.
+
+**Consequence for fits.** The least-squares objective is a staircase. In the example (1 % noise,
+start 0.005 / 10 MHz / 4 MHz / 0.1 mT from the truth) `levmar` stops at RMSD 0.021 with "parameter
+step below threshold" although the RMSD decreases all the way to the truth (0.0097, the noise level);
+restarts stay there, `trf` stops at 0.038 and `simplex` at 0.021. Finite-difference Jacobians, and the
+uncertainties computed from them, are unreliable for the line-position parameters of such systems.
+
+**What to do.** There is no complete workaround yet.
+- Compare the final RMSD with the noise level of the data; a fit that stops well above it has
+  probably stalled on a step, not found the minimum.
+- `hybrid` and `perturb` have a smooth objective and converge from the same start on data they
+  describe, but they are approximations for these systems (cosine 0.97 and 0.92 against `matrix`,
+  see above): on matrix-quality data their best fit stays at RMSD 0.06 to 0.12 in this example, and
+  a `matrix` fit started from their result stalls as before.
+- Start `matrix` fits from several nearby points and keep the lowest RMSD.
+
+Planned: follow the levels by eigenvector overlap between neighboring orientations and select
+transitions at their own resonance fields. That changes matrix-method spectra with nuclei (it also
+restores the lost intensity) and leaves EasySpin parity for them, so it will come as its own release.
+
 ## `SpinSystem` input shapes follow EasySpin (0.9.15)
 
 The constructor accepts the short forms EasySpin's `validatespinsys.m` expands and expands
