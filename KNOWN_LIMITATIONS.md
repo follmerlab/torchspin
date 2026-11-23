@@ -184,6 +184,42 @@ Planned: follow the levels by eigenvector overlap between neighboring orientatio
 transitions at their own resonance fields. That changes matrix-method spectra with nuclei (it also
 restores the lost intensity) and leaves EasySpin parity for them, so it will come as its own release.
 
+## Pepper matrix method: spectra with three or more ligand nuclei depend on the orientation batch (B139, open)
+
+For S = 1/2 with a large metal hyperfine coupling and three 14N (Hilbert-space dimension 216), the
+`matrix` method's spectrum depends on how many orientations the resonance search handles together
+(`Options.BatchSize`). Synthetic Cu(II) + 3 14N (g = [2.04 2.06 2.25], A(Cu) = [30 40 500] MHz,
+A(N) = 40 MHz, lwpp 0.6 mT, 9.5 GHz, 260 to 360 mT, `GridSize` [4 4], 10 orientations), largest
+difference from `BatchSize = 1` as a fraction of the maximum:
+
+| `BatchSize` | 0.9.39 | 0.9.38 |
+|---|---|---|
+| 10 | 5.3 % | 5.5 % |
+| 5 | 4.0 % | |
+| 2 | 2.3 % | |
+
+`Options.RediagLimit = 1` gives the same numbers. `ModellingAccuracy = 2e-8` (default 2e-6) does not
+converge them: batch 10 and batch 1 still differ by 1.8 %, and batch 1 differs from its default-accuracy
+result by 2.8 %. So no setting gives a reference spectrum for this system, and its matrix-method
+spectra should be read as accurate to a few percent of the maximum. The same system with two 14N
+(dimension 72) agrees to 1e-10 across batch sizes, and S = 5/2 + 55Mn, Gd(III), triplets and
+biradicals are bit-identical or agree to 2e-8.
+
+**Cause (not yet confirmed transition by transition).** The orientations of a batch share one set of
+field knots, so the knot positions depend on the batch. Transitions are found per energy-ordered level
+pair; among the near-degenerate nuclear sublevels of this system, which pairs are found depends on
+where the knots fall. This is presumably the mechanism of the section above (B135).
+
+**In 0.9.39** the automatic batch for this dimension is 10 orientations (it was 53), which moved the
+example on `GridSize` [7 4] by 2.1 % of its maximum.
+
+**What to do.** Treat intensity differences of a few percent between runs with different
+`BatchSize`, grids or versions as noise for these systems, and keep `BatchSize` fixed within one
+study. `Method='hybrid'` or `'perturb'` do not have the problem but are approximations here (see
+"choosing a method").
+
+Planned: the level tracking by eigenvector overlap described in the section above.
+
 ## `SpinSystem` input shapes follow EasySpin (0.9.15)
 
 The constructor accepts the short forms EasySpin's `validatespinsys.m` expands and expands

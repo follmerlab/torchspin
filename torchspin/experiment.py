@@ -478,8 +478,10 @@ class Options:
         Orientations per batched resonance search (pepper,
         pepper_autograd, salt).  ``None`` (default) = automatic: all
         orientations at once, capped so that the batched Hamiltonians
-        (orientations x field knots x dim^2) stay below about 400 MB.  ``1``
-        processes orientations one at a time (debugging, low memory).
+        (orientations x field knots x dim^2) stay below about 400 MB; for
+        pepper's matrix method that is 96 orientations per batch at
+        dimension 36 and 24 at dimension 72.  ``1`` processes orientations
+        one at a time (debugging, low memory).
     Sites : list of int, optional
         pepper single-crystal simulations only: 1-based indices of the
         symmetry-related crystal sites to include.  ``None`` (default) = all
@@ -710,13 +712,18 @@ class Options:
                 self.device = 'cpu'
 
 
-def auto_batch_size(batch_size, dim: int, n_orient: int) -> int:
+def auto_batch_size(batch_size, dim: int, n_orient: int, knots: int = 10) -> int:
     """Orientations per batched resonance-search call (``Options.BatchSize``).
 
     ``None`` = automatic: all orientations at once, capped so that the batched
-    Hamiltonians (orientations × ~10 field knots × dim², complex128) stay
-    below ~400 MB (PERF_PLAN §2.1 item 2).
+    Hamiltonians (orientations × ``knots`` field knots × dim², complex128) stay
+    below ~400 MB (PERF_PLAN §2.1 item 2), and never below 10 orientations.
+
+    ``knots`` is the number of field knots budgeted per orientation.  The
+    orientations of a batch share one knot set, refined until the segment model
+    holds for all of them, so a large batch of a large spin system reaches 100
+    or more knots; pepper's matrix route budgets 200 (B138).
     """
     if batch_size:
         return int(batch_size)
-    return max(10, min(int(n_orient), int(2.5e7 // (10 * dim * dim))))
+    return max(10, min(int(n_orient), int(2.5e7 // (int(knots) * dim * dim))))
