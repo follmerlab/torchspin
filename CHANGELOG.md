@@ -113,6 +113,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **Coarse grids of two or three knots** (B137). `pepper` with `Options(GridSize=[2, n])` returned an
+  all-zero spectrum, without an error or a warning, whenever the grid had two orientations: every
+  axial system (Dinfh grid; matrix and perturbation methods, strains, frequency sweeps) and the C4h
+  and C6h grids. Transitions with fewer than three knots were dropped before the interpolation. On the
+  open-phi grids (C2h, S6, Ci and C1 at two knots; C2h, C4h, C6h, S6 and Ci at three) `pepper`,
+  `pepper_autograd` and `salt` raised scipy's `mx must be > kx` instead. All of these now interpolate:
+  the spline through two knots is the zero-slope cubic (axial) or the straight line, through three the
+  parabola, as in EasySpin's `esspline1d`; `pepper` equals `pepper_autograd`, which already handled
+  the axial case, to 1e-9. Such grids are far from converged (use `grid_convergence`), and EasySpin's
+  pepper rejects `GridSize(1) < 10`
+  ([§ Coarse grids of two or three knots](KNOWN_LIMITATIONS.md#coarse-grids-of-two-or-three-knots-fixed-0939-b137)).
+  Outputs of grids that worked before are unchanged (34 output-parity cases identical).
 - **`esfit` uncertainties for `target='int'` and `'diff'`** (B131). The HC1 sandwich treated the
   transformed residuals as independent and understated `pstd` 2-25x for `'int'` (Monte Carlo, 300 noise
   realizations of a three-line derivative spectrum); its middle term is now `J' T diag(r^2) T' J` with
