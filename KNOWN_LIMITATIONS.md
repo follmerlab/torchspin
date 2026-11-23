@@ -258,6 +258,32 @@ amplitude 1.034 on the default grid.
 - Intensities and widths on axial grids (`L3`) and axial positions with missing resonances
   (`L3`) were already EasySpin's and are unchanged.
 
+## Coarse grids of two or three knots (fixed 0.9.39, B137)
+
+`Options.GridSize` accepts a coarse grid of two knots or more; EasySpin's pepper rejects
+`GridSize(1) < 10` (`Opt.GridSizeMinimum`, pepper.m:505). Up to 0.9.38 the smallest grids with
+interpolation (`GridSize = [2, n]` or `[3, n]`, `n > 1`) failed:
+
+- **Two orientations** (`[2, n]` on the Dinfh grid, i.e. every axial system, and on C4h and C6h):
+  `pepper` returned an all-zero spectrum without an error or a warning, for the matrix and
+  perturbation methods, with strains and for frequency sweeps. Transitions with fewer than three
+  knots were dropped before the interpolation. `pepper_autograd` and `salt` were not affected on
+  the axial grid.
+- **Open-φ grids** (C2h, S6, Ci and C1 at two knots; C2h, C4h, C6h, S6 and Ci at three): `pepper`,
+  `pepper_autograd` and `salt` raised scipy's `mx must be > kx`, because the rectified θ × φ array
+  has fewer than four rows or columns and FITPACK's bicubic spline needs four.
+
+Since 0.9.39 these grids are interpolated with the same scheme as larger ones. A two-knot axial
+grid uses the zero-slope cubic Hermite polynomial for positions (`esspline1d(y,1,x)`,
+esspline1d.m:55-60) and for intensities and widths (`L3` with zero tangents). On open-φ grids the
+tensor-product not-a-knot spline is the straight line through two rows or columns and the parabola
+through three, which is what EasySpin's `esspline2d`/`esspline1d` compute for such arrays
+(esspline1d.m:49-71). A transition that is missing at one of two orientations is still dropped.
+
+These grids are valid input, not accurate spectra: for S = 1/2, g = [2 2 2.3] at 9.5 GHz, `[2 4]`
+keeps the integral to 1 % but reaches 0.56 of the converged peak height. Check a grid with
+`grid_convergence`. Tests: `torchspin/tests/test_small_grid_interpolation.py`.
+
 ## Powder grid φ range of the D3d/D4h/D6h/Oh/C6h/S6 grids (fixed 0.9.3)
 
 Up to 0.9.2 `sphgrid` covered φ = 0..π/2 for the D6h, D4h, Oh, D3d and C6h grids and 0..π for

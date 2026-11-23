@@ -703,6 +703,14 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
         iphi = (1 + nOct * (N_c - 1) * (phi_f / maxPhi)) - 1
         ithe = (1 + (N_c - 1) * (theta_f / (math.pi / 2))) - 1
     iphi = np.clip(iphi, 0, nc - 1); ithe = np.clip(ithe, 0, nr - 1)
+    if cubic and (nr < 4 or nc < 4):
+        # Two or three rows or columns (GridSize(1) of 2 or 3): FITPACK's bicubic
+        # needs four.  The same tensor-product not-a-knot spline, which is the
+        # straight line through two knots and the parabola through three, as in
+        # EasySpin esspline2d/esspline1d (esspline1d.m:49-71) (B137).
+        Lx = CubicSpline(np.arange(nr), np.eye(nr), axis=0)(ithe)      # (n_f, nr)
+        Ly = CubicSpline(np.arange(nc), np.eye(nc), axis=0)(iphi)      # (n_f, nc)
+        return np.einsum('ki,ij,kj->k', Lx, z, Ly)
     if cubic:
         spl = RectBivariateSpline(np.arange(nr), np.arange(nc), z, kx=3, ky=3, s=0)
         return spl.ev(ithe, iphi)
@@ -745,7 +753,8 @@ def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
 
     Closed-φ one-octant grids and Dinfh use :func:`_interp_sph` (structured
     G3 / meridional spline); open-φ grids use :func:`_interp_grid`. Returns
-    ``None`` when fewer than three knots carry a value.
+    ``None`` when fewer than three knots carry a value (fewer than two on a
+    grid of two orientations).
 
     EasySpin pepper.m interpolation modes: positions ``G3`` (global cubic),
     intensities and widths ``L3`` (local cubic, axial grids) or ``L1``
@@ -762,7 +771,9 @@ def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
     """
     vals = np.asarray(vals, dtype=float)
     valid = ~np.isnan(vals)
-    if valid.sum() < 3:
+    # A grid of two orientations (GridSize [2, n] on Dinfh, C4h, C6h) is
+    # interpolated from both; dropping its slots gave an all-zero spectrum (B137).
+    if valid.sum() < min(3, vals.size):
         return None
     if mode == 'val':
         if symmetry == 'Dinfh':
