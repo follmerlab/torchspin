@@ -162,7 +162,8 @@ With several nuclei the sublevels reorder between orientations, so the allowed i
 one level pair to another (in the example one pair carries 0.98 of the largest intensity at the
 θ = 90° knot and none at the other nine), and at some parameter values it moves to a pair outside the
 pre-selected set. This is the mechanism behind the intensity lost with nuclei (see "choosing a
-method" above); EasySpin selects the same pairs.
+method" above, where EasySpin selects the same number of pairs); whether EasySpin's spectra show
+the same steps has not been checked.
 
 **Consequence for fits.** The least-squares objective is a staircase. In the example (1 % noise,
 start 0.005 / 10 MHz / 4 MHz / 0.1 mT from the truth) `levmar` stops at RMSD 0.021 with "parameter
