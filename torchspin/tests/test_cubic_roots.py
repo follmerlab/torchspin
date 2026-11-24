@@ -82,12 +82,18 @@ def test_gradients_match_companion(name, coeffs):
         loss = (torch.gather(R, 1, ordered) * w).sum()
         return torch.autograd.grad(loss, C), R.detach()
 
-    g_new, R_new = grads(_cubic_real_roots)
+    try:
+        g_new, R_new = grads(_cubic_real_roots)
+    except torch.linalg.LinAlgError:
+        # Rows at a multiple root go through the companion eigvals (as every row did up to
+        # 0.9.38).  The root has no derivative there; with the LAPACK builds on Linux and
+        # Windows eigvals' backward pass says so (singular solve), on macOS it returns finite
+        # numbers.  An error is fine, a silent NaN is not; only the built double roots get here.
+        assert name == 'exact_double'
+        return
     for b in g_new:
         assert torch.isfinite(b).all()
     if name == 'hermite':                       # well-separated roots: same derivative to roundoff
-        # Only here: at a multiple root eigvals' derivative does not exist, and its backward
-        # pass raises LinAlgError (singular solve) with the LAPACK builds on Linux and Windows.
         g_ref, R_ref = grads(_companion_roots)
         for a, b in zip(g_ref, g_new):
             assert torch.allclose(a, b, rtol=1e-8, atol=1e-8 * a.abs().max().item())
