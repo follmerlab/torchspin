@@ -82,9 +82,12 @@ def test_gradients_match_companion(name, coeffs):
         loss = (torch.gather(R, 1, ordered) * w).sum()
         return torch.autograd.grad(loss, C), R.detach()
 
-    g_ref, R_ref = grads(_companion_roots)
     g_new, R_new = grads(_cubic_real_roots)
-    for a, b in zip(g_ref, g_new):
+    for b in g_new:
         assert torch.isfinite(b).all()
-        if name == 'hermite':                   # well-separated roots: same derivative to roundoff
+    if name == 'hermite':                       # well-separated roots: same derivative to roundoff
+        # Only here: at a multiple root eigvals' derivative does not exist, and its backward
+        # pass raises LinAlgError (singular solve) with the LAPACK builds on Linux and Windows.
+        g_ref, R_ref = grads(_companion_roots)
+        for a, b in zip(g_ref, g_new):
             assert torch.allclose(a, b, rtol=1e-8, atol=1e-8 * a.abs().max().item())
