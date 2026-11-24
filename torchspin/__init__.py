@@ -25,7 +25,7 @@ try:
     __version__ = _pkg_version("torchspin")
 except _PkgNotFound:
     # Editable install during development, or version metadata unavailable.
-    __version__ = "0.9.38+dev"
+    __version__ = "0.9.39+dev"
 
 # Idle OpenMP threads must sleep, not spin-wait (see torchspin/_omp.py and
 # docs/pitfalls.md, "Threads and performance"). This has to run before anything
@@ -112,7 +112,10 @@ from torchspin.oripotentialplot import oripotentialplot
 from torchspin.saffron import saffron, PulseExperiment, SaffronOptions
 from torchspin.signalprocessing import signalprocessing
 from torchspin.saffron_pathways import find_refocusing_pathways
-from torchspin.spinsystem import SpinSystem, nucspinrmv, nucspinkeep, nucspinadd, isotopologues, spinvec
+from torchspin.spinsystem import SpinSystem, nucspinrmv, nucspinkeep, nucspinadd, spinvec
+# B104: the public isotopologues is the EasySpin port (all isotope combinations,
+# natural or custom abundances); spinsystem.isotopologues is a legacy helper
+from torchspin.isotopologues import isotopologues
 from torchspin.sigeq import sigeq
 from torchspin.fdaxis import fdaxis
 from torchspin.plegendre import plegendre

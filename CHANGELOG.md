@@ -6,6 +6,201 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.9.39] — 2026-11-24
+
+### Changed
+
+- **Resonance eigenvectors interpolated between field knots** (B133; `Options.RediagLimit`, default
+  0.999; pepper matrix route, spin systems of dimension >= 16, forward runs). At a resonance whose two
+  transition levels overlap with themselves across the knot segment by at least `RediagLimit` and are
+  non-degenerate at both knots, the eigenvectors are interpolated (cubic Hermite, derivatives at the
+  knots by perturbation theory) and the field is refined by a Rayleigh-quotient Newton step instead of
+  diagonalizing the Hamiltonian there. Spectra change by <= 6.3e-7 of their maximum in the 18 cases
+  checked (15 systems plus 3 output-parity cases; S = 1/2 to 7/2, dimensions 16 to 216, dimers,
+  strain, 5 K populations); speed at 1 thread 1.0-2.0x (Cu(II) + 2 14N [19 4] 2.86 -> 1.45 s,
+  Mn(II) Q band 1.96x, Gd(III) 1.54x, Mn(II) at 5 K 1.48x). `RediagLimit >= 1` restores the exact
+  path bit for bit. Systems below dimension 16 and runs on the autograd graph always diagonalize, so
+  gradients do not change. EasySpin's `Opt.RediagLimit` defaults to 0.95 with linear interpolation
+  (1.3e-3 for Cu(II) + 2 14N in a prototype); the cubic scheme at 0.95-0.99 still reached 1.1e-4
+  ([§ Resonance eigenvector interpolation](KNOWN_LIMITATIONS.md#resonance-eigenvector-interpolation-optionsrediaglimit-deviation-from-easyspin-0939-b133)).
+- **Gradients through the resonance search without replaying it** (B14; `pepper_autograd`, `resfields`,
+  `pepper` with graph inputs). The knot search and the model roots now run off the autograd graph; every
+  candidate field is diagonalized once without the graph (pooled, as in the forward-only path) and the
+  graph is attached by first-order perturbation theory: the resonance field gets the implicit derivative
+  dB/dθ = -(∂f/∂θ)/(∂f/∂B), level energies their Hellmann-Feynman derivatives and the two transition
+  eigenvectors the sum-over-states derivative with `_linalg`'s degeneracy rule (the derivative `eigh`'s
+  backward computes). Resonance fields are bit-identical with and without grad; gradients change by
+  <= 6e-10 relative (the field derivative is now the implicit one at the candidate instead of the
+  Hermite-model root's, which agrees with it to the model accuracy) and agree with central differences of
+  `pepper` as before. Where the slope difference of a transition vanishes (turning point of a looping
+  transition) its field gets no derivative; before, it got the Hermite-model root's. Cu(II) + 2 14N
+  gradient, GridSize [10 4]: forward + backward 19.2 -> 9.9 s at 1 thread (backward 10.7 -> 2.1 s) and
+  13.9 -> 4.8 s at 8 threads; peak process memory 8.3-9.8 -> 7.3-8.2 GB. Small systems: backward 1.1-1.6x
+  faster. Forward-only pepper computes the slopes of the two transition levels only: Cu(II) + 2 14N
+  1.12-1.15x, Mn(II) 1.06-1.08x, small systems unchanged; outputs bit-identical.
+- **Real-pulse engine (thyme/spidyan): less work per acquisition point** (B11). The chronological event
+  order is cached on the exact event lengths (every orientation repeats the same per-point sequences),
+  free-evolution propagators are cached per orientation on the exact step (a 32 x 32 sweep needs about
+  65 distinct ones instead of 3000), and a detected free evolution is evaluated in the eigenbasis of the
+  static Hamiltonian, all time points at once, instead of one `U sigma U^dagger` product per step.
+  The caches are bit-identical; the closed form agrees with the step loop to 7e-13 (it does not
+  accumulate roundoff). Nitroxide two-pulse sweep 0.43 -> 0.34 s, three-pulse 32 x 32 1.83 -> 1.00 s,
+  transient echo detection 2.2 -> 0.29 s (1 thread).
+- **Real-pulse engine: pulse propagators from the waveform's period** (B10b). A lab-frame carrier sampled
+  on the simulation grid repeats its amplitude levels exactly every period: the undetected pulse
+  propagator is now (one period)^k times the remainder instead of one product per time step (4000 for a
+  32 ns pulse), runs of a constant level become matrix powers, and complex excitations compute one
+  matrix exponential per distinct level. Roundoff only (within 8e-13 end to end). Together with B11:
+  nitroxide two-pulse sweep 0.43 -> 0.15 s, three-pulse 32 x 32 1.83 -> 0.82 s, transient echo
+  2.2 -> 0.24 s.
+- **cardamom `Method='ISTOs'`: batched over steps and trajectories** (B9). One SciPy `expm` call for all
+  step propagators and one batched product per time step for all trajectories, instead of a Python
+  loop over every (step, trajectory) pair (5 million `expm` calls for 50 trajectories x 1000 steps).
+  Roundoff only (within 3e-16; the trajectory average sums in another order). Nitroxide 20 x 400:
+  8.9 -> 4.8 s; Cu(II) 10.9 -> 7.0 s.
+- **`mdload`: spin-label frames, global-rotation removal and protein-relative frames for all MD frames at
+  once** (B18) instead of per-frame Python loops (batched cross products, one batched SVD for the Kabsch
+  fits). Rotations bit-identical, frames within 6e-15. 5000 frames: label frames 0.21 -> 0.0005 s,
+  rotation removal 0.08 -> 0.008 s.
+
+- **saffron `ProductRule=True`: time signals from the occupied frequency bins only** (B12). Each zero-filled
+  peak buffer (512 x 512 for a 128-point HYSCORE) used to go through a full `ifft2` for every
+  orientation; the first `nPoints` are now taken as `E1 @ B[rows][:, cols] @ E2.T` over the few occupied
+  rows and columns, with exact twiddle phases (FFT when more than a quarter is occupied). Roundoff only
+  (within 1e-12). Product-rule HYSCORE (14N + 1H, 128 points) 0.47 -> 0.06 s; the default (no product
+  rule) path is unchanged.
+
+- **`esfit` levmar with `n_workers > 1`** evaluates its trial point and the Jacobian column-refresh probe
+  in one pool round (B4); results are bit-identical to the serial fit. On cheap models the serial default
+  is still as fast; the gain is for expensive ones.
+
+- **chili powder spectra build the orientation-dependent Liouvillian from fixed pieces** (B7). The
+  Hamiltonian is linear in the Wigner D-matrix of the orientation, so its 1 + 9 + 25 orientation-independent
+  pieces are built once (from 8 orientations on) and each orientation is one weighted sum on their union
+  sparsity pattern, instead of 50 Hilbert-to-Liouville conversions and 25 Kronecker products. Roundoff
+  only in the Liouvillian (within 4e-16; direct-solver spectra within 7e-15). The Lanczos solver
+  amplifies last-digit changes, and at its default `Threshold` (1e-6) one can move the step at which it
+  stops: default chili powder spectra change by up to 4e-5 relative (Cu(II) with a potential), below
+  the solver's own tolerance; with `Threshold=1e-9` the two routes agree to 5e-9.
+
+- **Projection kernel: both half-hats in one pass** (A4, `_projection.hat_segments_t`). The edge bins
+  of every linear piece are integrated in one `(m, 8)` pass with fewer operations (Simpson as
+  `L/6 (Lp (2wp + wq) + Lq (2wq + wp))`, signed weights, one scatter). Roundoff only: outputs within
+  9.2e-16 relative of the previous kernel on the parity cases, gradients within 1.1e-15; zero-length overlaps (the
+  derivative at exact bin boundaries) are kept. Kernel 1.3-1.6x faster; end to end up to 1.16x
+  (Cu rhombic, default grid), 1.03-1.06x for most pepper and fit cases.
+
+- **`esfit` default target is `'fcn'`** (EasySpin 6's default) instead of `'auto'` (B131). `'auto'`
+  picked `'int'` for derivative-like data; integrating the residuals turns white noise into a random
+  walk, so on synthetic nitroxide fits the parameters landed up to 8 sigma from the truth (within
+  about 2 sigma with `'fcn'`). `'int'` and `'auto'` stay available for rugged fits from a poor start.
+- **`Experiment.Harmonic` default by sweep mode only** (B101): 1 for field sweeps, 0 for frequency
+  sweeps and fixed-field experiments. A frequency sweep that also set `mwFreq` used to come back as a
+  first derivative.
+- **`Experiment.Temperature <= 0` raises `ValueError`** (B102). pepper, salt and the perturbative
+  paths treated it as infinite temperature (no Boltzmann factor) while garlic raised; `None` or `inf`
+  is infinite temperature.
+- **`torchspin.isotopologues` is the EasySpin port** from `torchspin.isotopologues` (all isotope
+  combinations, natural or custom abundances; returns `SpinSystem`s carrying `weight`) (B104). The old
+  export was a legacy helper that returned one `(weight, sys)` pair for the given isotopes and failed
+  for element names such as `'Cu'`; it stays available as `torchspin.spinsystem.isotopologues`.
+- **`esfit` checks its options and bounds before any model evaluation** (B111-B113): an unknown
+  `method`, `autoscale` (`'LSQ'` used to mean no scaling), `lsq_negative_scale`, `target`, `workers`,
+  `n_workers` or `baseline` raises `ValueError`; so does an infinite bound with a method that needs
+  finite ones (all but `'lbfgsb'`, `'powell'`, `'trf'`; they returned NaN parameters, raised mid-run, or,
+  for `'grid'`, returned `p0` with `success=True`).
+- **`esfit` grid search evaluates the whole grid or raises** (B110): a grid larger than `max_iter`
+  used to be cut to its first `max_iter` points, which never leave the lowest values of the leading
+  parameters.
+- **pepper's matrix method simulates sets of equivalent nuclei as total-spin blocks** (B139; new
+  `Options.EquivalentNuclei`, default `True`; deviation from EasySpin, see `KNOWN_LIMITATIONS.md`). Nuclei
+  with the same isotope, hyperfine tensor and frame and no quadrupole coupling enter the Hamiltonian only
+  through their total spin, so three 14N are four systems of nuclear spin 3, 2, 1 and 0 (dimension 7, 5, 3,
+  1 times the rest, in place of 27) whose spectra are summed. This is exact (levels equal to 1e-10 MHz,
+  single-crystal spectra with all transitions to 5e-6 on three systems) and removes the exactly degenerate
+  levels of the full space, where 0.9.38 summed intensities over inconsistent bases: three equivalent 1H on
+  a single crystal gave 93.0 % of the intensity (now 100.000 %), and Cu(II) + 3 14N changed by 5.5 % of its
+  maximum with `Options.BatchSize` (now 5e-7). **Default spectra of systems with equivalent nuclei
+  change**: Cu(II) + 2 14N by up to 23 % of the maximum in the perpendicular region on `GridSize` [19 4],
+  where the blocks keep 97.1 % of the complete intensity and the full space kept 91.9 % (error against the
+  all-transitions spectrum on 181 knots: 15 %, from 33 %); S = 3/2 + 2 1H and triplet + 2 14N are unchanged
+  to 1e-8. Cu(II) + 3 14N on `GridSize` [4 4] takes 2 s, from about 250 s. The synthetic Cu(II) + 2 14N
+  `levmar` fit of B135 ends at RMSD 0.0110, from 0.0208 (noise 0.0097), in 68 s, from 155 s; its steps
+  remain. `EquivalentNuclei=False` restores the full space. Not applied with quadrupole coupling, `nn`,
+  `H0Extra`, a full-space `initState`, `Transitions` level pairs or `separate` other than `'components'`,
+  nor in `pepper_autograd` and `salt`.
+- **pepper's matrix method accepts `SpinSystem.n > 1`** through the same blocks (it raised); it still raises
+  where the set cannot be reduced.
+- **pepper's matrix method searches large grids in smaller orientation batches** (B138). The orientations of
+  a batch share one set of field knots, and the automatic batch assumed 10 knots per orientation where a
+  large batch of a large spin system reaches 100 or more. It now budgets 200: 96 orientations per batch at
+  Hilbert-space dimension 36, 24 at dimension 72 (it was 1929 and 482). S = 5/2 + 55Mn on a
+  1013-orientation Ci grid: 414 s to 105 s at one thread (0.9.38: 221 to 228 s); Cu(II) + 2 14N on
+  `GridSize` [19 4]: same time, peak memory 10 to 15 GB down to 2.9 GB. Spectra of nine test systems agree
+  to 2.3e-8 of the maximum (seven are bit-identical). `Options.BatchSize`
+  still overrides the automatic choice; `hybrid`, `pepper_autograd` and `salt` are unchanged.
+
+### Fixed
+
+- **Coarse grids of two or three knots** (B137). `pepper` with `Options(GridSize=[2, n])` returned an
+  all-zero spectrum, without an error or a warning, whenever the grid had two orientations: every
+  axial system (Dinfh grid; matrix and perturbation methods, strains, frequency sweeps) and the C4h
+  and C6h grids. Transitions with fewer than three knots were dropped before the interpolation. On the
+  open-phi grids (C2h, S6, Ci and C1 at two knots; C2h, C4h, C6h, S6 and Ci at three) `pepper`,
+  `pepper_autograd` and `salt` raised scipy's `mx must be > kx` instead. All of these now interpolate:
+  the spline through two knots is the zero-slope cubic (axial) or the straight line, through three the
+  parabola, as in EasySpin's `esspline1d`; `pepper` equals `pepper_autograd`, which already handled
+  the axial case, to 1e-9. Such grids are far from converged (use `grid_convergence`), and EasySpin's
+  pepper rejects `GridSize(1) < 10`
+  ([§ Coarse grids of two or three knots](KNOWN_LIMITATIONS.md#coarse-grids-of-two-or-three-knots-fixed-0939-b137)).
+  Outputs of grids that worked before are unchanged (34 output-parity cases identical).
+- **`esfit` uncertainties for `target='int'` and `'diff'`** (B131). The HC1 sandwich treated the
+  transformed residuals as independent and understated `pstd` 2-25x for `'int'` (Monte Carlo, 300 noise
+  realizations of a three-line derivative spectrum); its middle term is now `J' T diag(r^2) T' J` with
+  the untransformed residuals `r`. `'fcn'` uncertainties are unchanged.
+- **`FitResult.r_squared`** (B100) is `1 - SS_res/SS_tot` about the mean of the data. It used to
+  rebuild the data as `fit + residuals` (= `2 fit - data`) and could be far off for poor fits (reported
+  -1.5e12 where the true value was 0.7); `nan` for constant data.
+- **`SpinSystem.Ham` accepts EasySpin's `'Ham112'` keys** (B103), stored as `'112'`; the prefixed form
+  used to pass construction and crash in the Hamiltonian. Malformed or duplicate keys raise.
+- **Fast-motion garlic line widths use `gFrame` and `AFrame`** (B105). The widths depend on the relative
+  orientation of g and A and ignored both frames (a 90 degree A tilt on a nitroxide changed nothing,
+  now 58 % of the peak). Checked: rotating g and A together leaves the widths unchanged to 4e-15, an
+  `AFrame` equals the rotated full A matrix exactly, and the tilt effect on the line heights agrees with
+  chili in the fast limit (low-field/center height ratio changes by 0.59x in both).
+- **Fast-motion garlic with a full 3x3 `Q`** (B106) crashed; the quadrupole width uses the rotation
+  invariant sum of Q_ij^2 and equals the principal-value result exactly.
+- **garlic reads `Diff`/`logDiff` and `mwMode`** (B107). `Diff` (isotropic) selects the fast-motion regime
+  with `tcorr = 1/(6 Diff)`, as in EasySpin, instead of being ignored (an 85 % different spectrum);
+  `mwMode` overrides `Mode` (`'parallel'` gives the zero spectrum of S = 1/2), other geometries raise
+  `NotImplementedError`.
+- **`differentiable_spectrum` with `A` but no `Nucs` raises** (B108) instead of dropping `A`.
+- **`grid_convergence` with parameters that require grad** (B109) crashed in `np.asarray`.
+- **chili powder spectra with `Rescale=True` (the default)** (B129): every orientation (and, for an
+  explicit field sweep, every field point) is divided by the scale of its own Liouvillian. The powder
+  sum used to be divided by the last orientation's scale, as EasySpin's `chili.m` does, which weighted
+  each orientation by `scale_i/scale_last`: Rescale on vs off differed by 2.7e-4 (nitroxide, ordering
+  potential, 20 ns) and 7.5e-3 (Cu(II), potential, 5 ns); now 9e-8 and 3.8e-5 (Lanczos threshold).
+  Deliberate deviation from EasySpin (KNOWN_LIMITATIONS).
+- **saffron time-domain signal for 2D incrementation schemes `[1 2 1]`, `[1 2 2 1]` and `[1 1 2 2]`**
+  (B130; `Opt.TimeDomain=True`, and every saffron gradient, which forces the time domain). The free
+  evolutions were applied in the wrong order (and `[1 2 2 1]`/`[1 1 2 2]` kept only the diagonal
+  phases of the second dimension), so the ESEEM modulation was 50-155 % wrong. Now one routine chains
+  the evolutions and mixing steps in sequence order with the frequencies of EasySpin's `sf_peaks.c`.
+  Checked: on an exact frequency grid the time signal equals the inverse DFT of the frequency-domain
+  peaks to 4e-14 for every 2D scheme (`[1 2]`, `[1 1 2]` included); end to end (14N and 1H, custom
+  sequences) the frequency-domain result converges to the time-domain one as `Opt.Expand` grows
+  (1-2 % at Expand 7, as for HYSCORE), where before it stayed 50-155 % off. EasySpin has no
+  time-domain route for these schemes.
+
+### Documentation
+
+- **Matrix-method spectra with several nuclei are not smooth in the parameters** (B135). New section in
+  `KNOWN_LIMITATIONS.md` and a note in the fitting guide: for S = 1/2 systems with a large metal hyperfine
+  coupling and ligand nuclei the spectrum changes in steps (up to 7.9 % of its maximum for a 6e-6 change of
+  g∥ in a Cu(II) + 2 14N example), so least-squares fits can stall above the noise level. Present in 0.9.38
+  and, inside the total-spin blocks, in this release (see the equivalent-nuclei entry under Changed).
+
 ## [0.9.38] — 2026-11-15
 
 ### Added

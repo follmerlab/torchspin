@@ -196,6 +196,7 @@ def compute_strain_widths_batch(
     pairs_flat: Optional[torch.Tensor] = None,   # (M, 2): exactly one transition per orientation
     ho_batch: Optional[tuple] = None,            # (Q2, Q3), each (M, n, n) or None: Options.QuadraticZeeman
     mI_levels: Optional[torch.Tensor] = None,    # (n,) AStrain mI per level, from astrain_level_mI
+    eigvecs_flat: Optional[tuple] = None,        # (psi_u, psi_v), each (M, n): with pairs_flat, skips the eigh
 ) -> list:
     """Vectorized strain widths for a batch of M orientations.
 
@@ -212,6 +213,13 @@ def compute_strain_widths_batch(
     With ``ho_batch = (Q2, Q3)`` (``Options.QuadraticZeeman``) the Hamiltonian at
     B0 is H0 − B0 muzL + B0² Q2 + B0³ Q3 and dB/dE uses the slope operator
     muzL − 2 B0 Q2 − 3 B0² Q3.
+
+    With ``eigvecs_flat = (psi_u, psi_v)`` (needs ``pairs_flat``) the two
+    eigenvectors of each transition are taken as given instead of from an
+    eigendecomposition at ``B0``: resfields_batch passes the ones it
+    diagonalized at the candidate field, one Newton step (well below the
+    field tolerance) from ``B0``, which it also uses for the intensities.
+    Only the operator diagonals of these two levels enter the widths.
 
     AStrain needs ``mI_levels``, the effective mI of the first nucleus per
     energy-sorted level from :func:`astrain_level_mI` (EasySpin labels the
@@ -244,19 +252,27 @@ def compute_strain_widths_batch(
     sin_ph = torch.sin(ph);  cos_ph = torch.cos(ph)
     zLab_M = torch.stack([sin_th * cos_ph, sin_th * sin_ph, cos_th], dim=1)
 
-    # --- Batched eigh at B0 for all M orientations ---
-    H_b = H0.unsqueeze(0) - B0_batch[:, None, None] * muzL_batch  # (M, n, n)
+    # --- Eigenvectors at B0 for all M orientations (batched eigh, or given) ---
+    need_eigh = eigvecs_flat is None
+    if not need_eigh and pairs_flat is None:
+        raise ValueError("compute_strain_widths_batch: eigvecs_flat needs pairs_flat.")
+    H_b = H0.unsqueeze(0) - B0_batch[:, None, None] * muzL_batch if need_eigh else None  # (M, n, n)
     slope_batch = muzL_batch
     if ho_batch is not None:
         Bb = B0_batch.to(torch.float64)[:, None, None]
         Q2, Q3 = ho_batch
         if Q2 is not None:
-            H_b = H_b + Bb ** 2 * Q2
+            if need_eigh:
+                H_b = H_b + Bb ** 2 * Q2
             slope_batch = slope_batch - 2.0 * Bb * Q2
         if Q3 is not None:
-            H_b = H_b + Bb ** 3 * Q3
+            if need_eigh:
+                H_b = H_b + Bb ** 3 * Q3
             slope_batch = slope_batch - 3.0 * Bb ** 2 * Q3
-    _, V_b = _eigh(H_b)  # (M, n, n)
+    if need_eigh:
+        _, V_b = _eigh(H_b)  # (M, n, n)
+    else:
+        V_b = torch.stack([eigvecs_flat[0], eigvecs_flat[1]], dim=-1).to(device)  # (M, n, 2)
 
     # --- muzL diagonal in eigenbasis: (M, n) ---
     # diag_k(V^† muzL V) = (V.conj() * (muzL @ V)).sum(dim=-2)
@@ -346,8 +362,12 @@ def compute_strain_widths_batch(
             return [None] * M
         pairs_all = torch.cat([p.reshape(-1, 2) for p, c in zip(pairs_list, counts) if c > 0], dim=0).to(device=device)
         m_of = torch.repeat_interleave(torch.arange(M, device=device), torch.tensor(counts, device=device))
-    u_idx = pairs_all[:, 0].long()
+    u_idx = pairs_all[:, 0].long()       # level indices (AStrain mI)
     v_idx = pairs_all[:, 1].long()
+    if eigvecs_flat is not None:         # columns of V_b: the two given eigenvectors
+        u_col = torch.zeros_like(u_idx); v_col = torch.ones_like(v_idx)
+    else:
+        u_col, v_col = u_idx, v_idx
 
     # HStrain (transition-independent)
     lw2 = lw2_H_vec[m_of].clone()
@@ -355,7 +375,7 @@ def compute_strain_widths_batch(
     # gStrain (+AStrain combined)
     if multi_g:
         for e in range(sys.nElectrons):
-            w_e = torch.abs(kSzL_diag_e[e][m_of, v_idx] - kSzL_diag_e[e][m_of, u_idx])
+            w_e = torch.abs(kSzL_diag_e[e][m_of, v_col] - kSzL_diag_e[e][m_of, u_col])
             lw2 += w_e * gterm_e[e][m_of]
     elif sys.gStrain is not None and AStrainMatrix is None:
         lw2 += lw2_g_vec[m_of]
@@ -371,12 +391,12 @@ def compute_strain_widths_batch(
 
     # DStrain (sum over electrons)
     for dD_diag, dE_diag in dstrain_diags:
-        mD = dD_diag[m_of, v_idx] - dD_diag[m_of, u_idx]
-        mE = dE_diag[m_of, v_idx] - dE_diag[m_of, u_idx]
+        mD = dD_diag[m_of, v_col] - dD_diag[m_of, u_col]
+        mE = dE_diag[m_of, v_col] - dE_diag[m_of, u_col]
         lw2 += mD ** 2 + mE ** 2
 
     # dBdE: |<v|muzL|v> - <u|muzL|u>|^{-1}  (already computed)
-    muzL_diff = muzL_diag[m_of, v_idx] - muzL_diag[m_of, u_idx]
+    muzL_diff = muzL_diag[m_of, v_col] - muzL_diag[m_of, u_col]
     dBdE = torch.where(torch.abs(muzL_diff) > 1e-12, 1.0 / torch.abs(muzL_diff), torch.zeros_like(muzL_diff))
     # sqrt with a finite gradient at lw2 = 0 (a zero width, e.g. HStrain = [5 5 0]
     # along z): d sqrt/d lw2 is infinite there and 0 * inf gave NaN gradients

@@ -59,8 +59,8 @@ class FitOptions:
         How the model output is scaled to the data before the residuals are
         formed. ``'lsq'``: least-squares scale (constrained to be
         non-negative, as in EasySpin), solved jointly with the baseline.
-        ``'maxabs'``: ``max|data| / max|model|``. ``'none'``: scale 1. Any
-        other value is treated as ``'none'``. With ``'lsq'`` the model must
+        ``'maxabs'``: ``max|data| / max|model|``. ``'none'``: scale 1. Other
+        values raise ``ValueError``. With ``'lsq'`` the model must
         carry the sign of the signal: fit an inversion-recovery curve with
         ``-exp(-t/T)``, not ``exp(-t/T)``.
     lsq_negative_scale : {'clip', 'abs'}, default 'clip'
@@ -76,15 +76,21 @@ class FitOptions:
         Order of the polynomial baseline fitted together with the scale, on
         the abscissa ``linspace(0, 1, n_data)``: ``-1`` no baseline, ``0``
         constant, ``1`` linear, ``2`` quadratic, and so on.
-    target : {'auto', 'fcn', 'int', 'diff'}, default 'auto'
+    target : {'fcn', 'int', 'diff', 'auto'}, default 'fcn'
         Transformation of the residual vector ``fit - data`` before the RMSD
-        is computed. ``'fcn'``: the residuals as they are. ``'int'``: their
-        cumulative sum (smooths the loss of derivative spectra and removes
-        oscillating local minima). ``'diff'``: their first difference
+        is computed. ``'fcn'`` (EasySpin's default): the residuals as they
+        are; with white noise this is the maximum-likelihood fit. ``'int'``:
+        their cumulative sum (smooths the loss of derivative spectra with
+        many resolved lines, which helps a poor start converge, but weights
+        the noise as a random walk, so the fitted parameters scatter more
+        than with ``'fcn'``). ``'diff'``: their first difference
         (``numpy.diff`` with a leading 0). ``'auto'``: ``'int'`` when the data
         look like a derivative spectrum (``|mean(data)| < 0.1 * std(data)``),
-        else ``'fcn'``. The choice is made from the data alone, not from the
-        simulator's ``Harmonic``.
+        else ``'fcn'``; the choice is made from the data alone, not from the
+        simulator's ``Harmonic``. For ``'int'`` and ``'diff'`` the reported
+        uncertainties account for the noise correlation the transformation
+        introduces. A rugged derivative fit can be started with ``'int'`` (or
+        ``method='global'``) and finished with ``'fcn'`` from its ``pfit``.
     max_iter : int, default 2000
         Iteration or evaluation budget. Its meaning depends on ``method``:
         SciPy's ``maxiter`` for ``'simplex'``, ``'lbfgsb'`` and ``'powell'``;
@@ -262,13 +268,13 @@ class FitOptions:
     >>> from torchspin import FitOptions
     >>> opt = FitOptions(method='levmar', baseline=0)
     >>> opt.target, opt.max_iter
-    ('auto', 2000)
+    ('fcn', 2000)
     """
     method: str = 'simplex'
     autoscale: str = 'lsq'
     lsq_negative_scale: str = 'clip'
     baseline: int = -1
-    target: str = 'auto'
+    target: str = 'fcn'
     max_iter: int = 2000
     tol_fun: float = 1e-6
     tol_x: float = 1e-6
@@ -432,8 +438,9 @@ class FitResult:
     corr : numpy.ndarray, shape (n_active, n_active), or None
         Correlation matrix derived from ``cov``. ``None`` as for ``pstd``.
     r_squared : float
-        Coefficient of determination, intended as ``1 - SS_res / SS_tot`` of
-        the untransformed residuals; see Notes.
+        Coefficient of determination ``1 - SS_res / SS_tot`` of the
+        untransformed residuals, ``SS_tot`` taken about the mean of the data
+        (``nan`` for constant data).
     reduced_chi_square : float
         ``sum(residuals**2) / max(n_data - n_active, 1)`` of the
         untransformed residuals: an estimate of the noise variance in data
@@ -464,14 +471,6 @@ class FitResult:
     --------
     esfit, FitOptions
 
-    Notes
-    -----
-    ``r_squared`` reconstructs the data as ``fit + residuals`` although
-    ``residuals = fit - data``, so ``SS_tot`` is taken about ``2 * fit -
-    data`` instead of the data. For a close fit the difference is small; for
-    a poor fit the value can be far off (even hugely negative). Compute
-    ``1 - sum(res.residuals**2) / sum((data - data.mean())**2)`` yourself
-    when the exact value matters.
     """
     pfit: np.ndarray
     pnames: list[str]
@@ -1038,7 +1037,35 @@ class ModelWrapper:
             return dataclasses.replace(opt, AccumMethod='linear')
         return opt
 
+    # After the optimizer has returned, esfit evaluates the final point again for
+    # the residuals and the uncertainty estimate evaluates it as the center of its
+    # stencil.  The last few outputs are kept, keyed by the exact bytes of the
+    # parameter vector, and served once ``serve_memo`` is set (after the
+    # optimizer), so those repeats cost nothing and return the very same array.
+    # During the optimization every evaluation still reaches the model, so the
+    # evaluation counts, budgets and interrupt behavior are unchanged.  Stochastic
+    # models (cardamom without a seed) return the earlier draw at a served repeat.
+    _MEMO_SIZE = 8
+    serve_memo = False
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        state.pop('_memo', None)          # not shipped to worker processes
+        return state
+
     def __call__(self, pvec_active: np.ndarray, param_handler: ParameterHandler) -> np.ndarray:
+        key = (id(param_handler), np.asarray(pvec_active, dtype=float).tobytes())
+        memo = getattr(self, '_memo', ())
+        if self.serve_memo:
+            for k, out in memo:
+                if k == key:
+                    return out.copy()
+        output = self._evaluate(pvec_active, param_handler)
+        # replace the list as a whole: concurrent callers (thread backend) read snapshots
+        self._memo = ([(key, output.copy())] + [e for e in memo if e[0] != key])[:self._MEMO_SIZE]
+        return output
+
+    def _evaluate(self, pvec_active: np.ndarray, param_handler: ParameterHandler) -> np.ndarray:
         """
         Evaluate model with active parameter vector.
         
@@ -1187,6 +1214,20 @@ def _fit_scale_baseline_lsq(
     if return_negative:
         return scale, baseline, negative
     return scale, baseline
+
+
+def _target_transform_adjoint(X: np.ndarray, target: str) -> np.ndarray:
+    """``T' X`` along axis 0, where ``T`` is the linear map of
+    :func:`_apply_target_transform` (``T r`` = transformed residuals)."""
+    if target == 'fcn':
+        return X
+    if target == 'int':                      # T = lower-triangular ones: reverse cumsum
+        return np.cumsum(X[::-1], axis=0)[::-1]
+    if target == 'diff':                     # (T r)_i = r_i - r_{i-1}: (T'y)_i = y_i - y_{i+1}
+        out = X.copy()
+        out[:-1] -= X[1:]
+        return out
+    raise ValueError(f"Unknown target: '{target}'. Use 'fcn', 'int', or 'diff'")
 
 
 def _apply_target_transform(residuals: np.ndarray, target: str) -> np.ndarray:
@@ -2117,10 +2158,14 @@ def _optimize_grid(
     best_f = objective_fn(p0)
 
     import itertools
-    combos = list(itertools.product(*grids))
-    if len(combos) > options.max_iter:
-        combos = combos[:options.max_iter]
-    grid_pts = np.array(combos)
+    n_grid = npts ** n
+    if n_grid > options.max_iter:
+        # B110: the grid used to be cut to its first max_iter points, which leave
+        # the leading parameters at their lowest grid values
+        raise ValueError(
+            f"esfit grid search: grid_points**n_active = {npts}**{n} = {n_grid} points "
+            f"exceeds max_iter = {options.max_iter}; lower grid_points or raise max_iter.")
+    grid_pts = np.array(list(itertools.product(*grids)))
     tracker = _tracker_of(objective_fn)
     tracker.eval_total = len(grid_pts) + 1
     grid_f = _eval_population(objective_fn, grid_pts, options.n_workers, options.workers)
@@ -2513,6 +2558,7 @@ def _optimize_levmar(
     for i in range(n):
         x1 = x.copy(); x1[i] += delta
         probes.append(x1)
+    parallel = _resolve_workers(options.n_workers, 2) > 1
     if _resolve_workers(options.n_workers, n + 1) > 1:
         # pool sized for the largest batch of the fit (the 2n-probe uncertainty Jacobian)
         R = _map_points(resid_fn, [untransform(xi) for xi in [x] + probes], options.n_workers, options.workers,
@@ -2554,12 +2600,23 @@ def _optimize_levmar(
             message = 'parameter step below threshold'
             break
         xnew = np.clip(x + h, xlb, xub)
-        Fnew, fnew = funeval(xnew)
         # refresh one Jacobian column by finite differences when its step was small
         j = (j % n) + 1
-        if abs(h[j - 1]) < 0.8 * norm_h:
+        refresh = abs(h[j - 1]) < 0.8 * norm_h
+        if refresh:
             xu = x.copy(); xu[j - 1] += delta
-            _, fu = funeval(xu)
+        if refresh and parallel:
+            # B4: the trial point and the refresh probe depend only on x and h, so they
+            # go to the pool together; recorded in the serial order (bit-identical)
+            R2 = _map_points(resid_fn, [untransform(xnew), untransform(xu)], options.n_workers,
+                             options.workers, size_hint=2 * n)
+            Fnew, fnew = finish(xnew, R2[0])
+            _, fu = finish(xu, R2[1])
+        else:
+            Fnew, fnew = funeval(xnew)
+            if refresh:
+                _, fu = funeval(xu)
+        if refresh:
             hu = xu - x
             J = J + np.outer((fu - f - J @ hu) / (hu @ hu), hu)
         J = J + np.outer((fnew - f - J @ h) / (h @ h), h)
@@ -2703,8 +2760,12 @@ def _estimate_uncertainties(
                 'corr': np.full((len(pfit),) * 2, np.nan)}
     J = J_all[:, live]
 
-    # Compute residuals at optimum
-    residuals = residuals_fn(pfit)
+    # Residuals at the optimum, before the target transformation T: the noise
+    # is (close to) independent there, so the sandwich's middle term is
+    # J' T diag(r_raw^2) T' J (for 'fcn', T = I: the usual HC1). Using the
+    # transformed residuals instead would treat the random walk of 'int' as
+    # independent noise and understate the uncertainties (B131).
+    residuals = compute_residuals(pfit, data, model_wrapper, param_handler, options)[2]['residuals_raw']
     n_data = len(residuals)
     n_params = len(pfit)
 
@@ -2717,9 +2778,10 @@ def _estimate_uncertainties(
     try:
         JtJ_inv = np.linalg.pinv(J.T @ J)
         # HC1 sandwich estimator: avoid building O(n²) diagonal matrix
-        # (J.T @ diag(r²) @ J) == (J.T * r²) @ J
+        # (M.T @ diag(r²) @ M) == (M.T * r²) @ M, M = T' J
         W   = residuals ** 2                          # (n_data,)
-        JtWJ = (J.T * W) @ J                          # (n_params, n_params)
+        M   = _target_transform_adjoint(J, options.target)
+        JtWJ = (M.T * W) @ M                          # (n_params, n_params)
         cov  = JtJ_inv @ JtWJ @ JtJ_inv
         cov *= n_data / max(n_data - n_params, 1)     # degrees-of-freedom correction
 
@@ -2790,7 +2852,7 @@ def _jacobian_finite_diff(
 
 def _compute_fit_diagnostics(
     residuals: np.ndarray,
-    fit: np.ndarray,
+    data: np.ndarray,
     n_params: int
 ) -> dict:
     """
@@ -2799,9 +2861,9 @@ def _compute_fit_diagnostics(
     Parameters
     ----------
     residuals : np.ndarray
-        Fit residuals
-    fit : np.ndarray
-        Fitted values
+        Untransformed residuals ``fit - data``
+    data : np.ndarray
+        The data the fit was compared to (flattened)
     n_params : int
         Number of fitted parameters
     
@@ -2812,13 +2874,13 @@ def _compute_fit_diagnostics(
         reduced_chi_square: χ²/(n_data - n_params)
         noise_std: estimated noise level
     """
-    data = fit + residuals  # Reconstruct data
     n_data = len(residuals)
-    
-    # R²
+
+    # R² about the mean of the data (B100: it used to rebuild the data as
+    # fit + residuals = 2 fit - data)
     ss_res = np.sum(residuals**2)
     ss_tot = np.sum((data - np.mean(data))**2)
-    r_squared = 1 - ss_res / (ss_tot + 1e-12)
+    r_squared = 1 - ss_res / ss_tot if ss_tot > 0 else float('nan')
     
     # Reduced chi-square: ss_res / dof
     # Without an independent noise estimate, this equals the estimated noise
@@ -2833,6 +2895,35 @@ def _compute_fit_diagnostics(
         'reduced_chi_square': reduced_chi_square,
         'noise_std': noise_std
     }
+
+
+_METHODS = ('simplex', 'lbfgsb', 'powell', 'grid', 'montecarlo', 'genetic', 'swarm', 'global', 'levmar', 'trf')
+# methods that work with infinite bounds (the others normalize to [lb, ub] or sample in it)
+_UNBOUNDED_OK = ('lbfgsb', 'powell', 'trf')
+
+
+def _validate_fit_options(options: 'FitOptions') -> None:
+    """Reject invalid FitOptions before any model evaluation (B112, B113)."""
+    def _one_of(name, allowed):
+        v = getattr(options, name)
+        if v not in allowed:
+            raise ValueError(f"FitOptions.{name} must be one of {allowed}, got {v!r}.")
+    if options.method not in _METHODS:
+        raise ValueError(f"Unknown method: {options.method!r} "
+                         f"(FitOptions.method must be one of {_METHODS}).")
+    _one_of('autoscale', ('lsq', 'maxabs', 'none'))
+    _one_of('lsq_negative_scale', ('clip', 'abs'))
+    _one_of('target', ('fcn', 'int', 'diff', 'auto'))
+    _one_of('workers', ('auto', 'processes', 'threads'))
+    nw = options.n_workers
+    if isinstance(nw, str):
+        if nw != 'auto':
+            raise ValueError(f"FitOptions.n_workers must be a positive int or 'auto', got {nw!r}.")
+    elif isinstance(nw, bool) or not isinstance(nw, (int, np.integer)) or nw < 1:
+        raise ValueError(f"FitOptions.n_workers must be a positive int or 'auto', got {nw!r}.")
+    b = options.baseline
+    if isinstance(b, bool) or not isinstance(b, (int, np.integer)) or b < -1:
+        raise ValueError(f"FitOptions.baseline must be an int >= -1, got {b!r}.")
 
 
 def esfit(
@@ -2904,8 +2995,7 @@ def esfit(
         and fields as each other, the layout of ``vary``, and ``p0`` within
         them. Array style: a missing ``lb`` or ``ub`` is ``-inf`` or
         ``+inf``, which only ``'lbfgsb'``, ``'powell'`` and ``'trf'`` handle;
-        the other methods need finite bounds (with an infinite bound they
-        return NaN parameters, raise, or, for ``'grid'``, return ``p0``).
+        the other methods raise ``ValueError`` for an infinite bound.
     options : FitOptions, optional
         Algorithm, scaling, baseline, target, budget, parallelism and
         progress. Default ``FitOptions()``.
@@ -2926,11 +3016,13 @@ def esfit(
         every parameter is fixed; in the dict style, if a key is not in
         ``p0``, an object has no such field, a shape does not match the
         field, only one of ``lb``/``ub`` is given, they name different keys
-        or fields, ``lb > ub``, or ``p0`` lies outside ``[lb, ub]``; if
-        ``FitOptions.method`` is unknown (checked after the initial model
-        evaluation). An unknown ``FitOptions.target`` or
-        ``lsq_negative_scale``, or a model output with the wrong number of
-        values, raises ``ValueError`` only at the final evaluation, after the
+        or fields, ``lb > ub``, or ``p0`` lies outside ``[lb, ub]``; if a
+        varied parameter has an infinite bound and the method needs finite
+        ones; if ``FitOptions.method``, ``autoscale``, ``lsq_negative_scale``,
+        ``target``, ``workers``, ``n_workers`` or ``baseline`` is invalid
+        (checked before any model evaluation); for ``'grid'``, if the grid has
+        more than ``max_iter`` points. A model output with the wrong number of
+        values raises ``ValueError`` only at the final evaluation, after the
         optimizer has run (see Notes).
     TypeError
         In the dict style, if a varied field is neither a number nor a
@@ -2969,7 +3061,10 @@ def esfit(
     respect to the active parameters is taken by central differences (step
     ``1e-7 * max(|p|, 1)``), the covariance is the HC1 sandwich estimator
     ``(J'J)^-1 J' diag(r^2) J (J'J)^-1 * n_data / (n_data - n_active)``, and
-    ``ci95`` is ``pfit +/- 1.96 * pstd``.
+    ``ci95`` is ``pfit +/- 1.96 * pstd``. ``r`` are the untransformed
+    residuals; for ``target='int'`` or ``'diff'`` the middle term is
+    ``J' T diag(r^2) T' J`` with ``T`` the transformation, which accounts for
+    the correlation it gives the noise.
 
     Examples
     --------
@@ -3012,12 +3107,12 @@ def esfit(
     data = np.asarray(data).ravel()
     if options is None:
         options = FitOptions()
+    _validate_fit_options(options)
 
-    # Resolve target='auto': pick 'int' for derivative-like data
-    # (mean << std, characteriztic of field-modulated CW EPR with
-    # Harmonic=1) so the loss landscape is smooth enough for local
-    # optimizers. Matches MATLAB EasySpin esfit.m:382-390 which sets
-    # TargetID=2 (integral) for pepper/garlic with Harmonic>0.
+    # Resolve target='auto' (opt-in since B131; the default is 'fcn', as in
+    # EasySpin 6): 'int' for derivative-like data (mean << std, typical of
+    # field-modulated CW EPR), whose integrated loss is smoother for local
+    # optimizers from a poor start.
     if options.target == 'auto':
         data_mean = float(np.abs(np.mean(data)))
         data_std = float(np.std(data))
@@ -3041,6 +3136,12 @@ def esfit(
     pvec_0 = param_handler.to_vector(p0)
     lb_vec, ub_vec = param_handler.get_bounds()
     pnames = param_handler.get_names()
+    if options.method not in _UNBOUNDED_OK and not (np.all(np.isfinite(lb_vec)) and np.all(np.isfinite(ub_vec))):
+        # B111: these methods returned NaN parameters, raised mid-run, or (grid)
+        # returned p0 with success=True
+        raise ValueError(
+            f"esfit: method '{options.method}' needs finite bounds for every varied "
+            f"parameter; give both lb and ub (or vary), or use one of {_UNBOUNDED_OK}.")
     
     if options.verbosity > 0:
         print(f"  Parameters: {param_handler.n_active} variable, {param_handler.n_params - param_handler.n_active} fixed")
@@ -3067,8 +3168,6 @@ def esfit(
     # 6. Run optimization
     if options.verbosity > 0:
         print("\nOptimizing...")
-    if options.method not in ('simplex', 'lbfgsb', 'powell', 'grid', 'montecarlo', 'genetic', 'swarm', 'global', 'levmar', 'trf'):
-        raise ValueError(f"Unknown method: '{options.method}'")
 
     # FitOptions.devices for the worker pools of this fit only; reset on every exit path,
     # so a later pool (another fit, ml.simulate_batch) is not pinned to this fit's GPUs
@@ -3108,7 +3207,9 @@ def esfit(
     
         pfit_vec = opt_result.x
     
-        # 7. Compute final fit and residuals
+        # 7. Compute final fit and residuals (repeats of points the optimizer
+        # evaluated are served from ModelWrapper's memo from here on)
+        model_wrapper.serve_memo = True
         residuals, rmsd, info = compute_residuals(
             pfit_vec, data, model_wrapper, param_handler, options
         )
@@ -3143,7 +3244,7 @@ def esfit(
             }
     
         # 9. Compute fit diagnostics
-        diagnostics = _compute_fit_diagnostics(info['residuals_raw'], info['fit'], len(pfit_vec))
+        diagnostics = _compute_fit_diagnostics(info['residuals_raw'], data, len(pfit_vec))
     
         # 10. Construct result object
         result = FitResult(

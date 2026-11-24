@@ -1,5 +1,17 @@
 """Multi-core helpers: batched Hermitian eigendecompositions and chunked map-reduce.
 
+Native threads (B128): torch's BLAS (OpenBLAS on many builds) has its own thread
+pool that ``torch.set_num_threads`` does not control.  Every LAPACK call on a small
+matrix could then start BLAS threads of its own, inside the eigh pool as well as
+outside it; with all cores busy (a laptop with other work, or every core requested)
+that oversubscription made a batch of 2000 72x72 eigendecompositions 30x slower
+(4.0 s vs 0.13 s at 14 threads).  BLAS is therefore capped at one thread while the
+pool runs, and around unpooled eigendecompositions of matrices smaller than
+``_BLAS_THREADED_MIN`` (BLAS threads help only from about 128x128 on).  Matrices
+below ``_MIN_POOL_DIM`` are not pooled: for them the pool costs more than it saves.
+Neither changes results: every matrix is still handled by the same LAPACK routine,
+and a single-threaded BLAS gives the 1-thread result at every thread count.
+
 ``torch.linalg.eigh`` on a batch of small matrices loops serially over the batch on
 the CPU (one LAPACK call per matrix), so a 32-core node is no faster than one core.
 Splitting the batch over a thread pool of single-threaded LAPACK calls scales almost
@@ -18,6 +30,7 @@ other routines instead of letting one bad matrix abort a whole orientation batch
 """
 from __future__ import annotations
 
+import contextlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -27,6 +40,8 @@ import torch
 from torchspin.parallel import inner_threads
 
 _MIN_BATCH = 32            # below this the pool overhead is not worth it
+_MIN_POOL_DIM = 10         # smaller matrices: one batched call (6x6 x 5000: 11 ms vs 15 ms pooled)
+_BLAS_THREADED_MIN = 128   # unpooled matrices smaller than this run with single-threaded BLAS
 _CUSOLVER_BATCHED_MAX = 32  # syevjBatched limit
 # Workspace the batched CUDA solver reserves per matrix. Measured on torch 2.14 / CUDA 13:
 # about 1.1-1.5 MB per matrix at every size from 6x6 to 32x32, so an unchunked batch of
@@ -47,6 +62,50 @@ _LinAlgError = torch._C._LinAlgError
 # below double-precision resolution of the eigenvalues, but enough to break the
 # exact ties that stall the divide-and-conquer driver.
 _JITTER = 1e-14
+
+
+_blas_ctl: list = []
+
+
+def _blas_controller():
+    """Cached ``threadpoolctl.ThreadpoolController`` (None if unavailable)."""
+    if not _blas_ctl:
+        try:
+            from threadpoolctl import ThreadpoolController
+            _blas_ctl.append(ThreadpoolController())
+        except Exception:          # threadpoolctl missing or unable to inspect the process
+            _blas_ctl.append(None)
+    return _blas_ctl[0]
+
+
+_blas_lock = threading.Lock()
+_blas_state = {'depth': 0, 'limiter': None}
+
+
+@contextlib.contextmanager
+def serial_blas():
+    """Context manager: BLAS libraries of the process limited to one thread.
+
+    The limit is process-wide, so it is reference counted: the first thread to
+    enter sets it, the last one to leave restores the previous setting, and
+    concurrent callers (esfit's thread backend) neither wait for each other nor
+    restore it under one another.  A no-op when threadpoolctl is unavailable."""
+    ctl = _blas_controller()
+    if ctl is None:
+        yield
+        return
+    with _blas_lock:
+        if _blas_state['depth'] == 0:
+            _blas_state['limiter'] = ctl.limit(limits=1, user_api='blas')
+        _blas_state['depth'] += 1
+    try:
+        yield
+    finally:
+        with _blas_lock:
+            _blas_state['depth'] -= 1
+            if _blas_state['depth'] == 0:
+                _blas_state['limiter'].restore_original_limits()
+                _blas_state['limiter'] = None
 
 
 def _executor(w: int) -> ThreadPoolExecutor:
@@ -121,14 +180,18 @@ def _pooled(fn, H: torch.Tensor):
     nb = H.shape[:-2].numel()
     n = H.shape[-1]
     w = _pool_size(nb)
-    if w <= 1 or nb < _MIN_BATCH:
+    if w <= 1 or nb < _MIN_BATCH or n < _MIN_POOL_DIM:
+        if n < _BLAS_THREADED_MIN:
+            with serial_blas():
+                return fn(H)
         return fn(H)
     chunks = torch.chunk(H.reshape(nb, n, n), w)
     with _threads_lock:
         prev = torch.get_num_threads()
         torch.set_num_threads(1)
         try:
-            res = list(_executor(w).map(fn, chunks))
+            with serial_blas():
+                res = list(_executor(w).map(fn, chunks))
         finally:
             torch.set_num_threads(prev)
     return res
@@ -232,6 +295,26 @@ def eigvalsh(H: torch.Tensor):
     return torch.cat(res).reshape(*H.shape[:-1])
 
 
+@contextlib.contextmanager
+def single_threaded():
+    """Run the enclosed code with one intra-op torch thread and single-threaded BLAS.
+
+    For stretches of many small or mid-sized tensor operations (pepper's slot
+    interpolation and projection), where every parallel region costs a thread
+    wake-up that exceeds the work it splits (B128).  Holds ``_threads_lock`` like
+    :func:`pool_map`, so pools started inside run serially."""
+    with _threads_lock:
+        prev = torch.get_num_threads()
+        if prev > 1:
+            torch.set_num_threads(1)
+        try:
+            with serial_blas():
+                yield
+        finally:
+            if prev > 1:
+                torch.set_num_threads(prev)
+
+
 def pool_map(fn, items: list):
     """Apply ``fn`` to every item in a thread pool of single-threaded torch calls.
 
@@ -247,6 +330,7 @@ def pool_map(fn, items: list):
         prev = torch.get_num_threads()
         torch.set_num_threads(1)
         try:
-            return list(_executor(w).map(fn, items))
+            with serial_blas():
+                return list(_executor(w).map(fn, items))
         finally:
             torch.set_num_threads(prev)

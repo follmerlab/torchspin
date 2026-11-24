@@ -101,6 +101,11 @@ def fastmotion_t(sys, field_mT, tcorr, domain: str = "field") -> Tuple[torch.Ten
         g_mat = g_flat.reshape(3, 3)
     else:
         raise ValueError(f"Invalid g shape: {sys.g.shape}")
+    # B105: the widths depend on the relative orientation of g and A, so both
+    # go into the molecular frame first (as in ham_ez/ham_hf).
+    gframe = getattr(sys, 'gFrame', None)
+    if gframe is not None:
+        g_mat = _to_molframe(g_mat, torch.as_tensor(gframe, dtype=dt).reshape(-1, 3)[0])
     g0 = torch.trace(g_mat) / 3.0
     g1 = (g_mat - eye3 * g0).reshape(9)
     B_T = torch.as_tensor(field_mT, dtype=dt) * 1e-3
@@ -113,9 +118,13 @@ def fastmotion_t(sys, field_mT, tcorr, domain: str = "field") -> Tuple[torch.Ten
     I_arr = np.array(sys.I, dtype=float) if nNuclei > 0 else np.array([], dtype=float)
     if nNuclei > 0:
         A_t = torch.as_tensor(sys.A, dtype=dt)
+        aframe = getattr(sys, 'AFrame', None)
+        aframe = None if aframe is None else torch.as_tensor(aframe, dtype=dt).reshape(nNuclei, -1)
         cols = []
         for iNuc in range(nNuclei):
             A_nuc = torch.diag(A_t[iNuc, :3]) if A_t.shape[0] == nNuclei else A_t[3 * iNuc: 3 * (iNuc + 1), :3]
+            if aframe is not None:
+                A_nuc = _to_molframe(A_nuc, aframe[iNuc, :3])
             A0_nuc = torch.trace(A_nuc) / 3.0
             cols.append(((A_nuc - eye3 * A0_nuc) * 1e6 * (2.0 * math.pi)).reshape(9))
         A1_mat = torch.stack(cols, dim=1)          # (9, nNuclei)
@@ -146,6 +155,10 @@ def fastmotion_t(sys, field_mT, tcorr, domain: str = "field") -> Tuple[torch.Ten
         Q_t = torch.as_tensor(sys.Q, dtype=dt)
         if Q_t.ndim == 1:
             Q_t = Q_t.reshape(nNuclei, -1)
+        # Σ Q_ij² per nucleus: principal values (nNuclei, 3) or full 3×3 blocks
+        # (3·nNuclei, 3) give the same rotation invariant (B106: full Q crashed).
+        if Q_t.shape[0] == 3 * nNuclei and Q_t.shape[1] == 3 and nNuclei > 0 and Q_t.shape[0] != nNuclei:
+            Q_t = Q_t.reshape(nNuclei, 9)
         PP = (Q_t ** 2).sum(dim=1) * (1e6 * 2.0 * math.pi) ** 2
         II2 = torch.as_tensor(I_arr * (I_arr + 1), dtype=dt)
         I_t = torch.as_tensor(I_arr, dtype=dt)
@@ -164,6 +177,16 @@ def fastmotion_t(sys, field_mT, tcorr, domain: str = "field") -> Tuple[torch.Ten
     if domain == "field":
         lw = lw * (1e6 * PLANCK / (g0 * BMAGN) * 1e3)
     return lw, mI_all
+
+
+def _to_molframe(T: torch.Tensor, ang: torch.Tensor) -> torch.Tensor:
+    """Tensor ``T`` (3×3, in its own frame) in the molecular frame, for tensor-frame
+    Euler angles ``ang`` (EasySpin ``gFrame``/``AFrame`` convention, as ham_ez/ham_hf)."""
+    if not ang.requires_grad and not bool(torch.any(ang != 0)):
+        return T
+    from torchspin.rotations import erot
+    R = erot(ang).to(T.dtype).T                     # tensor frame -> molecular frame
+    return R @ T @ R.T
 
 
 def _all_mI(I_arr: np.ndarray) -> np.ndarray:

@@ -60,19 +60,35 @@ parameter.
 | `'global'` | particle swarm, then simplex polish | rugged loss landscapes, poor start values (derivative spectra) |
 | `'swarm'`, `'genetic'`, `'montecarlo'`, `'grid'` | global | exploring the parameter space |
 
-Derivative (field-modulated) spectra have many local minima.  With the
-default `FitOptions(target='auto')`, derivative-like data are compared after
-integration, which smooths the landscape.  The tutorials
+Derivative (field-modulated) spectra have many local minima.
+`FitOptions(target='int')` (or `'auto'`, which picks `'int'` for
+derivative-like data) compares the integrated residuals, which smooths the
+landscape and helps a poor start converge.  It also weights the noise as a
+random walk, so its parameters scatter more than those of the default
+`target='fcn'` (the maximum-likelihood fit for white noise, and EasySpin's
+default).  For the final parameters and uncertainties, finish with `'fcn'`
+started from the `'int'` result.  The tutorials
 [real-world fitting](../tutorials/05_fitting_real_world.ipynb) and
 [blue copper](../tutorials/06_blue_copper_fitting.ipynb) compare the methods
 on hard cases.
+
+Fits with pepper's `matrix` method of S = 1/2 systems with a large metal hyperfine coupling and
+ligand nuclei (for example Cu(II) with 14N) can stall above the noise level: the simulated spectrum
+changes in small steps with the parameters there, which no local optimizer handles well.  Compare the
+final RMSD with the noise in your data, and try several nearby starts.  From 0.9.39 equivalent nuclei
+are simulated as total-spin blocks, which brings such fits much closer (RMSD 0.011 in place of 0.021
+at a noise level of 0.0097 in the documented example) but does not remove the steps.  See
+[known limitations](../known_limitations.md) (matrix method, spectra with several nuclei).
 
 ## Uncertainties
 
 After a successful fit, esfit takes the Jacobian of the (target-transformed)
 residuals with respect to the varied parameters by central differences and
 computes the HC1 sandwich covariance,
-`(J'J)^-1 J' diag(r^2) J (J'J)^-1 · n_data / (n_data - n_active)`.
+`(J'J)^-1 J' diag(r^2) J (J'J)^-1 · n_data / (n_data - n_active)`, with `r`
+the residuals before the target transformation `T`.  For `'int'` and
+`'diff'` the middle term is `J' T diag(r^2) T' J`, which accounts for the
+correlation the transformation gives the noise.
 `pstd` are the square roots of its diagonal, `ci95` is `pfit ± 1.96 pstd`,
 and `corr` shows which parameters trade off against each other.  A parameter
 that does not change the residuals gets `nan` and a warning.

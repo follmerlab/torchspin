@@ -195,10 +195,14 @@ def grid_convergence(sys, exp: Experiment, opt: Optional[Options] = None,
     fine = [int(n_coarse * refine), int(n_interp)] if len(coarse) > 1 else int(n_coarse * refine)
 
     from dataclasses import replace as _replace
-    _, spc_c = pepper(sys, exp, _replace(opt, GridSize=opt.GridSize))
-    _, spc_f = pepper(sys, exp, _replace(opt, GridSize=fine))
-    a = np.asarray(spc_c, dtype=float).ravel()
-    b = np.asarray(spc_f, dtype=float).ravel()
+    import torch
+    # B109: a diagnostic; parameters that require grad give spectra on the graph
+    with torch.no_grad():
+        _, spc_c = pepper(sys, exp, _replace(opt, GridSize=opt.GridSize))
+        _, spc_f = pepper(sys, exp, _replace(opt, GridSize=fine))
+    _np = lambda y: (y.detach().cpu().numpy() if torch.is_tensor(y) else np.asarray(y)).astype(float).ravel()
+    a = _np(spc_c)
+    b = _np(spc_f)
     denom = np.linalg.norm(a) * np.linalg.norm(b)
     cos = float(a @ b / denom) if denom > 0 else 1.0
     pk_b = np.abs(b).max()

@@ -385,7 +385,7 @@ def test_zero_hstrain_component_gradient_finite():
 # ---------------------------------------------------------------------------
 
 P0 = {'AStrain': [10.0, 8.0, 12.0], 'A': [20.0, 25.0, 90.0], 'gStrain': [0.004, 0.005, 0.01]}
-STEP = {'AStrain': 1e-2, 'A': 1e-2, 'gStrain': 1e-5}
+STEP = {'AStrain': 1e-2, 'A': 4e-2, 'gStrain': 1e-5}   # A: d(width)/dA[0] ~ 1e-7 |f|, so h/2 = 5e-3 sat on the roundoff floor
 
 
 def _sys(p):

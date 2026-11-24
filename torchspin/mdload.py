@@ -561,7 +561,8 @@ def _calc_label_frame(xyz, topo_data, label_name):
     nFrames = xyz.shape[0]
     frames = np.zeros((3, 3, nFrames))
 
-    _normalize = lambda v: v / max(np.linalg.norm(v), 1e-30)
+    def _normalize_rows(v):                # (nFrames, 3): each row / max(|row|, 1e-30)
+        return v / np.maximum(np.sqrt(np.einsum('ij,ij->i', v, v)), 1e-30)[:, None]
 
     if label_name == 'R1':
         i_ON = topo_data.get('idx_ON')
@@ -572,25 +573,16 @@ def _calc_label_frame(xyz, topo_data, label_name):
         if any(x is None for x in [i_ON, i_NN, i_C1, i_C2]):
             raise ValueError("Missing R1 frame atoms (ON, NN, C1, C2)")
 
-        for t in range(nFrames):
-            # Match MATLAB mdload.m exactly:
-            # NNNO = normalize(ON - NN)  (N-O bond vector)
-            NNNO = _normalize(xyz[t, :, i_ON] - xyz[t, :, i_NN])
-            NNC1 = _normalize(xyz[t, :, i_C1] - xyz[t, :, i_NN])
-            NNC2 = _normalize(xyz[t, :, i_C2] - xyz[t, :, i_NN])
-
-            # z-axis: normalize(cross(NNC1, NNNO) + cross(NNNO, NNC2))
-            z = _normalize(np.cross(NNC1, NNNO) + np.cross(NNNO, NNC2))
-
-            # x-axis: N-O bond direction
-            x = NNNO
-
-            # y-axis: cross(z, x)
-            y = np.cross(z, x)
-
-            frames[:, 0, t] = x
-            frames[:, 1, t] = y
-            frames[:, 2, t] = z
+        # As MATLAB mdload.m, all frames at once (B18):
+        # x = normalize(ON - NN) (N-O bond), z = normalize(cross(NNC1, NNNO) + cross(NNNO, NNC2)),
+        # y = cross(z, x)
+        NNNO = _normalize_rows(xyz[:, :, i_ON] - xyz[:, :, i_NN])
+        NNC1 = _normalize_rows(xyz[:, :, i_C1] - xyz[:, :, i_NN])
+        NNC2 = _normalize_rows(xyz[:, :, i_C2] - xyz[:, :, i_NN])
+        z = _normalize_rows(np.cross(NNC1, NNNO) + np.cross(NNNO, NNC2))
+        frames[:, 0, :] = NNNO.T
+        frames[:, 1, :] = np.cross(z, NNNO).T
+        frames[:, 2, :] = z.T
 
     elif label_name == 'TOAC':
         i_ON = topo_data.get('idx_ON')
@@ -601,22 +593,16 @@ def _calc_label_frame(xyz, topo_data, label_name):
         if any(x is None for x in [i_ON, i_NN]):
             raise ValueError("Missing TOAC frame atoms (ON, NN)")
 
-        for t in range(nFrames):
-            NNNO = _normalize(xyz[t, :, i_ON] - xyz[t, :, i_NN])
-
-            if i_CGR is not None and i_CGS is not None:
-                NNCGR = _normalize(xyz[t, :, i_CGR] - xyz[t, :, i_NN])
-                NNCGS = _normalize(xyz[t, :, i_CGS] - xyz[t, :, i_NN])
-                z = _normalize(np.cross(NNCGR, NNNO) + np.cross(NNNO, NNCGS))
-            else:
-                z = np.array([0, 0, 1.0])
-
-            x = NNNO
-            y = np.cross(z, x)
-
-            frames[:, 0, t] = x
-            frames[:, 1, t] = y
-            frames[:, 2, t] = z
+        NNNO = _normalize_rows(xyz[:, :, i_ON] - xyz[:, :, i_NN])
+        if i_CGR is not None and i_CGS is not None:
+            NNCGR = _normalize_rows(xyz[:, :, i_CGR] - xyz[:, :, i_NN])
+            NNCGS = _normalize_rows(xyz[:, :, i_CGS] - xyz[:, :, i_NN])
+            z = _normalize_rows(np.cross(NNCGR, NNNO) + np.cross(NNNO, NNCGS))
+        else:
+            z = np.tile(np.array([0, 0, 1.0]), (nFrames, 1))
+        frames[:, 0, :] = NNNO.T
+        frames[:, 1, :] = np.cross(z, NNNO).T
+        frames[:, 2, :] = z.T
 
     return frames
 
@@ -695,24 +681,18 @@ def _remove_global_rotation(xyz, idx_prot_ca, nFrames):
 
     ref = xyz[0][:, idx_prot_ca]  # (3, nCA) reference frame
 
-    for t in range(1, nFrames):
-        curr = xyz[t][:, idx_prot_ca]  # (3, nCA)
-
-        # Center both sets
+    if nFrames > 1:
+        # all frames at once (B18): Kabsch rotation onto the first frame
         ref_c = ref - ref.mean(axis=1, keepdims=True)
-        curr_c = curr - curr.mean(axis=1, keepdims=True)
-
-        # SVD for optimal rotation
-        H = curr_c @ ref_c.T
+        curr = xyz[1:][:, :, idx_prot_ca]                                   # (nFrames-1, 3, nCA)
+        curr_c = curr - curr.mean(axis=2, keepdims=True)
+        H = curr_c @ ref_c.T                                                 # (nFrames-1, 3, 3)
         U, _, Vt = np.linalg.svd(H)
-
-        # Handle reflection
-        d = np.linalg.det(Vt.T @ U.T)
-        S = np.eye(3)
-        if d < 0:
-            S[2, 2] = -1
-
-        R_prot[:, :, t] = Vt.T @ S @ U.T
+        V, Ut = np.swapaxes(Vt, 1, 2), np.swapaxes(U, 1, 2)
+        d = np.linalg.det(V @ Ut)
+        S = np.tile(np.eye(3), (nFrames - 1, 1, 1))
+        S[d < 0, 2, 2] = -1
+        R_prot[:, :, 1:] = np.moveaxis(V @ S @ Ut, 0, 2)
 
     return R_prot
 
@@ -816,9 +796,7 @@ def mdload(
     R_prot = _remove_global_rotation(xyz, idx_ca_new, nFrames)
 
     # Apply rotation removal to frame
-    frames_wrt_prot = np.zeros_like(frames)
-    for t in range(nFrames):
-        frames_wrt_prot[:, :, t] = R_prot[:, :, t] @ frames[:, :, t]
+    frames_wrt_prot = np.moveaxis(np.moveaxis(R_prot, 2, 0) @ np.moveaxis(frames, 2, 0), 0, 2)
 
     # Build output
     md = MDData()

@@ -276,6 +276,24 @@ def _predefined_experiments(exp):
 # Event reordering (s_reorder_events.m)
 # ---------------------------------------------------------------------------
 
+_REORDER_CACHE: dict = {}
+_REORDER_CACHE_MAX = 1 << 16
+
+
+def _reorder_events_cached(event_lengths, pulse_list):
+    """:func:`_reorder_events` memoized on the exact event lengths and pulse flags (B11:
+    every orientation repeats the same per-point sequences).  Overlap errors are not
+    cached.  Returns fresh copies, so callers may modify them."""
+    key = (tuple(float(v) for v in event_lengths), tuple(bool(p) for p in pulse_list))
+    hit = _REORDER_CACHE.get(key)
+    if hit is None:
+        hit = _reorder_events(event_lengths, pulse_list)
+        if len(_REORDER_CACHE) >= _REORDER_CACHE_MAX:
+            _REORDER_CACHE.clear()
+        _REORDER_CACHE[key] = (list(hit[0]), np.array(hit[1], copy=True))
+    return list(hit[0]), np.array(hit[1], copy=True)
+
+
 def _reorder_events(event_lengths, pulse_list):
     """Reorder events chronologically, detect pulse overlaps.
 
@@ -924,20 +942,59 @@ def _liouvillian(Ham, Gamma, eq_state_vec, dt):
     return L, sigma_ss
 
 
-def _build_propagator_table(Ham0, xOp, dt, vert_res, scale):
-    """Pre-compute propagators for all discrete amplitude levels."""
+def _sequence_product(lv, U_of, n):
+    """U_of[lv[-1]] @ ... @ U_of[lv[0]] for a sequence of amplitude levels (B10b).
+
+    A carrier sampled on the lab-frame time grid repeats its levels exactly every period
+    of p samples: the product is then (one period)^(len // p) times the remainder,
+    p + log2(len / p) products instead of len.  Without an exact period of at most a
+    quarter of the length, runs of equal levels become matrix powers (a rectangular pulse
+    is one run).  Same propagator up to roundoff (association order of the products).
+    """
+    lv = np.asarray(lv)
+    m = lv.size
+    I = np.eye(n, dtype=complex)
+
+    def prod(seq):
+        out = I
+        start = 0
+        while start < seq.size:
+            stop = start + 1
+            while stop < seq.size and seq[stop] == seq[start]:
+                stop += 1
+            Ul = U_of[seq[start]]
+            out = (np.linalg.matrix_power(Ul, stop - start) if stop - start > 1 else Ul) @ out
+            start = stop
+        return out
+
+    period = None
+    for p in range(1, m // 4 + 1):
+        if np.array_equal(lv[p:], lv[:-p]):
+            period = p
+            break
+    if period is None:
+        return prod(lv)
+    reps, rest = divmod(m, period)
+    return prod(lv[reps * period:]) @ np.linalg.matrix_power(prod(lv[:period]), reps)
+
+
+def _build_propagator_table(Ham0, xOp, dt, vert_res, scale, levels=None):
+    """Pre-compute propagators for the discrete amplitude levels ``levels``
+    (default: all ``vert_res + 1``; the others stay ``None``).  A pulse whose
+    waveform visits few levels then needs few matrix exponentials."""
     table = [None] * (vert_res + 1)
-    for i_res in range(vert_res + 1):
+    for i_res in (range(vert_res + 1) if levels is None else levels):
         Ham1 = scale * (i_res - vert_res / 2) * np.real(xOp)
         table[i_res] = _propagator(Ham0 + Ham1, dt)
     return table
 
 
-def _build_liouvillian_table(Ham0, Gamma, eq_state_vec, xOp, dt, vert_res, scale):
-    """Pre-compute Liouvillians for all discrete amplitude levels."""
+def _build_liouvillian_table(Ham0, Gamma, eq_state_vec, xOp, dt, vert_res, scale, levels=None):
+    """Pre-compute Liouvillians for the discrete amplitude levels ``levels``
+    (default: all); see :func:`_build_propagator_table`."""
     L_table = [None] * (vert_res + 1)
     ss_table = [None] * (vert_res + 1)
-    for i_res in range(vert_res + 1):
+    for i_res in (range(vert_res + 1) if levels is None else levels):
         Ham1 = scale * (i_res - vert_res / 2) * np.real(xOp)
         L, ss = _liouvillian(Ham0 + Ham1, Gamma, eq_state_vec, dt)
         L_table[i_res] = L
@@ -992,6 +1049,7 @@ def _thyme(sigma, Ham0, det_ops, events, relaxation, vary):
         n_points = 1
 
     initial_sigma = sigma.copy()
+    prop_cache = {}                       # delay propagators of this Ham0 by exact step (B11)
     final_states_list = []
     all_signals = []
     all_times = []
@@ -1046,7 +1104,7 @@ def _thyme(sigma, Ham0, det_ops, events, relaxation, vary):
             # Overlapping pulses raise (EasySpin s_reorder_events.m:
             # 'Pulse Overlap'); they used to fall back silently to the
             # unreordered sequence (B80).
-            sequence, new_event_lengths = _reorder_events(
+            sequence, new_event_lengths = _reorder_events_cached(
                 event_lengths, is_pulse
             )
         else:
@@ -1089,7 +1147,7 @@ def _thyme(sigma, Ham0, det_ops, events, relaxation, vary):
             else:
                 sigma, sig_part, t_part, dm_part = _propagate_delay(
                     sigma, evt, evt_length, Ham0_rad, det_ops, n_det,
-                    relaxation, t_total
+                    relaxation, t_total, prop_cache
                 )
 
             if sig_part is not None:
@@ -1213,7 +1271,8 @@ def _build_pulse_propagators(evt, Ham0_rad, relaxation, n):
     if not has_imag and not use_relaxation:
         # Build lookup table
         U_table = _build_propagator_table(
-            Ham0_rad, evt.xOp, evt.TimeStep, vert_res, scale
+            Ham0_rad, evt.xOp, evt.TimeStep, vert_res, scale,
+            levels=np.unique(real_binary).tolist()
         )
 
         if evt.Detection:
@@ -1224,12 +1283,12 @@ def _build_pulse_propagators(evt, Ham0_rad, relaxation, n):
                     U_total[ipc][iw] = U_table[real_binary[ipc, iw]]
         else:
             # Combine into single propagator per phase cycle
+            # B10b: consecutive steps at the same amplitude level form one run,
+            # applied as a matrix power (repeated squaring) instead of one product
+            # per time step (a rectangular pulse is a single run)
             U_total = [[None] for _ in range(n_phase_cycle)]
             for ipc in range(n_phase_cycle):
-                U_combined = np.eye(n, dtype=complex)
-                for iw in range(n_wave):
-                    U_combined = U_table[real_binary[ipc, iw]] @ U_combined
-                U_total[ipc][0] = U_combined
+                U_total[ipc][0] = _sequence_product(real_binary[ipc], U_table, n)
 
         evt.Propagation = {'Utotal': U_total}
 
@@ -1237,7 +1296,7 @@ def _build_pulse_propagators(evt, Ham0_rad, relaxation, n):
         eq_vec = relaxation.equilibriumState.reshape(-1)
         L_table, ss_table = _build_liouvillian_table(
             Ham0_rad, relaxation.Gamma, eq_vec, evt.xOp,
-            evt.TimeStep, vert_res, scale
+            evt.TimeStep, vert_res, scale, levels=np.unique(real_binary).tolist()
         )
 
         L_total = [[None] * n_wave for _ in range(n_phase_cycle)]
@@ -1268,29 +1327,36 @@ def _build_pulse_propagators(evt, Ham0_rad, relaxation, n):
                     ss_total[ipc][iw] = ss
             evt.Propagation = {'Ltotal': L_total, 'SigmaSStotal': ss_total}
         else:
+            # B10b: one matrix exponential per distinct (real, imag) amplitude level
+            # (same input, so the same propagator), and for an undetected pulse each run
+            # of equal levels as a matrix power (a rectangular pulse is a single run)
+            level_U = {}
+
+            def _U(ipc, iw):
+                key = (int(real_binary[ipc, iw]), int(imag_binary[ipc, iw]))
+                U = level_U.get(key)
+                if U is None:
+                    Ham1 = (scale / 2 * (key[0] - vert_res / 2) * np.real(evt.xOp) +
+                            1j * scale / 2 * (key[1] - vert_res / 2) * np.imag(evt.xOp))
+                    U = level_U[key] = _propagator(Ham0_rad + Ham1, evt.TimeStep)
+                return U, key
+
             if evt.Detection:
-                U_total = [[None] * n_wave for _ in range(n_phase_cycle)]
-                for ipc in range(n_phase_cycle):
-                    for iw in range(n_wave):
-                        Ham1 = (scale / 2 * (real_binary[ipc, iw] - vert_res / 2) *
-                                np.real(evt.xOp) +
-                                1j * scale / 2 * (imag_binary[ipc, iw] - vert_res / 2) *
-                                np.imag(evt.xOp))
-                        U_total[ipc][iw] = _propagator(
-                            Ham0_rad + Ham1, evt.TimeStep
-                        )
+                U_total = [[_U(ipc, iw)[0] for iw in range(n_wave)] for ipc in range(n_phase_cycle)]
             else:
-                U_total = [[None] for _ in range(n_phase_cycle)]
-                for ipc in range(n_phase_cycle):
-                    U_combined = np.eye(n, dtype=complex)
-                    for iw in range(n_wave):
-                        Ham1 = (scale / 2 * (real_binary[ipc, iw] - vert_res / 2) *
-                                np.real(evt.xOp) +
-                                1j * scale / 2 * (imag_binary[ipc, iw] - vert_res / 2) *
-                                np.imag(evt.xOp))
-                        U = _propagator(Ham0_rad + Ham1, evt.TimeStep)
-                        U_combined = U @ U_combined
-                    U_total[ipc][0] = U_combined
+                base = vert_res + 1
+
+                class _ByCode:                 # level code re * base + im -> propagator
+                    def __getitem__(self, code):
+                        re, im = divmod(int(code), base)
+                        U = level_U.get((re, im))
+                        if U is None:
+                            Ham1 = (scale / 2 * (re - vert_res / 2) * np.real(evt.xOp) +
+                                    1j * scale / 2 * (im - vert_res / 2) * np.imag(evt.xOp))
+                            U = level_U[(re, im)] = _propagator(Ham0_rad + Ham1, evt.TimeStep)
+                        return U
+                U_total = [[_sequence_product(real_binary[ipc] * base + imag_binary[ipc], _ByCode(), n)]
+                           for ipc in range(n_phase_cycle)]
             evt.Propagation = {'Utotal': U_total}
 
 
@@ -1391,7 +1457,7 @@ def _propagate_pulse(sigma, evt, det_ops, n_det, t_offset):
 
 
 def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
-                     relaxation, t_offset):
+                     relaxation, t_offset, prop_cache=None):
     """Propagate through a free evolution event.
 
     Returns (sigma, signal, time, density_matrices).
@@ -1431,7 +1497,14 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
         if 'Utotal' in evt.Propagation and evt.Propagation['Utotal'] is not None:
             U = evt.Propagation['Utotal']
         else:
-            U = _propagator(Ham0_rad, time_step)
+            # B11: the same delay recurs at many acquisition points of a sweep;
+            # prop_cache (one per _thyme call, i.e. one Ham0) keys on the exact step
+            key = ('U', time_step)
+            U = None if prop_cache is None else prop_cache.get(key)
+            if U is None:
+                U = _propagator(Ham0_rad, time_step)
+                if prop_cache is not None:
+                    prop_cache[key] = U
             evt.Propagation['Utotal'] = U
     else:
         eq_vec = relaxation.equilibriumState.reshape(-1)
@@ -1439,9 +1512,13 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
             L = evt.Propagation['Ltotal']
             ss = evt.Propagation['SigmaSStotal']
         else:
-            L, ss = _liouvillian(
-                Ham0_rad, relaxation.Gamma, eq_vec, time_step
-            )
+            key = ('L', time_step)
+            hit = None if prop_cache is None else prop_cache.get(key)
+            if hit is None:
+                hit = _liouvillian(Ham0_rad, relaxation.Gamma, eq_vec, time_step)
+                if prop_cache is not None:
+                    prop_cache[key] = hit
+            L, ss = hit
             evt.Propagation['Ltotal'] = L
             evt.Propagation['SigmaSStotal'] = ss
 
@@ -1466,6 +1543,19 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
                 signal[:, i_t + 1] = det_array @ sigma_vec
             if evt.StateTrajectories:
                 density_matrices.append(sigma.copy())
+    elif (evt.Detection and not evt.StateTrajectories and n_steps >= _CLOSED_FORM_MIN_STEPS
+          and np.allclose(Ham0_rad, Ham0_rad.conj().T, rtol=0, atol=1e-12 * max(1.0, np.abs(Ham0_rad).max()))):
+        # B11: closed form in the eigenbasis of Ham0 instead of n_steps products
+        # U σ U†: σ'(k) = σ' ⊙ exp(-i (E_i - E_j) k dt), and each detection operator D
+        # reads Σ_ij (V^T D V*)_ij σ'_ij(k).  Same signal up to roundoff (no accumulation).
+        E, V = _eigh_cached(Ham0_rad, prop_cache)
+        sp_ = V.conj().T @ sigma @ V
+        dE = E[:, None] - E[None, :]
+        k = np.arange(1, n_steps + 1, dtype=float)
+        W = np.stack([V.T @ det_array[i].reshape(n, n) @ V.conj() for i in range(n_det)])   # (n_det, n, n)
+        ph = np.exp(-1j * time_step * k[:, None] * dE.reshape(1, -1))                         # (n_steps, n*n)
+        signal[:, 1:] = ((W.reshape(n_det, -1) * sp_.reshape(1, -1)) @ ph.T)
+        sigma = V @ (sp_ * np.exp(-1j * time_step * n_steps * dE)) @ V.conj().T
     else:
         for i_t in range(n_steps):
             sigma = U @ sigma @ U.conj().T
@@ -1475,6 +1565,20 @@ def _propagate_delay(sigma, evt, duration, Ham0_rad, det_ops, n_det,
                 density_matrices.append(sigma.copy())
 
     return sigma, signal, t_vec, density_matrices if density_matrices else None
+
+
+# detected delays with at least this many steps use the eigenbasis closed form (B11)
+_CLOSED_FORM_MIN_STEPS = 8
+
+
+def _eigh_cached(H, prop_cache):
+    """eigh of the (Hermitian) static Hamiltonian, once per _thyme call."""
+    if prop_cache is not None and 'eigh' in prop_cache:
+        return prop_cache['eigh']
+    E, V = np.linalg.eigh(0.5 * (H + H.conj().T))
+    if prop_cache is not None:
+        prop_cache['eigh'] = (E, V)
+    return E, V
 
 
 # ---------------------------------------------------------------------------

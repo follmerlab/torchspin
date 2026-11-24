@@ -92,9 +92,10 @@ natural-abundance copper alone doubles the work for a 0.3 % spectral change.
 `hybrid` and `perturb` paths, where nuclei are treated one at a time and
 combined combinatorially, so a multiplicity is a pure saving — four equivalent
 14N written as `n=[1,4]` cost 0.30 s instead of 2.0 s and agree with four
-explicit nitrogens to cosine 0.99999999.  The `matrix` path still rejects
-`n > 1`, because there the nuclei multiply the Hilbert space and cannot be
-collapsed; EasySpin's `pepper` rejects `n > 1` for every method.  Equivalence
+explicit nitrogens to cosine 0.99999999.  From 0.9.39 the `matrix` path takes
+`n > 1` too, as total-spin blocks, and treats listed nuclei that are equivalent
+the same way (see "sets of equivalent nuclei" below; not with quadrupole
+coupling); EasySpin's `pepper` rejects `n > 1` for every method.  Equivalence
 means *identical couplings and identical orientations*: four nitrogens with
 different `AFrame` tilts are not a set of equivalent nuclei, whatever their
 principal values.
@@ -145,6 +146,118 @@ segment.  Use `torchspin.grid_convergence(sys, exp, opt)`, which simulates again
 on a finer grid and reports what changed — the only trustworthy test, and the
 one used to produce the table above.  The two `cupc_grid19_4N_*` cases are kept in the validation suite as
 the record of this.
+
+## Pepper matrix method: spectra with several nuclei are not smooth in the parameters (B135, open)
+
+For S = 1/2 systems with a large metal hyperfine coupling and one or more ligand nuclei, the
+`matrix` method's spectrum can change in steps when a parameter changes smoothly. Synthetic Cu(II)
+with two equivalent 14N (g = [2.05 2.05 2.25], A(Cu) = [30 30 500] MHz, A(N) = 40 MHz, lwpp 0.5 mT,
+9.5 GHz): along a straight line in (g∥, A∥, A(N), lwpp), steps of 6e-6 in g∥ and 0.009 MHz in A∥
+change the spectrum by 9e-5 of its maximum, except one such step that changes it by 7.9 %. The
+steps are at the same parameter values at `GridSize` [10 4], [19 4] and [40 4], so a finer grid does
+not remove them; `Options.RediagLimit = 1` does not either. `Method='perturb'` is smooth (1e-4 per
+step).
+
+**Cause.** Transitions are followed across the orientation grid by their energy-ordered level pair.
+With several nuclei the sublevels reorder between orientations, so the allowed intensity moves from
+one level pair to another (in the example one pair carries 0.98 of the largest intensity at the
+θ = 90° knot and none at the other nine), and at some parameter values it moves to a pair outside the
+pre-selected set. This is the mechanism behind the intensity lost with nuclei (see "choosing a
+method" above, where EasySpin selects the same number of pairs); whether EasySpin's spectra show
+the same steps has not been checked.
+
+**Consequence for fits.** The least-squares objective is a staircase. In the example (1 % noise,
+start 0.005 / 10 MHz / 4 MHz / 0.1 mT from the truth) `levmar` stops at RMSD 0.021 with "parameter
+step below threshold" although the RMSD decreases all the way to the truth (0.0097, the noise level);
+restarts stay there, `trf` stops at 0.038 and `simplex` at 0.021. Finite-difference Jacobians, and the
+uncertainties computed from them, are unreliable for the line-position parameters of such systems.
+
+**What to do.** There is no complete workaround yet.
+- Compare the final RMSD with the noise level of the data; a fit that stops well above it has
+  probably stalled on a step, not found the minimum.
+- `hybrid` and `perturb` have a smooth objective and converge from the same start on data they
+  describe, but they are approximations for these systems (cosine 0.97 and 0.92 against `matrix`,
+  see above): on matrix-quality data their best fit stays at RMSD 0.06 to 0.12 in this example, and
+  a `matrix` fit started from their result stalls as before.
+- Start `matrix` fits from several nearby points and keep the lowest RMSD.
+
+**0.9.39.** The numbers above are for the full space (0.9.38, or `Options.EquivalentNuclei = False`).
+With the total-spin blocks of the next section, the default from 0.9.39, the example fit ends at
+RMSD 0.0110 in place of 0.0208 (noise level 0.0097; g∥ 2.2484, A∥ 498.1 MHz against 2.2475 and
+496.5), and the RMSD decreases smoothly from there to the truth. The steps are still there: one
+step of the same scan changes the spectrum by 9.8 % of its maximum (3.2 % with `Threshold = 0`), and
+`levmar` still stops with "parameter step below threshold".
+
+Planned: follow the levels by eigenvector overlap between neighboring orientations and select
+transitions at their own resonance fields. That changes matrix-method spectra with nuclei (it also
+restores the lost intensity) and leaves EasySpin parity for them, so it will come as its own release.
+
+## Pepper matrix method: sets of equivalent nuclei (total-spin blocks, 0.9.39, B139): deviation from EasySpin
+
+Nuclei with the same isotope, hyperfine tensor and frame, `gnscale` and chemical shift, and without
+quadrupole coupling, enter the spin Hamiltonian only through their total spin K. From 0.9.39 the
+`matrix` method simulates each such set as its total-spin blocks and sums the block spectra
+(`Options.EquivalentNuclei`, default `True`; `torchspin/equivnuclei.py`): three 14N are K = 3, 2
+(twice), 1 (three times) and 0, with weights 7/27, 10/27, 9/27 and 1/27. This is exact: the energy
+levels of the full space are the union of the block levels (checked to 1e-10 MHz on five systems),
+and single-crystal spectra with all transitions agree with the full space to 5e-6 of the maximum
+(Cu(II) + 2 14N with tilted hyperfine frames, S = 3/2 + 2 1H, triplet + 2 14N, with and without
+Boltzmann populations). It also lets the `matrix` method take `SpinSystem.n > 1`. EasySpin's
+`pepper` diagonalizes the full space and rejects `Sys.n > 1`.
+
+**What it fixes.** In the full space the copies of a total spin are exactly degenerate. Every
+resonance is diagonalized on its own, so every transition gets its own arbitrary basis of the
+degenerate levels, and the intensities of the transitions between two degenerate sets no longer add
+up to the basis-independent total. In 0.9.38:
+
+- Three equivalent 1H on a single crystal (S = 1/2, A = [60 65 70] MHz, all transitions) gave 93.0 %
+  of the intensity of the electron transition. The blocks give 100.000 %.
+- Cu(II) + 3 14N (g = [2.04 2.06 2.25], A(Cu) = [30 40 500] MHz, A(N) = 40 MHz, lwpp 0.6 mT, 9.5 GHz,
+  `GridSize` [4 4]) changed by 5.5 % of its maximum between `Options.BatchSize` 10 and 1, because
+  the batch sets the field knots and with them the bases; `ModellingAccuracy = 2e-8` did not remove
+  it (1.8 %). The blocks agree to 5e-7 across batch sizes, and to 1.3e-8 of the full space once the
+  three 14N are made inequivalent.
+
+**What changes for users.** Default `matrix` spectra of systems with equivalent nuclei change, and
+are much cheaper (Cu(II) + 3 14N on `GridSize` [4 4]: 2 s, from about 250 s; Hilbert-space
+dimensions 56, 40, 24 and 8 in place of 216).
+
+- Systems where the full space was already right do not change: S = 3/2 + 2 1H and triplet + 2 14N
+  powders agree to 1e-8 (all transitions).
+- Cu(II) + 2 14N (g = [2.05 2.05 2.25], A(Cu) = [30 30 500], A(N) = 40 MHz, lwpp 0.5 mT, 9.5 GHz)
+  changes in the perpendicular region, by up to 23 % of the maximum of the absorption spectrum on
+  `GridSize` [19 4] and 17 % on [40 4] (35 % of the maximum of the first-derivative spectrum on
+  [10 4]). Most of this is intensity that the transition pre-selection (`Options.Threshold`, see
+  "choosing a method") loses in the full space, where it is spread over more level pairs: the
+  integral is 91.9 % of the complete one in the full space and 97.1 % with the blocks on [19 4]
+  (95.0 % and 97.9 % on [40 4]). Against the spectrum with all transitions on 181 knots the largest
+  error is 33 % (full space) and 15 % (blocks) on [19 4], 26 % and 12 % on [40 4].
+- Against EasySpin (copper phthalocyanine model, 63Cu + 2 14N, A(N) = 45 MHz, `GridSize` [91 4],
+  first derivative; `test_pepper_cupc_matlab_validation.py`): the full space agrees with EasySpin's
+  default spectrum to cosine 0.9996, the blocks to 0.986. EasySpin shares the pre-selection loss:
+  the integrated absorption is 92.6 % of the complete one in the full space (EasySpin's is within
+  0.1 % of that), 96.1 % with the blocks and 100.0 % with `Threshold = 0`, where the blocks and the
+  full space agree to cosine 0.99997. The spectrum with all transitions is at cosine 0.990 from the
+  default blocks and 0.973 from the default full space. The EasySpin comparisons therefore run with
+  `EquivalentNuclei = False`.
+- With `Threshold = 0` the two routes have the same integral and differ by 4 % of the maximum on
+  [19 4] and 0.7 % on [40 4]; the blocks are the closer one to the 181-knot spectrum (1.6 % against
+  2.2 % on [40 4]).
+
+**Still open.**
+
+- The pre-selection loss itself: with default `Threshold` the Cu(II) + 2 14N block spectrum stays
+  12 % of the maximum below the all-transitions spectrum in the perpendicular region, on any grid.
+  `Threshold = 0` removes it at several times the cost.
+- Sets that are not reduced keep the full space and its degeneracy errors: equivalent nuclei with
+  quadrupole coupling (Q does not commute with K²), a set containing the nucleus that carries
+  `AStrain`, systems with `nn`, `H0Extra` or a full-space `initState`, `Options.Transitions` given
+  as level pairs, `Options.separate` other than `'components'`, and `EquivalentNuclei = False`.
+  `SpinSystem.n > 1` raises in these cases.
+- `pepper_autograd` (the route `pepper` takes when an input requires grad) and `salt` diagonalize
+  the full space, so a differentiable spectrum of a system with equivalent nuclei differs from the
+  default one by the amounts above.
+- The steps of the section above (B135) remain inside the blocks.
 
 ## `SpinSystem` input shapes follow EasySpin (0.9.15)
 
@@ -257,6 +370,32 @@ amplitude 1.034 on the default grid.
   by less than their own residual.
 - Intensities and widths on axial grids (`L3`) and axial positions with missing resonances
   (`L3`) were already EasySpin's and are unchanged.
+
+## Coarse grids of two or three knots (fixed 0.9.39, B137)
+
+`Options.GridSize` accepts a coarse grid of two knots or more; EasySpin's pepper rejects
+`GridSize(1) < 10` (`Opt.GridSizeMinimum`, pepper.m:505). Up to 0.9.38 the smallest grids with
+interpolation (`GridSize = [2, n]` or `[3, n]`, `n > 1`) failed:
+
+- **Two orientations** (`[2, n]` on the Dinfh grid, i.e. every axial system, and on C4h and C6h):
+  `pepper` returned an all-zero spectrum without an error or a warning, for the matrix and
+  perturbation methods, with strains and for frequency sweeps. Transitions with fewer than three
+  knots were dropped before the interpolation. `pepper_autograd` and `salt` were not affected on
+  the axial grid.
+- **Open-φ grids** (C2h, S6, Ci and C1 at two knots; C2h, C4h, C6h, S6 and Ci at three): `pepper`,
+  `pepper_autograd` and `salt` raised scipy's `mx must be > kx`, because the rectified θ × φ array
+  has fewer than four rows or columns and FITPACK's bicubic spline needs four.
+
+Since 0.9.39 these grids are interpolated with the same scheme as larger ones. A two-knot axial
+grid uses the zero-slope cubic Hermite polynomial for positions (`esspline1d(y,1,x)`,
+esspline1d.m:55-60) and for intensities and widths (`L3` with zero tangents). On open-φ grids the
+tensor-product not-a-knot spline is the straight line through two rows or columns and the parabola
+through three, which is what EasySpin's `esspline2d`/`esspline1d` compute for such arrays
+(esspline1d.m:49-71). A transition that is missing at one of two orientations is still dropped.
+
+These grids are valid input, not accurate spectra: for S = 1/2, g = [2 2 2.3] at 9.5 GHz, `[2 4]`
+keeps the integral to 1 % but reaches 0.56 of the converged peak height. Check a grid with
+`grid_convergence`. Tests: `torchspin/tests/test_small_grid_interpolation.py`.
 
 ## Powder grid φ range of the D3d/D4h/D6h/Oh/C6h/S6 grids (fixed 0.9.3)
 
@@ -495,6 +634,45 @@ two nearest points. EasySpin's `projecttriangles.c`/`projectzones.c` integrate o
   salt's field-swept stick paths round to the nearest point (centered, no gradient; the mode
   raises for grad inputs); its isotropic fixed-field path uses exact-position templates since
   0.9.36 (B86). garlic rounds or splits linearly, makespec splits linearly.
+
+## Resonance eigenvector interpolation (`Options.RediagLimit`): deviation from EasySpin (0.9.39, B133)
+
+pepper's matrix route (`resfields_batch`) brackets each resonance between field knots where the
+Hamiltonian has been diagonalized. For spin systems of dimension 16 or more, a forward run then
+interpolates the two transition eigenvectors between the knots instead of diagonalizing at the
+resonance, when
+
+- both eigenvectors overlap with themselves across the segment by at least `Options.RediagLimit`
+  (default 0.999), and
+- both levels are separated from every other level by more than 1e-6 of max|E| at both knots.
+
+The interpolation is cubic Hermite, using eigenvector derivatives at the knots from perturbation
+theory with a phase alignment by overlap. The field is refined by one Rayleigh-quotient Newton step,
+and Boltzmann energies come from the cubic Hermite model of the levels. Every other resonance is
+diagonalized as before.
+
+- **Accuracy.** Against `RediagLimit = 1` (exact), 15 systems of dimension 16 to 216 differed
+  by at most 4.2e-7 of the spectrum maximum (nitroxide biradical with two 14N, [19 4]); 11 of
+  them by less than 5e-8. Of the 34 output-parity cases, the 3 that interpolate changed by
+  5.5e-7 (Cu(II) + 2 14N, [10 4]), 6.3e-7 (the same with separate transitions) and 1.5e-7
+  (Mn(II)); the other 31 are identical. Resonance
+  fields agree to ~1e-12 mT; the residual is in the transition intensities.
+- **Speed.** 1.0-2.0x at 1 thread. Systems whose transition levels are mostly degenerate gain
+  least (symmetric biradical 1.1x), because those resonances are diagonalized.
+- **Exact results.** Pass `Options(RediagLimit=1)` (any value >= 1); the result is identical bit
+  for bit to 0.9.38.
+- **Not affected.** Systems below dimension 16 (one diagonalization costs about as much as the
+  interpolation there), `Method='perturb'`/`'hybrid'`, and runs on the autograd graph
+  (`pepper_autograd` with parameters that require grad). Gradient runs therefore return the exact
+  value, which can differ from the forward-only value of the same model by up to the accuracy above.
+- **Deviation from EasySpin.** EasySpin interpolates linearly with `Opt.RediagLimit = 0.95` and
+  takes fields from the energy model. In a prototype of that scheme, Cu(II) + 2 14N was off by
+  1.3e-3 and Mn(II) by 5e-4. With the cubic scheme at 0.99, Cu(II) + 14N (lwpp 0.3 mT) still
+  reached 1.1e-4, at the same speed as 0.999. Without the degeneracy check, each knot's
+  diagonalization picks its own basis of a degenerate subspace: Cu(II) + 3 14N reached 4.4e-3 and
+  the symmetric biradical 2.5e-6 (now 4.9e-10 and 3.5e-12).
+
+Tests: `torchspin/tests/test_rediag_interpolation.py`.
 
 ## SOPHE triangle projection — near-zero-width triangles on a bin edge (fixed 0.8.4)
 
@@ -1124,6 +1302,16 @@ Not ported: the `fast` C builder (`chili_lm.c`), `Sys.Exchange`,
 size (`Opt.LLMK`) must be chosen by the user, exactly as in EasySpin (there is
 no adaptive basis selection in EasySpin either).
 
+**`Rescale` per orientation (0.9.39, B129, deliberate deviation).** EasySpin's
+`chili.m` rescales each orientation's Liouvillian by its own `max|L|` but divides
+the summed powder spectrum by the scale of the last orientation only (and, for an
+explicit field sweep, of the last field point), so every other orientation is
+weighted by `scale_i/scale_last`. torchspin divides each solve by its own scale,
+which makes `Rescale` a pure numerical device: on and off agree to the solver
+tolerance. Powder spectra with an orienting potential or strongly anisotropic
+interactions move by up to about 1 % against EasySpin (Cu(II), potential,
+5 ns: 7.5e-3).
+
 ## ENDOR (`salt`)
 
 Since 2026-09-01 `salt()` implements EasySpin's fixed-field, rf-swept powder
@@ -1347,6 +1535,10 @@ and `Options.separate`. (Before the 0.9.38 docs this paragraph listed the last
 four as not ported; they had been ported earlier.) Equivalent nuclei are not allowed in the fast-motion regime (same as
 EasySpin). When no broadening is given, a requested derivative harmonic
 falls back to the absorption stick spectrum (EasySpin's auto-harmonic).
+In the fast-motion regime the Kivelson–Freed widths use `gFrame`, `AFrame` and
+full g/A/Q matrices, and `Diff`/`logDiff` (isotropic) select the regime with
+`tcorr = 1/(6 Diff)`; before 0.9.39 the frames and `Diff` were ignored and a
+full Q matrix crashed (B105–B107).
 
 ## Pulse EPR — saffron, spidyan and saffron_thyme are MATLAB-validated
 

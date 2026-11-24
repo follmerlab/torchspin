@@ -10,9 +10,16 @@ harmonic -- but with every stage after the search written in torch, so that
 ``torch.autograd`` propagates gradients from the spectrum to the spin-system
 tensors (``sys.g``, ``sys.A``, ``sys.D``, ``sys.lw`` ...) that ``requires_grad``.
 
-Gradients through the resonance-field search need no custom backward: the search
-is pure torch and its final safeguarded Newton step at a converged root is the
-implicit-function derivative dB_res/dθ = −(∂f/∂θ)/(∂f/∂B).
+Gradients through the resonance-field search (B14): the search itself runs off the
+graph (which fields are candidates is piecewise constant in the parameters).  Each
+candidate is diagonalized once without the graph, and the graph is attached by
+first-order perturbation theory: the resonance field gets the implicit-function
+derivative dB_res/dθ = −(∂f/∂θ)/(∂f/∂B), the level energies their Hellmann–Feynman
+derivatives and the two transition eigenvectors the sum-over-states derivative, the
+derivative ``eigh``'s own backward gives (same degeneracy rule).  Values are those of the
+forward-only search; the backward pass costs O(dim²) per line instead of replaying every
+diagonalization (Cu(II) + 2 ¹⁴N, GridSize [10 4]: forward + backward 19 → 10 s at 1 thread,
+14 → 4.8 s at 8 threads).
 
 Differences to ``torchspin.autograd.differentiable_spectrum``'s broadband path (a
 separate forward model that sums a Gaussian per orientation and transition): the
@@ -193,11 +200,110 @@ def _interp_matrix(symmetry: str, N_c: int, N_f: int, mode: str, linear: bool) -
     interpolating the columns of the identity."""
     n_c = sphgrid(symmetry, N_c)[0].numel()
     n_f = sphgrid(symmetry, N_f)[0].numel()
+    if (not linear and mode != 'val' and symmetry in _pep._CLOSEDPHI_1OCT
+            and n_c == N_c * (N_c + 1) // 2 and n_f == N_f * (N_f + 1) // 2
+            and n_c * n_f <= _pep._INTERP_MATRIX_MAX):
+        # G3 positions on the triangular one-octant grid: _interp_sph applies this
+        # very matrix to the values, so its columns are the matrix itself (building
+        # them by interpolating the identity column by column took ~2 s at [31 4])
+        return _pep._d2h_interp_matrix(N_c, N_f).copy()
     M = np.zeros((n_f, n_c))
     eye = np.eye(n_c)
     for j in range(n_c):
         M[:, j] = _numpy_interp(eye[:, j], symmetry, N_c, N_f, mode, linear)
     return M
+
+
+@lru_cache(maxsize=32)
+def _grid_interp_ops(symmetry: str, N_c: int, N_f: int, linear: bool):
+    """Small operators of ``pepper._interp_grid`` (EasySpin gridinterp G3 / L1 on
+    the rectified (θ row × φ column) array), so that it can be applied to many
+    slots on the graph without a dense ``(n_fine, n_coarse)`` matrix (29041 × 1861,
+    432 MB and ~9 s to build by columns for Ci at [31 4]).
+
+    Returns ``(rows, fine)``: ``rows[r] = (idx, B)`` gives row ``r`` of the
+    rectified array as ``values[idx] @ B.T`` (φ resampling with the cubic or linear
+    row interpolation of ``_interp_grid``); ``fine`` is ``('cubic', Lx, Ly)`` with
+    the not-a-knot cubic interpolation weights in θ-row and φ-column index
+    (FITPACK's ``s = 0`` bicubic of ``RectBivariateSpline`` is that tensor-product
+    spline, as in ``pepper._d2h_interp_matrix``), or ``('linear', r0, c0, fr, fc)``
+    for the bilinear evaluation.  Returns None where the dense route must be kept
+    (fewer than 4 rows or columns for the cubic)."""
+    from scipy.interpolate import CubicSpline
+    maxPhi, closedPhi, nOct = _pep.gridparam(symmetry)
+    periodic = not closedPhi
+    full = nOct == 8
+    dlen = 4 if full else nOct
+    nr = 2 * N_c - 1 if full else N_c
+    nc = dlen * (N_c - 1) + 1
+    cubic = not linear
+    if cubic and (nr < 4 or nc < 4):
+        return None
+
+    def row_op(m, is_periodic, reverse=False):
+        E = np.eye(m)
+        if is_periodic:
+            E = np.vstack([E, E[:1]])
+        n = E.shape[0]
+        xx = np.linspace(1.0, float(n), nc)
+        if cubic:
+            S = CubicSpline(np.arange(1, n + 1), E, axis=0,
+                            bc_type='periodic' if is_periodic else 'clamped')(xx)
+        else:
+            k = np.minimum(np.maximum(np.floor(xx - 1).astype(int), 0), n - 2)
+            S = E[k] + (xx - (k + 1))[:, None] * (E[k + 1] - E[k])
+        return S[:, ::-1].copy() if reverse else S
+
+    rows = [(np.array([0]), np.ones((nc, 1)))]
+    idx = 1
+    ln = dlen + 1 - int(periodic)
+    for _ in range(1, N_c - 1):
+        rows.append((np.arange(idx, idx + ln), row_op(ln, periodic)))
+        idx += ln
+        ln += dlen
+    eq = np.eye(ln)
+    rows.append((np.arange(idx, idx + ln), np.vstack([eq, eq[:1]]) if periodic else eq))
+    if full:
+        idx += ln
+        ln -= dlen
+        for _ in range(N_c, 2 * N_c - 2):
+            rows.append((np.arange(idx, idx + ln), row_op(ln, periodic, reverse=True)))
+            idx += ln
+            ln -= dlen
+        rows.append((np.array([idx]), np.ones((nc, 1))))
+    assert len(rows) == nr and all(B.shape[0] == nc for _, B in rows)
+
+    phi_f, theta_f, _, _ = sphgrid(symmetry, N_f)
+    phi_f = phi_f.numpy(); theta_f = theta_f.numpy()
+    if full:
+        iphi = (1 + 4 * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + 2 * (N_c - 1) * (theta_f / math.pi)) - 1
+    else:
+        iphi = (1 + nOct * (N_c - 1) * (phi_f / maxPhi)) - 1
+        ithe = (1 + (N_c - 1) * (theta_f / (math.pi / 2))) - 1
+    iphi = np.clip(iphi, 0, nc - 1); ithe = np.clip(ithe, 0, nr - 1)
+    if cubic:
+        Lx = CubicSpline(np.arange(nr), np.eye(nr), axis=0)(ithe)      # (n_f, nr)
+        Ly = CubicSpline(np.arange(nc), np.eye(nc), axis=0)(iphi)      # (n_f, nc)
+        return rows, ('cubic', Lx, Ly)
+    r0 = np.minimum(np.floor(ithe).astype(int), nr - 2); c0 = np.minimum(np.floor(iphi).astype(int), nc - 2)
+    return rows, ('linear', r0, c0, ithe - r0, iphi - c0)
+
+
+def _grid_interp_apply_t(vals: torch.Tensor, ops) -> torch.Tensor:
+    """Apply :func:`_grid_interp_ops` to ``(n_slots, n_coarse)`` finite values."""
+    dev = vals.device
+    rows, fine = ops
+    Z = torch.stack([vals[:, torch.as_tensor(idx, device=dev)] @ torch.as_tensor(B, dtype=_F64, device=dev).T
+                     for idx, B in rows], dim=1)                               # (S, nr, nc)
+    if fine[0] == 'cubic':
+        Lx = torch.as_tensor(fine[1], dtype=_F64, device=dev)
+        Ly = torch.as_tensor(fine[2], dtype=_F64, device=dev)
+        return ((Z @ Ly.T) * Lx.T.unsqueeze(0)).sum(dim=1)
+    r0, c0, fr, fc = (torch.as_tensor(a, device=dev) for a in fine[1:])
+    fr = fr.to(_F64); fc = fc.to(_F64)
+    return ((1 - fr) * (1 - fc) * Z[:, r0, c0] + (1 - fr) * fc * Z[:, r0, c0 + 1]
+            + fr * (1 - fc) * Z[:, r0 + 1, c0] + fr * fc * Z[:, r0 + 1, c0 + 1])
 
 
 def _interp_l3_t(y: torch.Tensor, N_f: int) -> torch.Tensor:
@@ -256,11 +362,19 @@ def _interp_rows_t(vals: torch.Tensor, symmetry: str, N_c: int, N_f: int, mode: 
     dev = vals.device
     if symmetry == 'Dinfh' and linear:
         return _interp_l3_t(vals, N_f)
-    M = torch.as_tensor(_interp_matrix(symmetry, N_c, N_f, mode, linear), dtype=_F64, device=dev)
+    lin = linear or mode == 'val'
+    # open-phi grids: separable operators (their dense matrix is large and slow to build)
+    grid_route = symmetry != 'Dinfh' and symmetry not in _pep._CLOSEDPHI_1OCT
+    ops = _grid_interp_ops(symmetry, N_c, N_f, lin) if grid_route else None
+    if ops is not None:
+        apply = lambda v: _grid_interp_apply_t(v, ops)              # noqa: E731
+    else:
+        M = torch.as_tensor(_interp_matrix(symmetry, N_c, N_f, mode, linear), dtype=_F64, device=dev)
+        apply = lambda v: v @ M.T                                     # noqa: E731
     nan_c = torch.isnan(vals.detach())
     if not bool(nan_c.any()):
-        return vals @ M.T
-    out = torch.nan_to_num(vals, nan=0.0) @ M.T
+        return apply(vals)
+    out = apply(torch.nan_to_num(vals, nan=0.0))
     vnp = vals.detach().cpu().numpy()
     mask = np.stack([np.isnan(_numpy_interp(vnp[s], symmetry, N_c, N_f, mode, linear)) for s in range(vals.shape[0])])
     return torch.where(torch.as_tensor(mask, device=dev), torch.full_like(out, float('nan')), out)
@@ -280,33 +394,11 @@ def _slots_t(all_B: list, all_I: list, all_pairs: list, n_orient: int, threshold
     have_W = all_W is not None and any(w is not None and w.numel() for w in all_W)
     W_flat = torch.cat([w for w in all_W if w is not None and w.numel()]) if have_W else None
     dev = B_flat.device
-    offsets = np.cumsum([0] + [(b.numel() if b is not None else 0) for b in all_B])
-    slots: dict = {}
-    s_idx, o_idx, f_idx = [], [], []
-    for k in range(n_orient):
-        B = all_B[k]
-        if B is None or B.numel() == 0:
-            continue
-        Bn = B.detach().cpu().numpy()
-        pn = all_pairs[k].detach().cpu().numpy() if all_pairs is not None and all_pairs[k] is not None else None
-        if pn is None:
-            for i in range(Bn.shape[0]):
-                key = ('idx', i)
-                slots.setdefault(key, len(slots))
-                s_idx.append(slots[key]); o_idx.append(k); f_idx.append(offsets[k] + i)
-            continue
-        order = sorted(range(Bn.shape[0]), key=lambda i: (int(pn[i, 0]), int(pn[i, 1]), float(Bn[i])))
-        occ: dict = {}
-        for i in order:
-            uv = (int(pn[i, 0]), int(pn[i, 1]))
-            c = occ.get(uv, 0); occ[uv] = c + 1
-            key = (uv[0], uv[1], c)
-            slots.setdefault(key, len(slots))
-            s_idx.append(slots[key]); o_idx.append(k); f_idx.append(offsets[k] + i)
-    n_slots = len(slots)
-    s_t = torch.tensor(s_idx, dtype=torch.long, device=dev)
-    o_t = torch.tensor(o_idx, dtype=torch.long, device=dev)
-    f_t = torch.tensor(f_idx, dtype=torch.long, device=dev)
+    o_idx, f_idx, s_idx, keys, _ = _pep._slot_layout(all_B, all_pairs, n_orient, unpaired='index')
+    n_slots = len(keys)
+    s_t = torch.as_tensor(s_idx, dtype=torch.long, device=dev)
+    o_t = torch.as_tensor(o_idx, dtype=torch.long, device=dev)
+    f_t = torch.as_tensor(f_idx, dtype=torch.long, device=dev)
     nan = torch.full((n_slots, n_orient), float('nan'), dtype=_F64, device=dev)
     B_s = nan.index_put((s_t, o_t), B_flat.to(_F64)[f_t])
     I_s = nan.index_put((s_t, o_t), I_flat.to(_F64)[f_t])
@@ -328,26 +420,30 @@ def _slots_t(all_B: list, all_I: list, all_pairs: list, n_orient: int, threshold
 
 def gaussian_bins_t(x: torch.Tensor, pos: torch.Tensor, fwhm: torch.Tensor, amp: torch.Tensor,
                     min_fwhm: float, chunk: int = 256) -> torch.Tensor:
-    """Sum of bin-integrated Gaussians, torch port of ``pepper._gaussian_bins``:
-    each line contributes ``amp × [Φ(upper bin edge) − Φ(lower bin edge)]`` (its
-    sum over the axis equals ``amp``); widths below ``min_fwhm`` are clipped
-    (lisum1i).  Differentiable in ``pos``, ``fwhm`` and ``amp``; the lines are
-    evaluated densely in chunks (the ±7σ√2 window of the NumPy version only
-    skips bins that are zero to double precision)."""
+    """Sum of bin-integrated Gaussians, the torch counterpart of ``pepper._gaussian_bins``
+    (same kernel, ``pepper._gauss_bin_chunk``): each line contributes
+    ``amp × [Φ(upper bin edge) − Φ(lower bin edge)]`` (its sum over the axis equals
+    ``amp``); widths below ``min_fwhm`` are clipped (lisum1i).  Differentiable in
+    ``pos``, ``fwhm`` and ``amp``.  Lines are sorted by width and every chunk is
+    evaluated over a ±7σ√2 window (erfc(7) ≈ 4e-23: the bins left out are zero to
+    double precision); up to 0.9.38 every line was evaluated over the whole axis."""
     n = x.shape[0]
     dev = pos.device
     if pos.numel() == 0:
         return torch.zeros(n, dtype=_F64, device=dev)
     dx = float(x[1] - x[0])
-    xr = x.to(dev)
+    x0 = float(x[0])
     sig = torch.clamp(fwhm, min=min_fwhm) / math.sqrt(8.0 * math.log(2.0))
     sg = sig * math.sqrt(2.0)
+    order = torch.argsort(sg.detach(), stable=True)
+    pos, sg, amp = pos[order], sg[order], amp[order]
+    half = 7.0 * sg.detach()
+    nw_all = ((2.0 * half / dx).ceil().to(torch.long) + 3).cpu().numpy()
     out = torch.zeros(n, dtype=_F64, device=dev)
     for k0 in range(0, pos.numel(), chunk):
-        p = pos[k0:k0 + chunk, None]; g = sg[k0:k0 + chunk, None]; a = amp[k0:k0 + chunk, None]
-        hi = torch.erf((xr[None, :] + 0.5 * dx - p) / g)
-        lo = torch.erf((xr[None, :] - 0.5 * dx - p) / g)
-        out = out + (0.5 * a * (hi - lo)).sum(dim=0)
+        sl = slice(k0, k0 + chunk)
+        out = out + _pep._gauss_bin_chunk(pos[sl, None], sg[sl, None], amp[sl, None], half[sl, None],
+                                          int(nw_all[sl].max()), x0, dx, n)
     return out
 
 

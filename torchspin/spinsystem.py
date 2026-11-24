@@ -289,8 +289,8 @@ class SpinSystem:
         ``log10(tcorr / s)``, alternative to ``tcorr``.  Default ``None``.
     Diff : float or array_like, optional
         Rotational diffusion rate in s^-1, alternative to ``tcorr``
-        (``tcorr = 1/(6 Diff)``); chili and cardamom only (garlic ignores
-        it).  Default ``None``.
+        (``tcorr = 1/(6 Diff)``); chili, cardamom and garlic (fast-motion
+        regime, isotropic only).  Default ``None``.
     logDiff : float or array_like, optional
         ``log10(Diff / s^-1)``.  Default ``None``.
     T1, T2 : float, optional
@@ -326,7 +326,8 @@ class SpinSystem:
         Default ``None``.
     Ham : dict, optional
         Higher-order Zeeman terms (McGavin-Tennant-Weil), keys ``'{lB}{lS}{l}'``
-        (orders in field and spin and coupling rank, e.g. ``'112'``), values
+        (orders in field and spin and coupling rank, e.g. ``'112'``; EasySpin's
+        ``'Ham112'`` is accepted and stored as ``'112'``), values
         ``(nElectrons, 2l+1)`` coefficient arrays.  A linear term
         (``'110'``/``'112'``) replaces ``g`` (giving both raises).  Field
         orders 2 and 3 enter the resonance search only with
@@ -504,6 +505,11 @@ class SpinSystem:
     # Lorentzian frequency-domain strain width, [3] MHz FWHM, molecular frame
     # (pepper only; not with the Gaussian strains). Default None.
     HStrainL: Optional[list | torch.Tensor] = None
+    # Internal: nuclear spin quantum numbers that replace those of the isotopes in
+    # Nucs (None entries keep the isotope's spin).  Set by
+    # torchspin.equivnuclei for the total-spin blocks of a set of equivalent
+    # nuclei; the nuclear g value stays that of the isotope.
+    _Ieff: Optional[list] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         from torchspin.constants import GFREE
@@ -546,9 +552,18 @@ class SpinSystem:
         if self.Ham is not None:
             ham_dict = {}
             for key, val in self.Ham.items():
-                ham_dict[key] = _to_tensor(val, torch.float64)
-                if ham_dict[key].ndim == 1:
-                    ham_dict[key] = ham_dict[key].unsqueeze(0)
+                # B103: 'Ham112' (EasySpin field name) and '112' are the same
+                # term; the Hamiltonian code reads the digits only
+                k = str(key)
+                k = k[3:] if k.startswith('Ham') else k
+                if len(k) < 3 or not k.isdigit():
+                    raise ValueError(f"SpinSystem.Ham: key {key!r} is not of the form "
+                                     "'{lB}{lS}{l}' (e.g. '112' or 'Ham112').")
+                if k in ham_dict:
+                    raise ValueError(f"SpinSystem.Ham: term {k!r} given twice.")
+                ham_dict[k] = _to_tensor(val, torch.float64)
+                if ham_dict[k].ndim == 1:
+                    ham_dict[k] = ham_dict[k].unsqueeze(0)
             self.Ham = ham_dict
 
         n_e = self.nElectrons
@@ -733,6 +748,12 @@ class SpinSystem:
         # Each entry of Nucs may stand for a group of n identical, equivalent
         # nuclei (same isotope, same isotropic coupling).  Only garlic uses
         # this (via equivcouple); pepper/chili reject n>1 like EasySpin.
+        if self._Ieff is not None:
+            self._Ieff = [None if k is None else float(k) for k in self._Ieff]
+            if len(self._Ieff) != n_n:
+                raise ValueError(f"SpinSystem._Ieff has {len(self._Ieff)} entries, expected one per nucleus ({n_n}).")
+            if not any(k is not None for k in self._Ieff):
+                self._Ieff = None
         if self.n is None:
             self.n = [1] * n_n
         else:
@@ -1122,6 +1143,8 @@ class SpinSystem:
     @property
     def I(self) -> list[float]:
         """Nuclear spin quantum numbers (derived from Nucs)."""
+        if self._Ieff is not None:
+            return [_nuclear_spin(iso) if k is None else float(k) for iso, k in zip(self.Nucs, self._Ieff)]
         return [_nuclear_spin(iso) for iso in self.Nucs]
 
     @property
@@ -1938,8 +1961,10 @@ def _filter_nuclei(sys: 'SpinSystem', keep: list[int], where: str = 'nucspinrmv'
             v = getattr(sys, name)
             if v is not None:
                 kw[name] = _nuc_rows(v, keep, n_n, name)
+        if sys._Ieff is not None:
+            kw['_Ieff'] = [sys._Ieff[i] for i in keep]
     else:
-        for name in ('n', 'A', 'A_') + per_nucleus:
+        for name in ('n', 'A', 'A_', '_Ieff') + per_nucleus:
             kw[name] = None
     kw['nn'] = kw['nnFrame'] = None
     if sys.Abund is not None:

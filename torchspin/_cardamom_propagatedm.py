@@ -357,13 +357,9 @@ def propagate_istos(
     if qLab is not None:
         D2Lab = wigD(qLab[:, :nSteps, :])
         # Matrix multiply: D2Traj = D2Lab @ D2Traj per step/traj
-        D2Combined = np.zeros_like(D2Traj)
-        for iStep in range(nSteps):
-            for iTraj in range(nTraj):
-                D2Combined[:, :, iStep, iTraj] = (
-                    D2Lab[:, :, iStep, iTraj] @ D2Traj[:, :, iStep, iTraj]
-                )
-        D2Traj = D2Combined
+        # B9: one batched product over (step, trajectory)
+        D2Traj = np.ascontiguousarray(np.moveaxis(
+            np.moveaxis(D2Lab, (0, 1), (2, 3)) @ np.moveaxis(D2Traj, (0, 1), (2, 3)), (2, 3), (0, 1)))
 
     # --- Build Hamiltonians H(t) = Q0 + sum_{mp,m} D2(m,mp,t) * Q2{mp,m} ---
     H = np.tile(Q0[:, :, np.newaxis, np.newaxis], (1, 1, nSteps, nTraj))
@@ -378,28 +374,23 @@ def propagate_istos(
     # Interaction frame: U = expm(-i*dt*H0) * expm(+i*dt*H)
     U0 = expm(-1j * dtSpin * H0)
 
-    U = np.zeros((nStates, nStates, nSteps, nTraj), dtype=complex)
-    for iStep in range(nSteps):
-        for iTraj in range(nTraj):
-            U_step = expm(1j * dtSpin * H[:, :, iStep, iTraj])
-            U[:, :, iStep, iTraj] = U0 @ U_step
+    # B9: SciPy's expm and NumPy's matmul are batched over (step, trajectory); same
+    # per-matrix arithmetic as the former loops (5e6 expm calls for 50 x 1000 x ...)
+    Hb = np.ascontiguousarray(np.moveaxis(H, (0, 1), (2, 3)))          # (nSteps, nTraj, n, n)
+    U = U0 @ expm(1j * dtSpin * Hb)                                     # (nSteps, nTraj, n, n)
+    Uh = np.conj(np.swapaxes(U, -1, -2))
 
     # --- Initial state: rho(0) = Sx (after pi/2 pulse) ---
     Sx = sop(sys_spins, [1, 1]).numpy()
-    rho = np.zeros((nStates, nStates, nSteps, nTraj), dtype=complex)
-    rho[:, :, 0, :] = Sx[:, :, np.newaxis]
+    rho = np.zeros((nSteps, nTraj, nStates, nStates), dtype=complex)
+    rho[0] = Sx
 
-    # --- Propagate: rho(t+1) = U * rho(t) * U† ---
+    # --- Propagate: rho(t+1) = U * rho(t) * U†, all trajectories at once ---
     for iStep in range(1, nSteps):
-        for iTraj in range(nTraj):
-            U_prev = U[:, :, iStep - 1, iTraj]
-            U_adj = U_prev.conj().T
-            rho[:, :, iStep, iTraj] = (
-                U_prev @ rho[:, :, iStep - 1, iTraj] @ U_adj
-            )
+        rho[iStep] = U[iStep - 1] @ rho[iStep - 1] @ Uh[iStep - 1]
 
     # --- Average over trajectories ---
-    rho_avg = np.mean(rho, axis=3)  # (nStates, nStates, nSteps)
+    rho_avg = np.moveaxis(np.mean(rho, axis=1), 0, 2)  # (nStates, nStates, nSteps)
 
     # --- Apply detection operator ---
     if detect_Sz:

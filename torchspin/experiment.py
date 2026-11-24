@@ -80,16 +80,16 @@ class Experiment:
     Harmonic : int, optional
         Detection harmonic: 0 = absorption, 1 = first derivative,
         2 = second derivative.  Default ``None``, resolved on construction to
-        0 when ``Field`` is set and ``mwFreq`` is not (frequency sweep or
-        fixed field), and to 1 otherwise.  pepper falls back to 0 when the
-        system has no line width and no strain.
+        1 for a field sweep and to 0 otherwise (frequency sweep or fixed
+        field), whether or not ``mwFreq`` is also given.  pepper falls back to
+        0 when the system has no line width and no strain.
     mwPhase : float, default 0.0
         Detection phase in radians: 0 = absorption, ``pi/2`` = dispersion.
         Read by pepper, garlic and chili.
     Temperature : float, optional
         Sample temperature in K for Boltzmann populations of the levels.
         ``None`` (default) = infinite temperature (equal populations).
-        pepper treats a value ``<= 0`` as infinite temperature; garlic raises.
+        ``inf`` is the same as ``None``; a value ``<= 0`` raises ``ValueError``.
     lightBeam : str or tuple, optional
         Photoselection by a polarized light beam (pepper only; requires
         ``SpinSystem.tdm``): ``''``/``None`` (default, none),
@@ -172,7 +172,8 @@ class Experiment:
         is not ``[center, width]`` with width ``> 0``; ``ModAmp < 0``;
         ``Field < 0`` in a frequency sweep or fixed-field experiment; ``mwRange`` (frequency sweep) or ``Range`` (field
         sweep) is not an increasing pair; a field sweep has no positive
-        ``mwFreq``; ``Harmonic`` is not 0, 1 or 2; ``nPoints < 2``; or
+        ``mwFreq``; ``Harmonic`` is not 0, 1 or 2; ``nPoints < 2``;
+        ``Temperature <= 0``; or
         ``Orientations``/``OrientationWeights`` have the wrong shape, are not
         finite, or the weights are negative or all zero (or given without
         ``Orientations``).
@@ -214,7 +215,7 @@ class Experiment:
     MolFrame: Optional[list] = None            # Euler angles sample->molecule (EasySpin Exp.MolFrame)
     SampleRotation: Optional[tuple] = None     # (axis letter or 3-vector, rho or list of rho) (EasySpin Exp.SampleRotation)
     nPoints: int = 1024
-    Harmonic: Optional[int] = None  # detection harmonic; None -> 0 if Field is set and mwFreq is not, else 1
+    Harmonic: Optional[int] = None  # detection harmonic; None -> 1 for field sweeps, 0 otherwise
     mwPhase: float = 0.0
     Temperature: Optional[float] = None
     lightBeam: Optional[object] = None   # photoexcitation: '', 'perpendicular', 'parallel', 'unpolarized' or (k, alpha) (EasySpin Exp.lightBeam)
@@ -283,8 +284,18 @@ class Experiment:
                 raise ValueError("Experiment.Range[1] must be larger than Range[0].")
             if self.mwFreq is None or self.mwFreq <= 0:
                 raise ValueError("mwFreq must be positive (GHz) for field-swept mode.")
+        if self.Temperature is not None:
+            # B102: pepper and salt used to treat T <= 0 as infinite temperature
+            # (no Boltzmann factor) while garlic raised
+            t = self.Temperature
+            t = float(t.detach()) if hasattr(t, 'detach') else float(t)
+            if not t > 0:
+                raise ValueError("Experiment.Temperature must be positive (K); "
+                                 "use None (or inf) for infinite temperature.")
         if self.Harmonic is None:
-            self.Harmonic = 0 if (self.Field is not None and self.mwFreq is None) else 1
+            # B101: by sweep mode only (a frequency sweep with mwFreq also set
+            # used to come back as a first derivative)
+            self.Harmonic = 0 if (self.is_freq_swept or self.is_fixed_field) else 1
         self.Harmonic = int(self.Harmonic)
         if self.Harmonic not in (0, 1, 2):
             raise ValueError("Harmonic must be 0, 1, or 2.")
@@ -467,8 +478,23 @@ class Options:
         Orientations per batched resonance search (pepper,
         pepper_autograd, salt).  ``None`` (default) = automatic: all
         orientations at once, capped so that the batched Hamiltonians
-        (orientations x field knots x dim^2) stay below about 400 MB.  ``1``
-        processes orientations one at a time (debugging, low memory).
+        (orientations x field knots x dim^2) stay below about 400 MB; for
+        pepper's matrix method that is 96 orientations per batch at
+        dimension 36 and 24 at dimension 72.  ``1`` processes orientations
+        one at a time (debugging, low memory).
+    EquivalentNuclei : bool, default True
+        pepper, ``Method='matrix'``: nuclei with the same isotope, hyperfine
+        tensor and frame, and without quadrupole coupling, enter the
+        Hamiltonian only through their total spin, so each such set is
+        simulated as its total-spin blocks (three 14N: K = 3, 2, 1, 0) and
+        the block spectra are summed.  This is exact, much faster (dimension
+        7 in place of 27 for three 14N) and avoids the exactly degenerate
+        levels of the full space, in which single-transition intensities are
+        arbitrary (see ``KNOWN_LIMITATIONS.md``).  It also lets the matrix
+        method take ``SpinSystem.n > 1``.  ``False`` diagonalizes the full
+        space (the behavior up to 0.9.38).  Not applied with ``nn``,
+        ``H0Extra``, a full-space ``initState``, ``Transitions`` given as
+        level pairs, or ``separate`` other than ``''`` and ``'components'``.
     Sites : list of int, optional
         pepper single-crystal simulations only: 1-based indices of the
         symmetry-related crystal sites to include.  ``None`` (default) = all
@@ -494,6 +520,21 @@ class Options:
     ModellingAccuracy : float, default 2e-6
         Accuracy of the segment model of the pepper matrix resonance-field
         search, relative to ``mwFreq``.
+    RediagLimit : float, default 0.999
+        pepper matrix route, spin systems of dimension 16 or more: at a
+        resonance, the two transition eigenvectors are interpolated between the
+        neighboring field knots (cubic Hermite, with the eigenvector derivatives
+        from perturbation theory) when both states overlap with themselves
+        across the segment by at least this much, and the field gets a
+        Rayleigh-quotient Newton step; otherwise, and whenever a transition
+        level is degenerate at a knot, the Hamiltonian is diagonalized at the
+        resonance.  ``RediagLimit >= 1`` diagonalizes at every resonance
+        (exact, as before 0.9.39).  At the default, spectra differed from exact
+        by <= 6.3e-7 of the maximum in the 18 cases checked (S = 1/2 to 7/2,
+        dimensions 16 to 216, coupled dimers, strain, 5 K populations) at
+        1.0-2.0x the speed; 0.99 was as fast but reached 1e-4 for Cu(II) + 14N.
+        Smaller systems and gradient runs always diagonalize.  EasySpin
+        ``Opt.RediagLimit`` (default 0.95 there, with linear interpolation).
     device : str, default 'cpu'
         torch device for the large tensors (pepper, pepper_autograd, salt,
         saffron).  A ``'cuda'`` device without CUDA available falls back to
@@ -598,11 +639,13 @@ class Options:
     Threshold: float = 1e-4
     Verbosity: int = 0
     BatchSize: Optional[int] = None
+    EquivalentNuclei: bool = True     # pepper matrix method: simulate sets of equivalent nuclei as total-spin blocks (see docstring)
     Sites: Optional[list] = None      # crystal sites to include (1-based), EasySpin Opt.Sites
     separate: str = ''                # '', 'components', 'transitions', 'orientations', 'sites' (see docstring)
     IsoCutoff: float = 1e-4           # relative abundance cutoff for isotopologues (EasySpin Opt.IsoCutoff)
     Stretch: float = 0.25             # automatic sweep range padding factor (EasySpin garlic Opt.Stretch)
     ModellingAccuracy: float = 2e-6   # resonance search: segment-model accuracy relative to mwFreq (EasySpin Opt.ModellingAccuracy)
+    RediagLimit: float = 0.999        # interpolate resonance eigenvectors above this overlap; >= 1: diagonalize every resonance (EasySpin Opt.RediagLimit)
     device: str = 'cpu'
     QuadraticZeeman: bool = False     # include lB = 2, 3 Sys.Ham terms in the resonance search (default: dropped)
     Enhancement: bool = False         # ENDOR hyperfine enhancement (EasySpin Opt.Enhancement), endorfrq/salt matrix paths
@@ -659,6 +702,10 @@ class Options:
         # as in EasySpin (an empty Opt.GridSymmetry)
         from torchspin.sphgrid import _GRIDPARAM
         valid_sym = ('auto', '') + tuple(_GRIDPARAM)
+        rl = self.RediagLimit
+        if isinstance(rl, bool) or not isinstance(rl, numbers.Real) or not (0.0 <= float(rl)):
+            raise ValueError(f"Options.RediagLimit must be a real number >= 0 (>= 1: diagonalize at every "
+                             f"resonance); got {rl!r}.")
         if self.GridSymmetry not in valid_sym:
             raise ValueError(
                 f"GridSymmetry must be 'auto', '' or one of {tuple(_GRIDPARAM)}; "
@@ -679,13 +726,18 @@ class Options:
                 self.device = 'cpu'
 
 
-def auto_batch_size(batch_size, dim: int, n_orient: int) -> int:
+def auto_batch_size(batch_size, dim: int, n_orient: int, knots: int = 10) -> int:
     """Orientations per batched resonance-search call (``Options.BatchSize``).
 
     ``None`` = automatic: all orientations at once, capped so that the batched
-    Hamiltonians (orientations × ~10 field knots × dim², complex128) stay
-    below ~400 MB (PERF_PLAN §2.1 item 2).
+    Hamiltonians (orientations × ``knots`` field knots × dim², complex128) stay
+    below ~400 MB (PERF_PLAN §2.1 item 2), and never below 10 orientations.
+
+    ``knots`` is the number of field knots budgeted per orientation.  The
+    orientations of a batch share one knot set, refined until the segment model
+    holds for all of them, so a large batch of a large spin system reaches 100
+    or more knots; pepper's matrix route budgets 200 (B138).
     """
     if batch_size:
         return int(batch_size)
-    return max(10, min(int(n_orient), int(2.5e7 // (10 * dim * dim))))
+    return max(10, min(int(n_orient), int(2.5e7 // (int(knots) * dim * dim))))

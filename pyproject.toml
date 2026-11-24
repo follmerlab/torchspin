@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "torchspin"
-version = "0.9.38"
+version = "0.9.39"
 description = "Differentiable PyTorch port of EasySpin - EPR/ESR spin Hamiltonian and spectrum simulation"
 readme = "README.md"
 license = "MIT"
@@ -38,6 +38,7 @@ dependencies = [
     "torch>=2.3,<3",
     "numpy>=1.23,<3",
     "scipy>=1.10",
+    "threadpoolctl>=3.1",   # caps BLAS threads around small eigendecompositions (torchspin._linalg)
 ]
 
 [project.urls]

@@ -31,6 +31,7 @@ import numpy as np
 
 from torchspin.convspec import convspec
 from torchspin import _projection as _proj
+from torchspin.equivnuclei import reduce_equivalent_nuclei
 from torchspin.isotopologues import expand_components
 from torchspin.experiment import (auto_batch_size, Experiment, Options,
                                   PEPPER_PERTURB_ORDER)
@@ -248,6 +249,71 @@ def _interp_sph(
 _slot_state = threading.local()
 
 
+def _slot_layout(all_B, all_pairs, n_orient, unpaired='skip'):
+    """Slot bookkeeping of a per-orientation line list, vectorized.
+
+    A slot is a level pair ``(u, v)`` plus its occurrence index (looping
+    transitions can resonate more than once): at every orientation the
+    resonances are ordered by ``(u, v, B)`` (stable) and numbered per pair.
+    Orientations without level pairs (perturbation path) are index-matched:
+    resonance ``i`` goes to slot ``('idx', i)``.  Slots are numbered in order of
+    first appearance, orientation by orientation and, within one, in that order.
+
+    ``unpaired='skip'`` drops orientations without pairs when any orientation has
+    them (``pepper``); ``'index'`` index-matches them (``pepper_autograd``).
+
+    Returns ``(k, pos, slot, keys, B_flat)`` for the kept resonances: orientation,
+    position in ``B_flat`` (the concatenation of every non-empty ``all_B[k]`` in
+    orientation order, as a NumPy array), slot number, and the slot keys
+    (``(u, v, occurrence)`` or ``('idx', i)``) in slot order.  One host copy per
+    call instead of one per orientation.
+    """
+    lens = [int(b.numel()) if b is not None else 0 for b in all_B]
+    ks = [k for k in range(n_orient) if lens[k] > 0]
+    empty = np.zeros(0, dtype=np.int64)
+    if not ks:
+        return empty, empty, empty, [], np.zeros(0)
+    B_flat = torch.cat([all_B[k].detach().reshape(-1) for k in ks]).cpu().numpy()
+    no_pairs = all_pairs is None or all(p is None for p in all_pairs)
+    paired = [(not no_pairs) and all_pairs[k] is not None for k in ks]
+    keep_o = [pk or no_pairs or unpaired == 'index' for pk in paired]
+    lens_k = np.asarray([lens[k] for k in ks], dtype=np.int64)
+    offsets = np.concatenate([[0], np.cumsum(lens_k)[:-1]])
+    k_all = np.repeat(np.asarray(ks, dtype=np.int64), lens_k)
+    i_all = np.arange(lens_k.sum(), dtype=np.int64) - np.repeat(offsets, lens_k)
+    if no_pairs:
+        # index-matched (perturbation path): resonance i of every orientation is slot i
+        return k_all, np.arange(i_all.size, dtype=np.int64), i_all, [('idx', i) for i in range(int(lens_k.max()))], B_flat
+    typ = np.repeat(np.asarray([0 if pk else 1 for pk in paired], dtype=np.int64), lens_k)
+    u = i_all.copy(); v = np.zeros_like(i_all)
+    if any(paired):
+        P = torch.cat([all_pairs[k].detach().reshape(-1, 2) for k, pk in zip(ks, paired) if pk]).cpu().numpy()
+        sel = typ == 0
+        u[sel] = P[:, 0]; v[sel] = P[:, 1]
+    Bkey = np.where(typ == 0, B_flat, 0.0)
+    keep = np.repeat(np.asarray(keep_o), lens_k)
+    pos = np.nonzero(keep)[0]
+    # per orientation: (u, v, B) for paired, index order otherwise; stable
+    order = pos[np.lexsort((i_all[pos], Bkey[pos], v[pos], u[pos], k_all[pos]))]
+    ko, to, uo, vo = k_all[order], typ[order], u[order], v[order]
+    n = order.size
+    new_grp = np.ones(n, dtype=bool)
+    new_grp[1:] = (ko[1:] != ko[:-1]) | (uo[1:] != uo[:-1]) | (vo[1:] != vo[:-1]) | (to[1:] != to[:-1])
+    grp_start = np.maximum.accumulate(np.where(new_grp, np.arange(n), 0))
+    occ = np.where(to == 0, np.arange(n) - grp_start, 0)
+    # one int64 per (type, u, v, occurrence): 1-D unique is much faster than axis=0
+    nu, nv, nc = int(uo.max()) + 1, int(vo.max()) + 1, int(occ.max()) + 1
+    code = ((to * nu + uo) * nv + vo) * nc + occ
+    uc, first, inv = np.unique(code, return_index=True, return_inverse=True)
+    rank = np.empty(uc.shape[0], dtype=np.int64)
+    rank[np.argsort(first, kind='stable')] = np.arange(uc.shape[0])
+    slot = rank[inv.reshape(-1)]
+    keys = [None] * uc.shape[0]
+    for r, f in zip(rank.tolist(), first.tolist()):
+        keys[r] = (int(uo[f]), int(vo[f]), int(occ[f])) if to[f] == 0 else ('idx', int(uo[f]))
+    return ko, order, slot, keys, B_flat
+
+
 def _transition_slots(all_B, all_I, all_W, all_pairs, n_orient):
     """Group per-orientation resonances into transition slots across the grid.
 
@@ -258,54 +324,39 @@ def _transition_slots(all_B, all_I, all_W, all_pairs, n_orient):
     Interpolation and projection then act on physically the same transition at
     every grid point. Without level pairs (perturbation path, whose slot
     structure is fixed by construction) the arrays are matched by index.
+    See :func:`_slot_layout`.
 
     Returns (B_arrs, I_arrs, W_arrs): lists of (n_orient,) float arrays; W_arrs
     is None when no widths were supplied.
     """
     have_widths = any(w is not None and w.numel() > 0 for w in all_W) if all_W is not None else False
-    if all_pairs is None or all(p is None for p in all_pairs):
-        n_slots = max((b.numel() if b is not None else 0) for b in all_B) if all_B else 0
-        B_arrs = [np.full(n_orient, np.nan) for _ in range(n_slots)]
-        I_arrs = [np.full(n_orient, np.nan) for _ in range(n_slots)]
-        W_arrs = [np.full(n_orient, np.nan) for _ in range(n_slots)] if have_widths else None
-        for k in range(n_orient):
-            B = all_B[k]
-            if B is None:
-                continue
-            Bn = B.detach().cpu().numpy(); In = all_I[k].detach().cpu().numpy()
-            Wn = all_W[k].detach().cpu().numpy() if (have_widths and all_W[k] is not None) else None
-            for i in range(Bn.shape[0]):
-                B_arrs[i][k] = Bn[i]; I_arrs[i][k] = In[i]
-                if Wn is not None and i < Wn.shape[0]:
-                    W_arrs[i][k] = Wn[i]
-        _slot_state.keys = None      # index-matched slots (perturbation path)
-        return B_arrs, I_arrs, W_arrs
-    slots: dict = {}
-    B_arrs: list = []; I_arrs: list = []; W_arrs: list = []
-    for k in range(n_orient):
-        B = all_B[k]; pairs = all_pairs[k]
-        if B is None or pairs is None or B.numel() == 0:
-            continue
-        Bn = B.detach().cpu().numpy(); In = all_I[k].detach().cpu().numpy()
-        Wn = all_W[k].detach().cpu().numpy() if (have_widths and all_W[k] is not None) else None
-        pn = pairs.detach().cpu().numpy()
-        order = sorted(range(Bn.shape[0]), key=lambda i: (int(pn[i, 0]), int(pn[i, 1]), float(Bn[i])))
-        occ: dict = {}
-        for i in order:
-            uv = (int(pn[i, 0]), int(pn[i, 1]))
-            c = occ.get(uv, 0); occ[uv] = c + 1
-            key = (uv[0], uv[1], c)
-            if key not in slots:
-                slots[key] = len(B_arrs)
-                B_arrs.append(np.full(n_orient, np.nan))
-                I_arrs.append(np.full(n_orient, np.nan))
-                W_arrs.append(np.full(n_orient, np.nan))
-            j = slots[key]
-            B_arrs[j][k] = Bn[i]; I_arrs[j][k] = In[i]
-            if Wn is not None and i < Wn.shape[0]:
-                W_arrs[j][k] = Wn[i]
-    _slot_state.keys = sorted(slots.keys(), key=lambda kk: slots[kk])   # (u, v, occurrence) per slot
-    return B_arrs, I_arrs, (W_arrs if have_widths else None)
+    no_pairs = all_pairs is None or all(p is None for p in all_pairs)
+    k, pos, slot, keys, B_flat = _slot_layout(all_B, all_pairs, n_orient, unpaired='skip')
+    n_slots = len(keys)
+    B_mat = np.full((n_slots, n_orient), np.nan)
+    I_mat = np.full((n_slots, n_orient), np.nan)
+    W_mat = np.full((n_slots, n_orient), np.nan) if have_widths else None
+    if n_slots:
+        ks = [kk for kk in range(n_orient) if all_B[kk] is not None and all_B[kk].numel() > 0]
+        B_mat[slot, k] = B_flat[pos]
+        I_flat = torch.cat([all_I[kk].detach().reshape(-1) for kk in ks]).cpu().numpy()
+        I_mat[slot, k] = I_flat[pos]
+        if have_widths:
+            parts = []
+            for kk in ks:
+                m = int(all_B[kk].numel())
+                w = all_W[kk]
+                wn = np.full(m, np.nan)
+                if w is not None:
+                    w = w.detach().reshape(-1).cpu().numpy()[:m]
+                    wn[:w.shape[0]] = w
+                parts.append(wn)
+            W_mat[slot, k] = np.concatenate(parts)[pos]
+    _slot_state.keys = None if no_pairs else keys   # (u, v, occurrence) per slot; None: index-matched
+    B_arrs = [row.copy() for row in B_mat]
+    I_arrs = [row.copy() for row in I_mat]
+    W_arrs = [row.copy() for row in W_mat] if have_widths else None
+    return B_arrs, I_arrs, W_arrs
 
 
 # Missing knots (B88, B75): the matrix resonance search covers Exp.Range only, so
@@ -318,18 +369,29 @@ _RESEARCH_PADS = (0.5, 1.0, 2.0, 4.0)
 
 def _pair_counts(all_B, all_pairs):
     """``{(u, v): counts}``: number of resonances of each level pair at every
-    orientation (int array).  Empty without level pairs (perturbation path)."""
+    orientation (int array).  Empty without level pairs (perturbation path).
+    Pairs appear in order of first occurrence (orientation, then ``(u, v)``)."""
     counts: dict = {}
     if all_pairs is None or all(p is None for p in all_pairs):
         return counts
     n_orient = len(all_B)
-    for k in range(n_orient):
-        B, P = all_B[k], all_pairs[k]
-        if B is None or P is None or B.numel() == 0:
-            continue
-        uv, c = np.unique(P.detach().cpu().numpy().astype(np.int64), axis=0, return_counts=True)
-        for (u, v), n in zip(uv, c):
-            counts.setdefault((int(u), int(v)), np.zeros(n_orient, dtype=np.int64))[k] = n
+    ks = [k for k in range(n_orient)
+          if all_B[k] is not None and all_pairs[k] is not None and all_B[k].numel() > 0]
+    if not ks:
+        return counts
+    P = [all_pairs[k].detach().reshape(-1, 2) for k in ks]
+    lens = np.asarray([int(p.shape[0]) for p in P], dtype=np.int64)
+    P = torch.cat(P).cpu().numpy().astype(np.int64)
+    K = np.repeat(np.asarray(ks, dtype=np.int64), lens)
+    nv = int(P[:, 1].max()) + 1
+    code = P[:, 0] * nv + P[:, 1]
+    uc, inv = np.unique(code, return_inverse=True)
+    inv = inv.reshape(-1)
+    C = np.bincount(inv * n_orient + K, minlength=uc.shape[0] * n_orient).reshape(uc.shape[0], n_orient)
+    first = np.full(uc.shape[0], n_orient, dtype=np.int64)
+    np.minimum.at(first, inv, K)
+    for i in np.lexsort((uc, first)):
+        counts[(int(uc[i] // nv), int(uc[i] % nv))] = C[i].astype(np.int64)
     return counts
 
 
@@ -386,6 +448,40 @@ def _replace_pairs(lists, new, bad):
     return out
 
 
+def _merge_line_lists(a, b, width):
+    """Per orientation, the union of two ``(B, I, W, pairs)`` line lists; a
+    resonance of the same level pair within ``1e-6 * width`` of one already
+    present (found again at the joint of two adjacent search windows) is dropped.
+    Tensors stay on the autograd graph (concatenation and indexing only)."""
+    out = ([], [], [], [])
+    for k in range(len(a[0])):
+        parts = [(x[0][k], x[1][k], x[2][k], x[3][k]) for x in (a, b)
+                 if x[0][k] is not None and x[0][k].numel() and x[3][k] is not None]
+        if not parts:
+            for i in range(4):
+                out[i].append(a[i][k])
+            continue
+        if len(parts) == 1:
+            for i in range(4):
+                out[i].append(parts[0][i])
+            continue
+        B = torch.cat([p[0] for p in parts]); I = torch.cat([p[1] for p in parts])
+        P = torch.cat([p[3] for p in parts])
+        W = None if any(p[2] is None for p in parts) else torch.cat([p[2] for p in parts])
+        Pd = P.detach()
+        code = Pd[:, 0] * (int(Pd[:, 1].max()) + 1) + Pd[:, 1]
+        o = torch.argsort(B.detach(), stable=True)
+        o = o[torch.argsort(code[o], stable=True)]                  # by pair, then field
+        B, I, P, code = B[o], I[o], P[o], code[o]
+        W = None if W is None else W[o]
+        dup = torch.zeros(B.shape[0], dtype=torch.bool, device=B.device)
+        dup[1:] = (code[1:] == code[:-1]) & ((B.detach()[1:] - B.detach()[:-1]).abs() < 1e-6 * width)
+        keep = ~dup
+        out[0].append(B[keep]); out[1].append(I[keep])
+        out[2].append(None if W is None else W[keep]); out[3].append(P[keep])
+    return out
+
+
 def _research_missing_knots(lists, rng, search, verbose=False):
     """Search again the level pairs that miss resonances at some orientations
     (B88, B75).
@@ -393,41 +489,61 @@ def _research_missing_knots(lists, rng, search, verbose=False):
     ``lists = (B, I, W, pairs)`` per orientation from the search over
     ``rng = Exp.Range``; ``search(window, pairs)`` repeats that search over
     all orientations for the given level pairs and field window and returns
-    the same layout.  The partly missing pairs are searched over
-    Range ± f·W (W = sweep width, f in ``_RESEARCH_PADS``, lower edge clamped
-    at 0) and their resonances replaced wholesale, all orientations at once so
-    that the occurrence index of a looping transition means the same at every
-    knot.  A pair's new resonances are kept only if they leave fewer of its
-    resonances missing and none of its orientations loses one; pairs that improved but are still incomplete are
-    searched again over a doubled window, the others keep what they have
-    (what is still missing then does not resonate at those orientations at
-    any field nearby, e.g. a looping transition, and very wide windows make
-    the detection of its near-tangent resonances roundoff-sensitive).
-    Out-of-range positions are kept: projection and summation clip them to
-    the sweep window, and the interpolation sees the transition at every
-    knot.  Returns ``lists`` itself (same objects) when no
-    pair is partly missing, so such spectra are unchanged bit for bit.
+    the same layout.  The partly missing pairs are searched in the bands that
+    extend the range to Range ± f·W (W = sweep width, f in ``_RESEARCH_PADS``,
+    lower edge clamped at 0): at each f only the two bands added since the
+    previous f, ``[lo - f·W, previous lo]`` and ``[previous hi, hi + f·W]``, are
+    searched (the range itself and the earlier bands have been searched), and a
+    pair's resonances become those of the main search plus every band so far,
+    all orientations at once, so that the occurrence index of a looping
+    transition means the same at every knot.  A pair's new resonances are kept
+    only if they leave fewer of its resonances missing and none of its
+    orientations loses one; pairs that improved but are still incomplete go on
+    to the next, wider band, the others keep what they have (what is still
+    missing then does not resonate at those orientations at any field nearby,
+    e.g. a looping transition, and very wide windows make the detection of its
+    near-tangent resonances roundoff-sensitive).  Out-of-range positions are
+    kept: projection and summation clip them to the sweep window, and the
+    interpolation sees the transition at every knot.  Returns ``lists`` itself
+    (same objects) when no pair is partly missing or none improves, so such
+    spectra are unchanged bit for bit.
+
+    Up to 0.9.38 each round searched the whole window Range ± f·W again (for
+    the S = 5/2 Mn(II) benchmark 44.6k diagonalizations against 23.1k in the
+    main search); the band search finds the same resonances (spectra agree to
+    ~1e-11) at about half the cost.
     """
     missing = _missing_resonances(lists[0], lists[3])
     if not missing:
         return lists
-    W = float(rng[1]) - float(rng[0])
+    lo0, hi0 = float(rng[0]), float(rng[1])
+    W = hi0 - lo0
     active = list(missing)
+    acc = lists                       # main search plus every band searched so far
+    lo_prev, hi_prev = lo0, hi0
     for f in _RESEARCH_PADS:
-        window = [max(0.0, float(rng[0]) - f * W), float(rng[1]) + f * W]
-        if verbose:
-            print(f"pepper: {len(active)} level pair(s) miss resonances at some knots; "
-                  f"searching them again over [{window[0]:.6g}, {window[1]:.6g}] mT")
-        found = search(window, active)
+        lo_n, hi_n = max(0.0, lo0 - f * W), hi0 + f * W
+        found = None
+        for band in ([lo_n, lo_prev], [hi_prev, hi_n]):
+            if band[1] - band[0] <= 0:
+                continue
+            if verbose:
+                print(f"pepper: {len(active)} level pair(s) miss resonances at some knots; "
+                      f"searching them again over [{band[0]:.6g}, {band[1]:.6g}] mT")
+            r = search(band, active)
+            found = r if found is None else _merge_line_lists(found, r, W)
+        lo_prev, hi_prev = lo_n, hi_n
+        if found is None:
+            break
+        acc = _merge_line_lists(acc, found, W)
         old = _pair_counts(lists[0], lists[3])
-        trial = _replace_pairs(lists, found, active)
-        trial = _pair_counts(trial[0], trial[3])
-        # the wider window contains the old one: a pair improves if it has no
-        # fewer resonances at any orientation and fewer missing
+        trial = _pair_counts(acc[0], acc[3])
+        # the bands only add resonances: a pair improves if it has no fewer
+        # resonances at any orientation and fewer missing
         better = [uv for uv in active if uv in trial and (trial[uv] >= old[uv]).all()
                   and int((trial[uv].max() - trial[uv]).sum()) < missing[uv]]
         if better:
-            lists = _replace_pairs(lists, found, better)
+            lists = _replace_pairs(lists, acc, better)
             missing = _missing_resonances(lists[0], lists[3])
         active = [uv for uv in better if uv in missing]
         if not active:
@@ -450,6 +566,29 @@ def _filter_slots(B_arrs, I_arrs, W_arrs, threshold):
         _slot_state.keys = [keys[k] for k in keep]
     return ([B_arrs[k] for k in keep], [I_arrs[k] for k in keep],
             None if W_arrs is None else [W_arrs[k] for k in keep])
+
+
+def _gauss_bin_chunk(p, sg, a, half, nw: int, x0: float, dx: float, n: int) -> torch.Tensor:
+    """Bin-integrated Gaussians of a chunk of lines (column tensors ``p``, ``sg``
+    = σ√2, ``a``, ``half`` = window half-width) on the axis ``x0 + k·dx``:
+    ``a/2 · [erf((e_{k+1} − p)/sg) − erf((e_k − p)/sg)]`` with bin edges
+    ``e_k = x0 + (k − 1/2)·dx``, evaluated over a common window of ``nw`` bins
+    starting just below ``p − half`` (all ``n`` bins if ``nw >= n``).  Adjacent bins
+    share an edge, so erf is evaluated once per edge (nw + 1 per line) rather than
+    twice per bin.  Differentiable in ``p``, ``sg`` and ``a`` (window detached)."""
+    dev = p.device
+    if nw >= n:
+        start = torch.zeros(p.shape, dtype=torch.long, device=dev)
+        nw = n
+    else:
+        start = ((p.detach() - half.detach() - x0) / dx).floor().to(torch.long) - 1
+    je = start + torch.arange(nw + 1, dtype=torch.long, device=dev)[None, :]    # edge indices
+    e = torch.erf((x0 + (je.to(torch.float64) - 0.5) * dx - p) / sg)
+    vals = (0.5 * a) * (e[:, 1:] - e[:, :-1])
+    k = je[:, :-1]
+    vals = torch.where((k >= 0) & (k < n), vals, torch.zeros((), dtype=torch.float64, device=dev))
+    return torch.zeros(n, dtype=torch.float64, device=dev).index_add(
+        0, k.clamp(0, n - 1).reshape(-1), vals.reshape(-1))
 
 
 def _gaussian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np.ndarray,
@@ -480,27 +619,11 @@ def _gaussian_bins(x: torch.Tensor, pos: np.ndarray, fwhm: np.ndarray, amp: np.n
     amp_t = torch.from_numpy(np.asarray(amp, dtype=float)[order]).to(dev)
     half_all = 7.0 * sg_all                                      # window half-width (mT)
     nw_np = ((2.0 * half_all / dx).ceil().to(torch.long) + 3).cpu().numpy()   # bins per window
-    ar = torch.arange(n, dtype=torch.long, device=dev)
-    xr = x.to(dev)
 
     def _chunk(k0: int) -> torch.Tensor:
         sl = slice(k0, k0 + chunk)
-        p = pos_t[sl, None]
-        sg = sg_all[sl, None]
-        a = amp_t[sl, None]
-        nw = int(nw_np[sl].max())
-        if nw >= n:
-            hi = torch.erf((xr[None, :] + 0.5 * dx - p) / sg)
-            lo = torch.erf((xr[None, :] - 0.5 * dx - p) / sg)
-            return (0.5 * a * (hi - lo)).sum(dim=0)
-        start = ((p - half_all[sl, None] - x0) / dx).floor().to(torch.long) - 1
-        idx = start + ar[None, :nw]
-        idxc = idx.clamp(0, n - 1)
-        z = (xr[idxc] - p) / sg                                   # bin centers
-        d = (0.5 * dx) / sg                                       # half bin in σ√2 units
-        vals = (0.5 * a) * (torch.erf(z + d) - torch.erf(z - d))
-        vals = torch.where((idx >= 0) & (idx < n), vals, torch.zeros((), dtype=torch.float64, device=dev))
-        return torch.bincount(idxc.reshape(-1), weights=vals.reshape(-1), minlength=n)
+        return _gauss_bin_chunk(pos_t[sl, None], sg_all[sl, None], amp_t[sl, None], half_all[sl, None],
+                                int(nw_np[sl].max()), x0, dx, n)
 
     starts = list(range(0, pos_t.shape[0], chunk))
     if dev.type == 'cpu':
@@ -581,6 +704,14 @@ def _interp_grid(values: np.ndarray, symmetry: str, N_c: int, N_f: int, linear: 
         iphi = (1 + nOct * (N_c - 1) * (phi_f / maxPhi)) - 1
         ithe = (1 + (N_c - 1) * (theta_f / (math.pi / 2))) - 1
     iphi = np.clip(iphi, 0, nc - 1); ithe = np.clip(ithe, 0, nr - 1)
+    if cubic and (nr < 4 or nc < 4):
+        # Two or three rows or columns (GridSize(1) of 2 or 3): FITPACK's bicubic
+        # needs four.  The same tensor-product not-a-knot spline, which is the
+        # straight line through two knots and the parabola through three, as in
+        # EasySpin esspline2d/esspline1d (esspline1d.m:49-71) (B137).
+        Lx = CubicSpline(np.arange(nr), np.eye(nr), axis=0)(ithe)      # (n_f, nr)
+        Ly = CubicSpline(np.arange(nc), np.eye(nc), axis=0)(iphi)      # (n_f, nc)
+        return np.einsum('ki,ij,kj->k', Lx, z, Ly)
     if cubic:
         spl = RectBivariateSpline(np.arange(nr), np.arange(nc), z, kx=3, ky=3, s=0)
         return spl.ev(ithe, iphi)
@@ -623,7 +754,8 @@ def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
 
     Closed-φ one-octant grids and Dinfh use :func:`_interp_sph` (structured
     G3 / meridional spline); open-φ grids use :func:`_interp_grid`. Returns
-    ``None`` when fewer than three knots carry a value.
+    ``None`` when fewer than three knots carry a value (fewer than two on a
+    grid of two orientations).
 
     EasySpin pepper.m interpolation modes: positions ``G3`` (global cubic),
     intensities and widths ``L3`` (local cubic, axial grids) or ``L1``
@@ -640,7 +772,9 @@ def _interp_slot(vals: np.ndarray, symmetry: str, N_c: int, N_f: int,
     """
     vals = np.asarray(vals, dtype=float)
     valid = ~np.isnan(vals)
-    if valid.sum() < 3:
+    # A grid of two orientations (GridSize [2, n] on Dinfh, C4h, C6h) is
+    # interpolated from both; dropping its slots gave an all-zero spectrum (B137).
+    if valid.sum() < min(3, vals.size):
         return None
     if mode == 'val':
         if symmetry == 'Dinfh':
@@ -1431,18 +1565,29 @@ def pepper(sys_or_list, exp: Experiment, opt: Optional[Options] = None):
     # cannot collapse them (EasySpin pepper rejects Sys.n > 1 outright).  The
     # perturbation and hybrid solvers treat nuclei one at a time and combine
     # them combinatorially, so there the multiplicity is a cost saving.
-    if _method in ('matrix', 'exact'):
-        for _s in components:
-            if any(v > 1 for v in (_s.n or [])):
-                raise ValueError(
-                    "pepper's matrix method does not support sets of equivalent nuclei "
-                    "(SpinSystem.n > 1). List each nucleus separately in Nucs, or use "
-                    "Options(Method='hybrid') or Method='perturb', which do support n."
-                )
+    # The matrix method simulates a set of equivalent nuclei as its total-spin
+    # blocks (torchspin.equivnuclei; Options.EquivalentNuclei), which is also how
+    # it takes Sys.n > 1 (EasySpin's pepper rejects Sys.n > 1 outright).
+    _reduce = (_method in ('matrix', 'exact') and bool(getattr(opt_, 'EquivalentNuclei', True))
+               and str(getattr(opt_, 'separate', '') or '') in ('', 'components')
+               and (opt_.Transitions is None or isinstance(opt_.Transitions, str)))
     rows, B_out = [], None
     for sys in components:
         w = float(getattr(sys, 'weight', 1.0))
-        B_out, spec = _pepper_single(sys, exp, opt_)
+        blocks = reduce_equivalent_nuclei(sys) if _reduce else [(1.0, sys)]
+        if _method in ('matrix', 'exact') and any(v > 1 for _, _b in blocks for v in (_b.n or [])):
+            raise ValueError(
+                "pepper's matrix method supports sets of equivalent nuclei (SpinSystem.n > 1) "
+                "only as total-spin blocks: with Options.EquivalentNuclei=True, without "
+                "quadrupole coupling (Q), AStrain on that set, nn, H0Extra, a full-space "
+                "initState, Options.Transitions level pairs or Options.separate other than "
+                "'components'. List each nucleus separately in Nucs, or use "
+                "Options(Method='hybrid') or Method='perturb', which do support n."
+            )
+        spec = None
+        for wb, sys_b in blocks:
+            B_out, sb = _pepper_single(sys_b, exp, opt_)
+            spec = wb * sb if spec is None else spec + wb * sb
         rows.append(w * spec)
     if str(getattr(opt_, 'separate', '')) in ('components', 'transitions', 'orientations', 'sites'):
         # EasySpin compisoloop: any separate output concatenates the rows of all
@@ -1747,8 +1892,13 @@ def _pepper_single(
         what the memory budget allows anyway; if it does not, say so rather than
         silently interpolating across inconsistent slots.
         """
+        if hybrid_info is None:
+            # The orientations of a batch share one field-knot set, which grows to
+            # the union of what each of them needs: budget 200 knots, not 10 (B138;
+            # S = 5/2 + 55Mn on a 1013-orientation Ci grid ran 4x faster).
+            return auto_batch_size(opt.BatchSize, dim, n_orient, knots=200)
         size = auto_batch_size(opt.BatchSize, dim, n_orient)
-        if hybrid_info is None or size >= n_orient:
+        if size >= n_orient:
             return size
         raise ValueError(
             f"Options.Method='hybrid' needs all {n_orient} orientations in one batch, but "
@@ -2354,7 +2504,37 @@ def _pepper_single(
                     all_B_res, all_intens, all_widths, all_pairs, n_orient
                 )
                 slot_B, slot_I, slot_W = _filter_slots(slot_B, slot_I, slot_W, _post_thr)
-                for i_t in range(len(slot_B)):
+                if use_proj:
+                    # SOPHE triangle/zone projection: each facet contributes a
+                    # tent/rect density → smooth spectrum without quantization noise.
+                    # Interpolate and project the slots on one thread (hundreds of
+                    # mid-sized tensor ops lose time with intra-op threads, B128) and
+                    # accumulate in slot order, so the result equals the 1-thread
+                    # result at any thread count.  A pool of single-threaded workers
+                    # was slower (Cu + 2 14N 3.7 s vs 0.8 s at 8 threads) and kept
+                    # ~1.8 MB per call in its worker threads (2 GB after 600 calls).
+                    def _proj_slot(i_t):
+                        B_c = slot_B[i_t]
+                        B_f = _interp_slot(B_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f)
+                        if B_f is None:
+                            return None
+                        if zero_field:
+                            # one position for all orientations: one point mass (exact zero-width facets)
+                            B_f = _zf_const_pos(B_f, B_c)
+                        I_f = _interp_slot(slot_I[i_t], grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
+                        if grid_sym == 'Dinfh':
+                            return _projectzones(B_f, I_f, _seg_wts, x_np)
+                        return _projecttriangles(_tri_f, _areas_f, B_f, I_f, x_np)
+                    from torchspin._linalg import single_threaded as _single_threaded
+                    with _single_threaded():
+                        _contribs = [_proj_slot(i_t) for i_t in range(len(slot_B))]
+                    for i_t, contrib in enumerate(_contribs):
+                        if contrib is None:
+                            continue
+                        I_c = slot_I[i_t]
+                        _acc(i_t, torch.from_numpy(contrib * (2.0 * math.pi)), np.nanmax(np.abs(I_c)) if np.isfinite(I_c).any() else 0.0)
+                        used_projection = True
+                for i_t in range(0 if use_proj else len(slot_B)):
                     B_c = slot_B[i_t]
                     I_c = slot_I[i_t]
                     valid = ~np.isnan(B_c)
@@ -2366,86 +2546,76 @@ def _pepper_single(
                         B_f = _zf_const_pos(B_f, B_c)
                     I_f = _interp_slot(I_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
 
-                    if use_proj:
-                        # SOPHE triangle/zone projection: each facet contributes a
-                        # tent/rect density → smooth spectrum without quantization noise.
-                        if grid_sym == 'Dinfh':
-                            contrib = _projectzones(B_f, I_f, _seg_wts, x_np)
-                        else:
-                            contrib = _projecttriangles(_tri_f, _areas_f, B_f, I_f, x_np)
-                        _acc(i_t, torch.from_numpy(contrib * (2.0 * math.pi)), np.nanmax(np.abs(I_c)) if np.isfinite(I_c).any() else 0.0)
-                        used_projection = True
+                    # Fallback: per-orientation accumulation.
+                    # Used for has_strain (spatial Gaussians) or grids without a
+                    # standard triangulation (e.g. Ci symmetry → stick binning).
+                    if has_strain and slot_W is not None:
+                        W_c = slot_W[i_t]
+                        W_f = _interp_slot(W_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
                     else:
-                        # Fallback: per-orientation accumulation.
-                        # Used for has_strain (spatial Gaussians) or grids without a
-                        # standard triangulation (e.g. Ci symmetry → stick binning).
-                        if has_strain and slot_W is not None:
-                            W_c = slot_W[i_t]
-                            W_f = _interp_slot(W_c, grid_sym, N_coarse, nfKnots, vecs_sym_c, vecs_sym_f, mode='val')
-                        else:
-                            W_f = np.zeros(n_orient_fine)
+                        W_f = np.zeros(n_orient_fine)
 
-                        if not has_strain:
-                            # Vectorized stick binning for non-projectable no-strain grids
-                            # (e.g. Ci symmetry). Replaces O(n_fine) Python loop.
-                            _vld = (~np.isnan(B_f)) & (~np.isnan(I_f)) & (I_f > 0.0)
-                            if _vld.any():
-                                _Bv = torch.from_numpy(B_f[_vld])
-                                _Iv = torch.from_numpy(I_f[_vld]).to(spec.dtype)
-                                _wv = weights_fine[_vld].to(spec.dtype)
-                                _frac = (_Bv - exp.Range[0]) / dx
-                                _ilo  = _frac.floor().long()
-                                _ihi  = _ilo + 1
-                                _a    = (_frac - _ilo.to(_frac.dtype)).to(spec.dtype)
-                                _amp  = _wv * _Iv
-                                _mlo  = (_ilo >= 0) & (_ilo < exp.nPoints)
-                                _mhi  = (_ihi >= 0) & (_ihi < exp.nPoints)
-                                if _mlo.any():
-                                    (_row(i_t) if sep_trans else spec).scatter_add_(0, _ilo[_mlo],
-                                                      _amp[_mlo] * (1.0 - _a[_mlo]))
-                                if _mhi.any():
-                                    (_row(i_t) if sep_trans else spec).scatter_add_(0, _ihi[_mhi],
-                                                      _amp[_mhi] * _a[_mhi])
-                        else:
-                            for j in range(n_orient_fine):
-                                Bj = B_f[j]
-                                Ij = I_f[j]
-                                Wj = W_f[j]
-                                wj = weights_fine[j].item()
+                    if not has_strain:
+                        # Vectorized stick binning for non-projectable no-strain grids
+                        # (e.g. Ci symmetry). Replaces O(n_fine) Python loop.
+                        _vld = (~np.isnan(B_f)) & (~np.isnan(I_f)) & (I_f > 0.0)
+                        if _vld.any():
+                            _Bv = torch.from_numpy(B_f[_vld])
+                            _Iv = torch.from_numpy(I_f[_vld]).to(spec.dtype)
+                            _wv = weights_fine[_vld].to(spec.dtype)
+                            _frac = (_Bv - exp.Range[0]) / dx
+                            _ilo  = _frac.floor().long()
+                            _ihi  = _ilo + 1
+                            _a    = (_frac - _ilo.to(_frac.dtype)).to(spec.dtype)
+                            _amp  = _wv * _Iv
+                            _mlo  = (_ilo >= 0) & (_ilo < exp.nPoints)
+                            _mhi  = (_ihi >= 0) & (_ihi < exp.nPoints)
+                            if _mlo.any():
+                                (_row(i_t) if sep_trans else spec).scatter_add_(0, _ilo[_mlo],
+                                                  _amp[_mlo] * (1.0 - _a[_mlo]))
+                            if _mhi.any():
+                                (_row(i_t) if sep_trans else spec).scatter_add_(0, _ihi[_mhi],
+                                                  _amp[_mhi] * _a[_mhi])
+                    else:
+                        for j in range(n_orient_fine):
+                            Bj = B_f[j]
+                            Ij = I_f[j]
+                            Wj = W_f[j]
+                            wj = weights_fine[j].item()
 
-                                if np.isnan(Bj) or np.isnan(Ij) or Ij <= 0.0:
-                                    continue
+                            if np.isnan(Bj) or np.isnan(Ij) or Ij <= 0.0:
+                                continue
 
-                                fwhm_strain  = max(float(Wj), _min_fwhm)
-                                if strain_lorentz:
-                                    _acc(i_t, wj * _lorentzian_bins(x, np.array([float(Bj)]), np.array([fwhm_strain]),
-                                                                    np.array([float(Ij)]), _min_fwhm, phase=mw_phase))
-                                    continue
-                                fwhm_g_total = fwhm_strain  # global lw is convolved afterwards (EasySpin)
-                                fwhm_l       = 0.0
-                                if fwhm_l == 0.0:
-                                    if fwhm_g_total > 0.0:
-                                        sigma    = fwhm_g_total / _sqrt_8log2
-                                        peak_amp = float(Ij) * dx * _inv_sqrt_2pi / sigma
-                                        spec     = spec + wj * peak_amp * torch.exp(
-                                            -0.5 * ((x - Bj) / sigma) ** 2
-                                        )
-                                    else:
-                                        frac = (Bj - exp.Range[0]) / dx
-                                        ilo = math.floor(frac)
-                                        ihi = ilo + 1
-                                        a = frac - ilo
-                                        if 0 <= ilo < exp.nPoints:
-                                            spec[ilo] = spec[ilo] + wj * float(Ij) * (1.0 - a)
-                                        if 0 <= ihi < exp.nPoints:
-                                            spec[ihi] = spec[ihi] + wj * float(Ij) * a
+                            fwhm_strain  = max(float(Wj), _min_fwhm)
+                            if strain_lorentz:
+                                _acc(i_t, wj * _lorentzian_bins(x, np.array([float(Bj)]), np.array([fwhm_strain]),
+                                                                np.array([float(Ij)]), _min_fwhm, phase=mw_phase))
+                                continue
+                            fwhm_g_total = fwhm_strain  # global lw is convolved afterwards (EasySpin)
+                            fwhm_l       = 0.0
+                            if fwhm_l == 0.0:
+                                if fwhm_g_total > 0.0:
+                                    sigma    = fwhm_g_total / _sqrt_8log2
+                                    peak_amp = float(Ij) * dx * _inv_sqrt_2pi / sigma
+                                    spec     = spec + wj * peak_amp * torch.exp(
+                                        -0.5 * ((x - Bj) / sigma) ** 2
+                                    )
                                 else:
-                                    Bt = torch.tensor([Bj], dtype=torch.float64)
-                                    It = torch.tensor([float(Ij)], dtype=torch.float64)
-                                    _, line_i = makespec(exp.Range, exp.nPoints, Bt, It)
-                                    line_i = convspec(line_i, dx,
-                                                      fwhm_g=fwhm_g_total, fwhm_l=fwhm_l, deriv=0)
-                                    _acc(i_t, wj * line_i)
+                                    frac = (Bj - exp.Range[0]) / dx
+                                    ilo = math.floor(frac)
+                                    ihi = ilo + 1
+                                    a = frac - ilo
+                                    if 0 <= ilo < exp.nPoints:
+                                        spec[ilo] = spec[ilo] + wj * float(Ij) * (1.0 - a)
+                                    if 0 <= ihi < exp.nPoints:
+                                        spec[ihi] = spec[ihi] + wj * float(Ij) * a
+                            else:
+                                Bt = torch.tensor([Bj], dtype=torch.float64)
+                                It = torch.tensor([float(Ij)], dtype=torch.float64)
+                                _, line_i = makespec(exp.Range, exp.nPoints, Bt, It)
+                                line_i = convspec(line_i, dx,
+                                                  fwhm_g=fwhm_g_total, fwhm_l=fwhm_l, deriv=0)
+                                _acc(i_t, wj * line_i)
 
         else:
             # -----------------------------------------------------------

@@ -48,7 +48,8 @@ $$
 **Resonance fields** (`Options.Method`):
 
 - `'matrix'` (default): exact diagonalization, with coarse field bracketing and Newton/bisection
-  refinement (`resfields_batch.py`).
+  refinement (`resfields_batch.py`). For dimension >= 16 (forward runs), resonance eigenvectors are
+  interpolated between field knots when stable (`Options.RediagLimit`, default 0.999; >= 1 is exact).
 - `'perturb'`: second-order perturbation theory, Iwasaki 1974 (`resfields_perturb.py`).
 - `'hybrid'`: an exact core plus first-order perturbational ligand nuclei (`resfields_hybrid.py`).
   This is the method for Cu(II) with ligand superhyperfine structure.
@@ -168,7 +169,8 @@ Which method to use, and what each costs, is in
 
 **Unsupported.**
 
-- `Sys.n > 1` on the matrix path.
+- `Sys.n > 1` on the matrix path when the set cannot be simulated as total-spin blocks (quadrupole
+  coupling, `Options.EquivalentNuclei=False`; see the known limitations).
 - In `pepper_autograd`, these raise: `mwPhase`, ordering, photoselection, crystals, frequency sweeps
   and `initState`.
 - Field-cubic `Sys.Ham` terms; see
@@ -182,6 +184,9 @@ xfail, with an objective check in its place:
 - [range-cut transitions re-searched (B88/B75)](../../KNOWN_LIMITATIONS.md#field-sweeps-whose-range-cuts-transitions-fixed-0928-was--powder-grid-interpolation-when-resonances-are-missing-094)
 - [frequency-sweep AStrain along AFrame (B90)](../../KNOWN_LIMITATIONS.md#frequency-sweeps--astrain-along-the-aframe-axes-deliberate-deviation-from-easyspin-0931)
 - [zero hyperfine principal values (B65/B79)](../../KNOWN_LIMITATIONS.md#perturbation-theory--zero-hyperfine-principal-values-deliberate-deviation-from-easyspin-0929)
+
+The matrix route interpolates resonance eigenvectors with a cubic scheme at `RediagLimit = 0.999`, not EasySpin's linear one at 0.95; see
+[§ Resonance eigenvector interpolation](../../KNOWN_LIMITATIONS.md#resonance-eigenvector-interpolation-optionsrediaglimit-deviation-from-easyspin-0939-b133).
 
 **Open defect.** `test_astrain_mi_model.py::test_spectra_vs_easyspin_tilted_aframe` is a strict
 xfail. For a ⁶³Cu system with a tilted AFrame, pepper reaches cosine 0.873 against EasySpin and
