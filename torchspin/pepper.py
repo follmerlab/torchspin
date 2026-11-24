@@ -31,6 +31,7 @@ import numpy as np
 
 from torchspin.convspec import convspec
 from torchspin import _projection as _proj
+from torchspin.equivnuclei import reduce_equivalent_nuclei
 from torchspin.isotopologues import expand_components
 from torchspin.experiment import (auto_batch_size, Experiment, Options,
                                   PEPPER_PERTURB_ORDER)
@@ -1564,18 +1565,29 @@ def pepper(sys_or_list, exp: Experiment, opt: Optional[Options] = None):
     # cannot collapse them (EasySpin pepper rejects Sys.n > 1 outright).  The
     # perturbation and hybrid solvers treat nuclei one at a time and combine
     # them combinatorially, so there the multiplicity is a cost saving.
-    if _method in ('matrix', 'exact'):
-        for _s in components:
-            if any(v > 1 for v in (_s.n or [])):
-                raise ValueError(
-                    "pepper's matrix method does not support sets of equivalent nuclei "
-                    "(SpinSystem.n > 1). List each nucleus separately in Nucs, or use "
-                    "Options(Method='hybrid') or Method='perturb', which do support n."
-                )
+    # The matrix method simulates a set of equivalent nuclei as its total-spin
+    # blocks (torchspin.equivnuclei; Options.EquivalentNuclei), which is also how
+    # it takes Sys.n > 1 (EasySpin's pepper rejects Sys.n > 1 outright).
+    _reduce = (_method in ('matrix', 'exact') and bool(getattr(opt_, 'EquivalentNuclei', True))
+               and str(getattr(opt_, 'separate', '') or '') in ('', 'components')
+               and (opt_.Transitions is None or isinstance(opt_.Transitions, str)))
     rows, B_out = [], None
     for sys in components:
         w = float(getattr(sys, 'weight', 1.0))
-        B_out, spec = _pepper_single(sys, exp, opt_)
+        blocks = reduce_equivalent_nuclei(sys) if _reduce else [(1.0, sys)]
+        if _method in ('matrix', 'exact') and any(v > 1 for _, _b in blocks for v in (_b.n or [])):
+            raise ValueError(
+                "pepper's matrix method supports sets of equivalent nuclei (SpinSystem.n > 1) "
+                "only as total-spin blocks: with Options.EquivalentNuclei=True, without "
+                "quadrupole coupling (Q), AStrain on that set, nn, H0Extra, a full-space "
+                "initState, Options.Transitions level pairs or Options.separate other than "
+                "'components'. List each nucleus separately in Nucs, or use "
+                "Options(Method='hybrid') or Method='perturb', which do support n."
+            )
+        spec = None
+        for wb, sys_b in blocks:
+            B_out, sb = _pepper_single(sys_b, exp, opt_)
+            spec = wb * sb if spec is None else spec + wb * sb
         rows.append(w * spec)
     if str(getattr(opt_, 'separate', '')) in ('components', 'transitions', 'orientations', 'sites'):
         # EasySpin compisoloop: any separate output concatenates the rows of all

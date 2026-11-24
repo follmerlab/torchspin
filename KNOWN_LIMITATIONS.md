@@ -92,9 +92,10 @@ natural-abundance copper alone doubles the work for a 0.3 % spectral change.
 `hybrid` and `perturb` paths, where nuclei are treated one at a time and
 combined combinatorially, so a multiplicity is a pure saving — four equivalent
 14N written as `n=[1,4]` cost 0.30 s instead of 2.0 s and agree with four
-explicit nitrogens to cosine 0.99999999.  The `matrix` path still rejects
-`n > 1`, because there the nuclei multiply the Hilbert space and cannot be
-collapsed; EasySpin's `pepper` rejects `n > 1` for every method.  Equivalence
+explicit nitrogens to cosine 0.99999999.  From 0.9.39 the `matrix` path takes
+`n > 1` too, as total-spin blocks, and treats listed nuclei that are equivalent
+the same way (see "sets of equivalent nuclei" below; not with quadrupole
+coupling); EasySpin's `pepper` rejects `n > 1` for every method.  Equivalence
 means *identical couplings and identical orientations*: four nitrogens with
 different `AFrame` tilts are not a set of equivalent nuclei, whatever their
 principal values.
@@ -180,45 +181,83 @@ uncertainties computed from them, are unreliable for the line-position parameter
   a `matrix` fit started from their result stalls as before.
 - Start `matrix` fits from several nearby points and keep the lowest RMSD.
 
+**0.9.39.** The numbers above are for the full space (0.9.38, or `Options.EquivalentNuclei = False`).
+With the total-spin blocks of the next section, the default from 0.9.39, the example fit ends at
+RMSD 0.0110 in place of 0.0208 (noise level 0.0097; g∥ 2.2484, A∥ 498.1 MHz against 2.2475 and
+496.5), and the RMSD decreases smoothly from there to the truth. The steps are still there: one
+step of the same scan changes the spectrum by 9.8 % of its maximum (3.2 % with `Threshold = 0`), and
+`levmar` still stops with "parameter step below threshold".
+
 Planned: follow the levels by eigenvector overlap between neighboring orientations and select
 transitions at their own resonance fields. That changes matrix-method spectra with nuclei (it also
 restores the lost intensity) and leaves EasySpin parity for them, so it will come as its own release.
 
-## Pepper matrix method: spectra with three or more ligand nuclei depend on the orientation batch (B139, open)
+## Pepper matrix method: sets of equivalent nuclei (total-spin blocks, 0.9.39, B139): deviation from EasySpin
 
-For S = 1/2 with a large metal hyperfine coupling and three 14N (Hilbert-space dimension 216), the
-`matrix` method's spectrum depends on how many orientations the resonance search handles together
-(`Options.BatchSize`). Synthetic Cu(II) + 3 14N (g = [2.04 2.06 2.25], A(Cu) = [30 40 500] MHz,
-A(N) = 40 MHz, lwpp 0.6 mT, 9.5 GHz, 260 to 360 mT, `GridSize` [4 4], 10 orientations), largest
-difference from `BatchSize = 1` as a fraction of the maximum:
+Nuclei with the same isotope, hyperfine tensor and frame, `gnscale` and chemical shift, and without
+quadrupole coupling, enter the spin Hamiltonian only through their total spin K. From 0.9.39 the
+`matrix` method simulates each such set as its total-spin blocks and sums the block spectra
+(`Options.EquivalentNuclei`, default `True`; `torchspin/equivnuclei.py`): three 14N are K = 3, 2
+(twice), 1 (three times) and 0, with weights 7/27, 10/27, 9/27 and 1/27. This is exact: the energy
+levels of the full space are the union of the block levels (checked to 1e-10 MHz on five systems),
+and single-crystal spectra with all transitions agree with the full space to 5e-6 of the maximum
+(Cu(II) + 2 14N with tilted hyperfine frames, S = 3/2 + 2 1H, triplet + 2 14N, with and without
+Boltzmann populations). It also lets the `matrix` method take `SpinSystem.n > 1`. EasySpin's
+`pepper` diagonalizes the full space and rejects `Sys.n > 1`.
 
-| `BatchSize` | 0.9.39 | 0.9.38 |
-|---|---|---|
-| 10 | 5.3 % | 5.5 % |
-| 5 | 4.0 % | |
-| 2 | 2.3 % | |
+**What it fixes.** In the full space the copies of a total spin are exactly degenerate. Every
+resonance is diagonalized on its own, so every transition gets its own arbitrary basis of the
+degenerate levels, and the intensities of the transitions between two degenerate sets no longer add
+up to the basis-independent total. In 0.9.38:
 
-`Options.RediagLimit = 1` gives the same numbers. `ModellingAccuracy = 2e-8` (default 2e-6) does not
-converge them: batch 10 and batch 1 still differ by 1.8 %, and batch 1 differs from its default-accuracy
-result by 2.8 %. So no setting gives a reference spectrum for this system, and its matrix-method
-spectra should be read as accurate to a few percent of the maximum. The same system with two 14N
-(dimension 72) agrees to 1e-10 across batch sizes, and S = 5/2 + 55Mn, Gd(III), triplets and
-biradicals are bit-identical or agree to 2e-8.
+- Three equivalent 1H on a single crystal (S = 1/2, A = [60 65 70] MHz, all transitions) gave 93.0 %
+  of the intensity of the electron transition. The blocks give 100.000 %.
+- Cu(II) + 3 14N (g = [2.04 2.06 2.25], A(Cu) = [30 40 500] MHz, A(N) = 40 MHz, lwpp 0.6 mT, 9.5 GHz,
+  `GridSize` [4 4]) changed by 5.5 % of its maximum between `Options.BatchSize` 10 and 1, because
+  the batch sets the field knots and with them the bases; `ModellingAccuracy = 2e-8` did not remove
+  it (1.8 %). The blocks agree to 5e-7 across batch sizes, and to 1.3e-8 of the full space once the
+  three 14N are made inequivalent.
 
-**Cause (not yet confirmed transition by transition).** The orientations of a batch share one set of
-field knots, so the knot positions depend on the batch. Transitions are found per energy-ordered level
-pair; among the near-degenerate nuclear sublevels of this system, which pairs are found depends on
-where the knots fall. This is presumably the mechanism of the section above (B135).
+**What changes for users.** Default `matrix` spectra of systems with equivalent nuclei change, and
+are much cheaper (Cu(II) + 3 14N on `GridSize` [4 4]: 2 s, from about 250 s; Hilbert-space
+dimensions 56, 40, 24 and 8 in place of 216).
 
-**In 0.9.39** the automatic batch for this dimension is 10 orientations (it was 53), which moved the
-example on `GridSize` [7 4] by 2.1 % of its maximum.
+- Systems where the full space was already right do not change: S = 3/2 + 2 1H and triplet + 2 14N
+  powders agree to 1e-8 (all transitions).
+- Cu(II) + 2 14N (g = [2.05 2.05 2.25], A(Cu) = [30 30 500], A(N) = 40 MHz, lwpp 0.5 mT, 9.5 GHz)
+  changes in the perpendicular region, by up to 23 % of the maximum of the absorption spectrum on
+  `GridSize` [19 4] and 17 % on [40 4] (35 % of the maximum of the first-derivative spectrum on
+  [10 4]). Most of this is intensity that the transition pre-selection (`Options.Threshold`, see
+  "choosing a method") loses in the full space, where it is spread over more level pairs: the
+  integral is 91.9 % of the complete one in the full space and 97.1 % with the blocks on [19 4]
+  (95.0 % and 97.9 % on [40 4]). Against the spectrum with all transitions on 181 knots the largest
+  error is 33 % (full space) and 15 % (blocks) on [19 4], 26 % and 12 % on [40 4].
+- Against EasySpin (copper phthalocyanine model, 63Cu + 2 14N, A(N) = 45 MHz, `GridSize` [91 4],
+  first derivative; `test_pepper_cupc_matlab_validation.py`): the full space agrees with EasySpin's
+  default spectrum to cosine 0.9996, the blocks to 0.986. EasySpin shares the pre-selection loss:
+  the integrated absorption is 92.6 % of the complete one in the full space (EasySpin's is within
+  0.1 % of that), 96.1 % with the blocks and 100.0 % with `Threshold = 0`, where the blocks and the
+  full space agree to cosine 0.99997. The spectrum with all transitions is at cosine 0.990 from the
+  default blocks and 0.973 from the default full space. The EasySpin comparisons therefore run with
+  `EquivalentNuclei = False`.
+- With `Threshold = 0` the two routes have the same integral and differ by 4 % of the maximum on
+  [19 4] and 0.7 % on [40 4]; the blocks are the closer one to the 181-knot spectrum (1.6 % against
+  2.2 % on [40 4]).
 
-**What to do.** Treat intensity differences of a few percent between runs with different
-`BatchSize`, grids or versions as noise for these systems, and keep `BatchSize` fixed within one
-study. `Method='hybrid'` or `'perturb'` do not have the problem but are approximations here (see
-"choosing a method").
+**Still open.**
 
-Planned: the level tracking by eigenvector overlap described in the section above.
+- The pre-selection loss itself: with default `Threshold` the Cu(II) + 2 14N block spectrum stays
+  12 % of the maximum below the all-transitions spectrum in the perpendicular region, on any grid.
+  `Threshold = 0` removes it at several times the cost.
+- Sets that are not reduced keep the full space and its degeneracy errors: equivalent nuclei with
+  quadrupole coupling (Q does not commute with K²), a set containing the nucleus that carries
+  `AStrain`, systems with `nn`, `H0Extra` or a full-space `initState`, `Options.Transitions` given
+  as level pairs, `Options.separate` other than `'components'`, and `EquivalentNuclei = False`.
+  `SpinSystem.n > 1` raises in these cases.
+- `pepper_autograd` (the route `pepper` takes when an input requires grad) and `salt` diagonalize
+  the full space, so a differentiable spectrum of a system with equivalent nuclei differs from the
+  default one by the amounts above.
+- The steps of the section above (B135) remain inside the blocks.
 
 ## `SpinSystem` input shapes follow EasySpin (0.9.15)
 

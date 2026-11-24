@@ -136,10 +136,18 @@ def test_core_nucleus_cannot_be_a_set_of_equivalent_nuclei():
     assert np.all(np.isfinite(_spc(sys, _hybrid_opt(core=(1,)))))
 
 
-def test_matrix_method_still_rejects_equivalent_nuclei():
-    sys = _sys(1, n=[1, 4], nucs=['63Cu', '14N'])
+def test_matrix_method_runs_equivalent_nuclei_as_blocks():
+    """Since 0.9.39 the matrix method takes SpinSystem.n > 1 as total-spin blocks; with
+    Options.EquivalentNuclei off there is no full-space fallback for n, so it raises."""
+    sys = _sys(1, n=[1, 2], nucs=['63Cu', '14N'])
+    listed = _sys(2)
+    opt = dict(GridSize=[7, 4], Verbosity=0)
+    a = _spc(sys, Options(**opt))
+    b = _spc(listed, Options(**opt))
+    assert np.abs(a).max() > 0
+    assert np.abs(a - b).max() <= 1e-9 * np.abs(b).max()
     with pytest.raises(ValueError, match='equivalent nuclei'):
-        pepper(sys, _exp(), Options(GridSize=[7, 4], Verbosity=0))
+        pepper(sys, _exp(), Options(EquivalentNuclei=False, **opt))
 
 
 def test_unimplemented_perturbation_orders_are_rejected():

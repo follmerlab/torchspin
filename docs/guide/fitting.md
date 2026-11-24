@@ -75,7 +75,9 @@ on hard cases.
 Fits with pepper's `matrix` method of S = 1/2 systems with a large metal hyperfine coupling and
 ligand nuclei (for example Cu(II) with 14N) can stall above the noise level: the simulated spectrum
 changes in small steps with the parameters there, which no local optimizer handles well.  Compare the
-final RMSD with the noise in your data, and try several nearby starts.  See
+final RMSD with the noise in your data, and try several nearby starts.  From 0.9.39 equivalent nuclei
+are simulated as total-spin blocks, which brings such fits much closer (RMSD 0.011 in place of 0.021
+at a noise level of 0.0097 in the documented example) but does not remove the steps.  See
 [known limitations](../known_limitations.md) (matrix method, spectra with several nuclei).
 
 ## Uncertainties

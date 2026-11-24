@@ -38,8 +38,9 @@ CASES = {
     # name: (system, experiment, options, orientations, automatic batch)
     'mn_ci': (dict(S=2.5, g=2.0, D=[400.0, 400.0, -800.0], Nucs='55Mn', A=250.0, lw=1.5),
               dict(mwFreq=9.5, Range=[250, 450]), dict(GridSize=9, GridSymmetry='Ci'), 96),
+    # inequivalent nitrogens: equivalent ones run as total-spin blocks of dimension <= 40
     'cu2n_d2h': (dict(S=0.5, g=[2.04, 2.06, 2.25], Nucs='63Cu,14N,14N',
-                      A=[[30, 40, 500], [40, 40, 40], [40, 40, 40]], lwpp=0.5),
+                      A=[[30, 40, 500], [40, 40, 40], [36, 36, 44]], lwpp=0.5),
                  dict(mwFreq=9.5, Range=[260, 360]), dict(GridSize=[9, 2]), 24),
     'triplet_ci': (dict(S=1, g=[2.0, 2.01, 2.02], D=[900, 150], lwpp=1.0),
                    dict(mwFreq=9.5, Range=[250, 430]), dict(GridSize=15, GridSymmetry='Ci'), None),

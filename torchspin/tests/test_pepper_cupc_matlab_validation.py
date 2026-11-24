@@ -15,6 +15,7 @@ stored MATLAB spectrum, the convention used by the other pepper validation
 suites (default cosine 0.999, amplitude within 2 %).
 """
 
+import dataclasses
 import os
 from pathlib import Path
 
@@ -137,7 +138,13 @@ XFAIL: dict = {}
 
 
 def _run(c):
-    opt = _opt(c.Opt)
+    # EasySpin works in the full Hilbert space, so the comparison does too.  The default
+    # since 0.9.39 (equivalent nuclei as total-spin blocks, KNOWN_LIMITATIONS.md) loses
+    # less intensity to the transition pre-selection than either full-space code:
+    # cupc_isotope_2N_matrix keeps 96.1 % of the integrated absorption against 92.6 %
+    # (EasySpin's is within 0.1 % of the latter), and differs from EasySpin by cosine
+    # 0.986.  test_equivalent_nuclei.py covers the blocks.
+    opt = dataclasses.replace(_opt(c.Opt), EquivalentNuclei=False)
     if _get(c, 'Sys2') is not None:
         systems = [_sys(c.Sys), _sys(c.Sys2)]
         return pepper(systems, exp_from_mat(c.Exp, c.Sys), opt)

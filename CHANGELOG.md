@@ -110,14 +110,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **`esfit` grid search evaluates the whole grid or raises** (B110): a grid larger than `max_iter`
   used to be cut to its first `max_iter` points, which never leave the lowest values of the leading
   parameters.
+- **pepper's matrix method simulates sets of equivalent nuclei as total-spin blocks** (B139; new
+  `Options.EquivalentNuclei`, default `True`; deviation from EasySpin, see `KNOWN_LIMITATIONS.md`). Nuclei
+  with the same isotope, hyperfine tensor and frame and no quadrupole coupling enter the Hamiltonian only
+  through their total spin, so three 14N are four systems of nuclear spin 3, 2, 1 and 0 (dimension 7, 5, 3,
+  1 times the rest, in place of 27) whose spectra are summed. This is exact (levels equal to 1e-10 MHz,
+  single-crystal spectra with all transitions to 5e-6 on three systems) and removes the exactly degenerate
+  levels of the full space, where 0.9.38 summed intensities over inconsistent bases: three equivalent 1H on
+  a single crystal gave 93.0 % of the intensity (now 100.000 %), and Cu(II) + 3 14N changed by 5.5 % of its
+  maximum with `Options.BatchSize` (now 5e-7). **Default spectra of systems with equivalent nuclei
+  change**: Cu(II) + 2 14N by up to 23 % of the maximum in the perpendicular region on `GridSize` [19 4],
+  where the blocks keep 97.1 % of the complete intensity and the full space kept 91.9 % (error against the
+  all-transitions spectrum on 181 knots: 15 %, from 33 %); S = 3/2 + 2 1H and triplet + 2 14N are unchanged
+  to 1e-8. Cu(II) + 3 14N on `GridSize` [4 4] takes 2 s, from about 250 s. The synthetic Cu(II) + 2 14N
+  `levmar` fit of B135 ends at RMSD 0.0110, from 0.0208 (noise 0.0097), in 68 s, from 155 s; its steps
+  remain. `EquivalentNuclei=False` restores the full space. Not applied with quadrupole coupling, `nn`,
+  `H0Extra`, a full-space `initState`, `Transitions` level pairs or `separate` other than `'components'`,
+  nor in `pepper_autograd` and `salt`.
+- **pepper's matrix method accepts `SpinSystem.n > 1`** through the same blocks (it raised); it still raises
+  where the set cannot be reduced.
 - **pepper's matrix method searches large grids in smaller orientation batches** (B138). The orientations of
   a batch share one set of field knots, and the automatic batch assumed 10 knots per orientation where a
   large batch of a large spin system reaches 100 or more. It now budgets 200: 96 orientations per batch at
   Hilbert-space dimension 36, 24 at dimension 72 (it was 1929 and 482). S = 5/2 + 55Mn on a
   1013-orientation Ci grid: 414 s to 105 s at one thread (0.9.38: 221 to 228 s); Cu(II) + 2 14N on
   `GridSize` [19 4]: same time, peak memory 10 to 15 GB down to 2.9 GB. Spectra of nine test systems agree
-  to 2.3e-8 of the maximum (seven are bit-identical). Cu(II) + 3 14N (dimension 216) changes by 2 %, within
-  the batch dependence that system already has (B139, see `KNOWN_LIMITATIONS.md`). `Options.BatchSize`
+  to 2.3e-8 of the maximum (seven are bit-identical). `Options.BatchSize`
   still overrides the automatic choice; `hybrid`, `pepper_autograd` and `salt` are unchanged.
 
 ### Fixed
@@ -178,11 +196,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Matrix-method spectra with several nuclei are not smooth in the parameters** (B135). New section in
   `KNOWN_LIMITATIONS.md` and a note in the fitting guide: for S = 1/2 systems with a large metal hyperfine
   coupling and ligand nuclei the spectrum changes in steps (up to 7.9 % of its maximum for a 6e-6 change of
-  g∥ in a Cu(II) + 2 14N example), so least-squares fits can stall above the noise level. Present in 0.9.38;
-  no numbers change in this release.
-- **Matrix-method spectra of S = 1/2 systems with three or more ligand nuclei depend on the orientation
-  batch** (B139). New section in `KNOWN_LIMITATIONS.md`: Cu(II) + 3 14N changes by up to 5.5 % of its maximum
-  between `Options.BatchSize` 1 and 10, in 0.9.38 as well, and a tighter `ModellingAccuracy` does not remove it.
+  g∥ in a Cu(II) + 2 14N example), so least-squares fits can stall above the noise level. Present in 0.9.38
+  and, inside the total-spin blocks, in this release (see the equivalent-nuclei entry under Changed).
 
 ## [0.9.38] — 2026-11-15
 
