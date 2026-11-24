@@ -482,6 +482,19 @@ class Options:
         pepper's matrix method that is 96 orientations per batch at
         dimension 36 and 24 at dimension 72.  ``1`` processes orientations
         one at a time (debugging, low memory).
+    EquivalentNuclei : bool, default True
+        pepper, ``Method='matrix'``: nuclei with the same isotope, hyperfine
+        tensor and frame, and without quadrupole coupling, enter the
+        Hamiltonian only through their total spin, so each such set is
+        simulated as its total-spin blocks (three 14N: K = 3, 2, 1, 0) and
+        the block spectra are summed.  This is exact, much faster (dimension
+        7 in place of 27 for three 14N) and avoids the exactly degenerate
+        levels of the full space, in which single-transition intensities are
+        arbitrary (see ``KNOWN_LIMITATIONS.md``).  It also lets the matrix
+        method take ``SpinSystem.n > 1``.  ``False`` diagonalizes the full
+        space (the behavior up to 0.9.38).  Not applied with ``nn``,
+        ``H0Extra``, a full-space ``initState``, ``Transitions`` given as
+        level pairs, or ``separate`` other than ``''`` and ``'components'``.
     Sites : list of int, optional
         pepper single-crystal simulations only: 1-based indices of the
         symmetry-related crystal sites to include.  ``None`` (default) = all
@@ -626,6 +639,7 @@ class Options:
     Threshold: float = 1e-4
     Verbosity: int = 0
     BatchSize: Optional[int] = None
+    EquivalentNuclei: bool = True     # pepper matrix method: simulate sets of equivalent nuclei as total-spin blocks (see docstring)
     Sites: Optional[list] = None      # crystal sites to include (1-based), EasySpin Opt.Sites
     separate: str = ''                # '', 'components', 'transitions', 'orientations', 'sites' (see docstring)
     IsoCutoff: float = 1e-4           # relative abundance cutoff for isotopologues (EasySpin Opt.IsoCutoff)

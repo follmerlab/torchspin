@@ -169,7 +169,8 @@ Which method to use, and what each costs, is in
 
 **Unsupported.**
 
-- `Sys.n > 1` on the matrix path.
+- `Sys.n > 1` on the matrix path when the set cannot be simulated as total-spin blocks (quadrupole
+  coupling, `Options.EquivalentNuclei=False`; see the known limitations).
 - In `pepper_autograd`, these raise: `mwPhase`, ordering, photoselection, crystals, frequency sweeps
   and `initState`.
 - Field-cubic `Sys.Ham` terms; see

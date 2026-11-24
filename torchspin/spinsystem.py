@@ -505,6 +505,11 @@ class SpinSystem:
     # Lorentzian frequency-domain strain width, [3] MHz FWHM, molecular frame
     # (pepper only; not with the Gaussian strains). Default None.
     HStrainL: Optional[list | torch.Tensor] = None
+    # Internal: nuclear spin quantum numbers that replace those of the isotopes in
+    # Nucs (None entries keep the isotope's spin).  Set by
+    # torchspin.equivnuclei for the total-spin blocks of a set of equivalent
+    # nuclei; the nuclear g value stays that of the isotope.
+    _Ieff: Optional[list] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         from torchspin.constants import GFREE
@@ -743,6 +748,12 @@ class SpinSystem:
         # Each entry of Nucs may stand for a group of n identical, equivalent
         # nuclei (same isotope, same isotropic coupling).  Only garlic uses
         # this (via equivcouple); pepper/chili reject n>1 like EasySpin.
+        if self._Ieff is not None:
+            self._Ieff = [None if k is None else float(k) for k in self._Ieff]
+            if len(self._Ieff) != n_n:
+                raise ValueError(f"SpinSystem._Ieff has {len(self._Ieff)} entries, expected one per nucleus ({n_n}).")
+            if not any(k is not None for k in self._Ieff):
+                self._Ieff = None
         if self.n is None:
             self.n = [1] * n_n
         else:
@@ -1132,6 +1143,8 @@ class SpinSystem:
     @property
     def I(self) -> list[float]:
         """Nuclear spin quantum numbers (derived from Nucs)."""
+        if self._Ieff is not None:
+            return [_nuclear_spin(iso) if k is None else float(k) for iso, k in zip(self.Nucs, self._Ieff)]
         return [_nuclear_spin(iso) for iso in self.Nucs]
 
     @property
@@ -1948,8 +1961,10 @@ def _filter_nuclei(sys: 'SpinSystem', keep: list[int], where: str = 'nucspinrmv'
             v = getattr(sys, name)
             if v is not None:
                 kw[name] = _nuc_rows(v, keep, n_n, name)
+        if sys._Ieff is not None:
+            kw['_Ieff'] = [sys._Ieff[i] for i in keep]
     else:
-        for name in ('n', 'A', 'A_') + per_nucleus:
+        for name in ('n', 'A', 'A_', '_Ieff') + per_nucleus:
             kw[name] = None
     kw['nn'] = kw['nnFrame'] = None
     if sys.Abund is not None:
