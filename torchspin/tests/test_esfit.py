@@ -1722,3 +1722,51 @@ class TestBinnedGarlicFiniteDifferences:
         # fast motion defaults to 'explicit' and is left alone
         fm = SpinSystem(S=[0.5], g=2.0, Nucs=['14N'], A=40.0, lw=[0.1, 0.1], tcorr=1e-10)
         assert mw._fd_friendly_options(None, fm, self.exp) is None
+
+
+class TestUncertaintiesAtBounds:
+    """The uncertainty Jacobian never evaluates the model outside the bounds, and
+    a parameter that ends on a bound gets pstd = nan instead of a curvature error bar
+    (up to 0.9.39 the central difference probed ~1e-7 below a bound of 0)."""
+
+    x = np.linspace(-10.0, 10.0, 401)
+
+    def _model(self, p):
+        center, width, offset = p
+        if width < 0:
+            raise ValueError('width must be non-negative')
+        return np.exp(-0.5 * ((self.x - center) / (1.0 + width)) ** 2) + offset
+
+    def test_jacobian_one_sided_at_bounds(self):
+        from torchspin.esfit import _jacobian_finite_diff
+        f = lambda p: np.array([p[0] ** 3, np.sin(p[1]), p[0] * p[1]])
+        x = np.array([0.0, 2.0])
+        lb, ub = np.array([0.0, -5.0]), np.array([5.0, 2.0])
+        seen = []
+        J = _jacobian_finite_diff(lambda p: (seen.append(p.copy()), f(p))[1], x, lb=lb, ub=ub)
+        assert all(np.all(p >= lb) and np.all(p <= ub) for p in seen)
+        exact = np.array([[0.0, 0.0], [0.0, np.cos(2.0)], [2.0, 0.0]])
+        np.testing.assert_allclose(J, exact, atol=1e-6)
+        # without bounds it is the plain central difference, as before
+        J0 = _jacobian_finite_diff(f, np.array([1.0, 1.0]))
+        np.testing.assert_allclose(J0, [[3.0, 0.0], [0.0, np.cos(1.0)], [1.0, 1.0]], atol=1e-6)
+
+    def test_parameter_on_bound_gets_nan(self):
+        rng = np.random.default_rng(1)
+        data = self._model([0.5, 0.0, 0.0]) + 0.01 * rng.standard_normal(self.x.size)
+        with pytest.warns(UserWarning, match="ended on a bound"):
+            r = esfit(data, self._model, np.array([0.3, 0.0, 0.0]),
+                      lb=np.array([-2.0, 0.0, -0.5]), ub=np.array([2.0, 3.0, 0.5]),
+                      options=FitOptions(method='lbfgsb', autoscale='none', verbosity=0))
+        assert r.pfit[1] == pytest.approx(0.0, abs=1e-7)
+        assert np.isnan(r.pstd[1])
+        assert np.all(np.isfinite(r.pstd[[0, 2]])) and np.all(r.pstd[[0, 2]] > 0)
+
+    def test_flat_model_warning_names_the_scale(self):
+        """A start anti-correlated with the data clips the lsq scale to 0: the
+        warning says so instead of blaming garlic's binning."""
+        data = self._model([5.0, 0.0, 0.0]) - self._model([5.0, 0.0, 0.0]).mean()
+        model = lambda p: -(self._model([p[0], 0.0, 0.0]) - self._model([p[0], 0.0, 0.0]).mean())
+        with pytest.warns(UserWarning, match="do not depend on any parameter"):
+            esfit(data, model, np.array([5.0]), vary=np.array([0.5]),
+                  options=FitOptions(method='levmar', max_iter=5, verbosity=0))

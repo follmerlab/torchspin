@@ -91,7 +91,11 @@ the residuals before the target transformation `T`.  For `'int'` and
 correlation the transformation gives the noise.
 `pstd` are the square roots of its diagonal, `ci95` is `pfit ± 1.96 pstd`,
 and `corr` shows which parameters trade off against each other.  A parameter
-that does not change the residuals gets `nan` and a warning.
+that does not change the residuals gets `nan` and a warning.  So does a
+parameter that ends on a bound: the curvature does not define an error bar
+there, so it is held fixed in the covariance of the others.  The probes stay
+inside the bounds (one-sided differences at a bound), so a model is never
+evaluated at a value it may reject.
 `FitOptions(compute_uncertainties=False)` skips this (it costs
 2 × n_active extra simulations).
 

@@ -37,7 +37,10 @@ def _three_line_derivative(p):
 
 @pytest.mark.parametrize('target', ['fcn', 'int'])
 def test_uncertainties_cover_the_scatter(target):
-    """Over noise realizations, (pfit - true) / pstd has a spread near 1."""
+    """Over noise realizations, (pfit - true) / pstd has a spread near 1.
+
+    A fit that ends on a bound has no curvature error bar (pstd = nan since
+    0.9.40); with target='int' a few realizations do, and they are left out."""
     Z = []
     for seed in range(60):
         data = _three_line_derivative(_true) + 0.05 * np.random.default_rng(seed).standard_normal(_x.size)
@@ -46,6 +49,11 @@ def test_uncertainties_cover_the_scatter(target):
             r = esfit(data, _three_line_derivative, p0=_true * [1, 1.05, 0.97] + [0.005, 0, 0],
                       vary=np.array([0.05, 0.02, 0.05]),
                       options=FitOptions(method='levmar', target=target, verbosity=0, max_iter=200))
+        lb, ub = r.p_start - [0.05, 0.02, 0.05], r.p_start + [0.05, 0.02, 0.05]
+        on_bound = np.isclose(r.pfit, lb, rtol=0, atol=1e-6) | np.isclose(r.pfit, ub, rtol=0, atol=1e-6)
+        assert np.array_equal(np.isnan(r.pstd), on_bound)
         Z.append((r.pfit - _true) / r.pstd)
-    spread = np.array(Z).std(0)
+    Z = np.array(Z)
+    assert np.all(np.isfinite(Z).sum(0) >= 50)
+    spread = np.nanstd(Z, 0)
     assert np.all((spread > 0.6) & (spread < 1.5)), spread

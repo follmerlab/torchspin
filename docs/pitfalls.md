@@ -45,6 +45,17 @@ negative scale. The best fit is then scale 0 plus the baseline, and esfit warns.
 of the signal. (`FitOptions(lsq_negative_scale='abs')` restores EasySpin's `abs()` behavior. That keeps a
 baseline solved for the opposite sign, so it is not a least-squares fit.)
 
+The same clipping ends a local fit from a poor start. A start more than about a line width from the
+data is anti-correlated with it, the scale becomes 0, the model is flat, and no parameter changes the
+residuals. esfit then warns that the residuals do not depend on any parameter. Overlay the start
+simulation on the data first, or search with `method='global'`.
+
+### Parameters that end on a bound
+
+A parameter on its bound has no error bar from the curvature, so esfit reports `pstd = nan` for it
+(since 0.9.40) and warns. The finite-difference probes stay inside the bounds. Widen the bound if it is
+not a physical limit; otherwise report the value as the bound, not as a fitted value.
+
 ### Weak satellites next to a strong central line
 
 With natural-abundance zirconium, about 89 % of the intensity sits in a central I = 0 line that does not

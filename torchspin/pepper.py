@@ -2375,7 +2375,7 @@ def _pepper_single(
                 fSpread = Bv.max(axis=1) - Bv.min(axis=1)
                 fIntC = facet_w * I_f[tri_idx].mean(axis=1)
                 fWidM = W_f[tri_idx].mean(axis=1)
-            ok = np.isfinite(fPosC) & np.isfinite(fIntC) & np.isfinite(fWidM) & (fIntC > 0)
+            ok = np.isfinite(fPosC) & np.isfinite(fIntC) & np.isfinite(fWidM) & (fIntC != 0)
             fPosC, fSpread, fIntC, fWidM = fPosC[ok], fSpread[ok], fIntC[ok], fWidM[ok]
             with np.errstate(divide='ignore', invalid='ignore'):
                 Lambda = np.where(fSpread > 0, fWidM / np.where(fSpread > 0, fSpread, 1.0), np.inf)
@@ -2558,7 +2558,7 @@ def _pepper_single(
                     if not has_strain:
                         # Vectorized stick binning for non-projectable no-strain grids
                         # (e.g. Ci symmetry). Replaces O(n_fine) Python loop.
-                        _vld = (~np.isnan(B_f)) & (~np.isnan(I_f)) & (I_f > 0.0)
+                        _vld = (~np.isnan(B_f)) & (~np.isnan(I_f)) & (I_f != 0.0)
                         if _vld.any():
                             _Bv = torch.from_numpy(B_f[_vld])
                             _Iv = torch.from_numpy(I_f[_vld]).to(spec.dtype)

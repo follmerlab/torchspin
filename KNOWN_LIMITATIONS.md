@@ -1230,6 +1230,22 @@ pepper follows EasySpin's summation scheme for anisotropic widths (per-facet
 Gaussians on the interpolated grid with Lambda smoothing) and its level-pair
 transition bookkeeping.
 
+## Pepper — strain broadening with non-equilibrium populations (fixed 0.9.40)
+
+Up to 0.9.39, `Sys.initState` together with any `HStrain`, `gStrain`, `AStrain` or `DStrain`
+lost all emissive intensity: the strain summation discarded facets of negative intensity, so a
+polarized triplet spectrum kept only its absorptive lines (silently, with a too-large integral).
+Spectra without strain, and every spectrum with thermal populations, were correct. Since 0.9.40
+signed intensities are kept, as in EasySpin; `test_pepper_initstate_strain.py` holds four EasySpin
+references (cosine >= 0.9996) and two self-consistency checks (vanishing strain equals no strain;
+mirrored populations negate the spectrum). Polarized spectra fitted with strains on 0.9.39 or
+earlier should be refitted.
+
+With a tilted `DFrame` and populations in the `'xyz'` basis, EasySpin's default `[19 4]` grid is
+not converged (its own `[91 4]` result differs by 2.3 % of the maximum), so the comparison with it
+at the default grid is cosine ~0.9996 rather than 0.99999; torchspin at `[19 4]` is within 0.7 % of
+its converged result. The same holds without strain (`noneq_xyz` in `ref_pepper_features2.mat`).
+
 ## Chili — slow-motion SLE (rewritten 2026-09-01)
 
 `chili()` is now a function-by-function port of EasySpin's *general*
@@ -1797,6 +1813,17 @@ that conversion in a worked example, and `eprload_info` prints the unit and
 flags a gauss axis, so this no longer has to be found here first.
 
 ---
+
+## esfit — uncertainties of parameters on a bound (0.9.40)
+
+The error estimate (`pstd`, `ci95`, `cov`, `corr`) comes from the curvature of the objective at the
+optimum. A parameter that ends on a bound is not at a minimum in that direction, so the estimate
+does not apply to it: since 0.9.40 esfit reports `pstd = nan` for it with a warning, holds it fixed
+in the covariance of the others, and takes the Jacobian with one-sided differences that stay inside
+the bounds. Up to 0.9.39 the central differences probed ~1e-7 beyond the bound, which crashed models
+that reject the value there (a negative line width) and gave a meaningless error bar. A parameter on
+its bound is unresolved by the data under that constraint: widen the bound if it is not a physical
+limit, or report the bound.
 
 ## Stochastic trajectories — reproducibility
 
