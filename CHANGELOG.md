@@ -6,6 +6,39 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.9.40] — 2026-11-27
+
+### Fixed
+
+- **`pepper`: strain broadening dropped every emissive line with non-equilibrium populations.**
+  With `Sys.initState` and any `HStrain`, `gStrain`, `AStrain` or `DStrain`, the strain
+  summation kept only facets of positive intensity, so the polarized (emissive) half of a
+  trEPR/triplet spectrum vanished silently and the absorptive half remained. A photoexcited
+  triplet (S = 1, D = [1500 300] MHz, `initState = ([0.1 0.3 0.6], 'xyz')`, 9.7 GHz) had minimum
+  -6.02 and integral 281 without strain and minimum ~0, integral 1790 with `HStrain = 1e-6` MHz.
+  Signed intensities are now kept, as in EasySpin; the stick binning on non-projectable grids
+  had the same filter and is fixed too. The tiny-strain spectrum now equals the strain-free one
+  (0.6 % of the maximum: summation and projection are different discretizations), populations mirrored about 1/3 negate the spectrum to 1e-9, and four new
+  EasySpin references (HStrain in the xyz basis at harmonics 0 and 1, DStrain in the zero-field
+  basis, gStrain with a tilted D frame) match at cosine >= 0.9996 and amplitude within 0.02 %.
+  Thermal populations are unaffected (their intensities are never negative), so outputs without
+  `initState` are bit-identical.
+- **`esfit`: the uncertainty step evaluated the model outside the bounds.** The central-difference
+  Jacobian behind `pstd`, `ci95`, `cov` and `corr` probed ~1e-7 beyond a bound when a parameter
+  ended on it, which crashed models that reject the value there (a negative line width) and gave a
+  meaningless error bar. The Jacobian now uses the second-order one-sided difference into the
+  interior where a probe would leave the bounds, and never evaluates the model outside them. A
+  parameter that ends within one step of a bound gets `pstd = nan` and a warning (the
+  curvature-based error bar does not apply at a constrained optimum), and is held fixed in the
+  covariance of the others. Fits that end inside their bounds are unchanged.
+
+### Changed
+
+- **`esfit`: the warning for residuals that depend on no parameter names the likely cause.** When
+  every Jacobian column is zero, the warning now points to a flat model, usually the `lsq` scale
+  clipped to 0 after a start more than a line width from the data, instead of garlic's
+  `AccumMethod='binning'` alone. A single dead parameter keeps the binning hint.
+
 ## [0.9.39] — 2026-11-24
 
 ### Changed

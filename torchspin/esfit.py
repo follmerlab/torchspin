@@ -426,7 +426,9 @@ class FitResult:
     pstd : numpy.ndarray, shape (n_active,), or None
         Standard deviations of the active parameters from the HC1 sandwich
         covariance. ``nan`` for a parameter that has no effect on the
-        residuals at the finite-difference step (esfit warns). ``None`` when
+        residuals at the finite-difference step, and for one that ended on
+        a bound (esfit warns in both cases; the latter is held fixed in the
+        covariance of the others). ``None`` when
         ``FitOptions.compute_uncertainties`` is ``False``, the fit did not
         succeed, or the covariance could not be computed.
     ci95 : numpy.ndarray, shape (n_active, 2), or None
@@ -434,7 +436,7 @@ class FitResult:
         approximation). ``None`` as for ``pstd``.
     cov : numpy.ndarray, shape (n_active, n_active), or None
         Parameter covariance matrix (``nan`` rows/columns for parameters
-        without effect). ``None`` as for ``pstd``.
+        without effect or on a bound). ``None`` as for ``pstd``.
     corr : numpy.ndarray, shape (n_active, n_active), or None
         Correlation matrix derived from ``cov``. ``None`` as for ``pstd``.
     r_squared : float
@@ -2694,6 +2696,13 @@ _DEAD_COLUMN_HINT = (
     "bin, so small shifts of g or A do not change the spectrum. Use "
     "AccumMethod='linear' or 'explicit' in the model.")
 
+_FLAT_MODEL_HINT = (
+    "The residuals do not depend on any parameter, which usually means the fitted "
+    "model is flat: with autoscale='lsq' a model anti-correlated with the data gets "
+    "its scale clipped to 0 (typically a start more than a line width away from the "
+    "data; overlay the start simulation on the data, or use method='global'). "
+    "A model that returns a constant, or garlic's AccumMethod='binning', does the same.")
+
 
 def _dead_jacobian_columns(J: np.ndarray, rel_tol: float = 1e-12) -> np.ndarray:
     """Boolean mask of Jacobian columns that are zero, or negligible relative to
@@ -2716,7 +2725,7 @@ def _warn_dead_jacobian_columns(J: np.ndarray, where: str, names=None) -> np.nda
             f"esfit ({where}): the residuals do not change with parameter(s) {label} at "
             f"the finite-difference step, so they are invisible to the "
             f"{'optimizer' if where != 'uncertainties' else 'error estimate'}. "
-            + _DEAD_COLUMN_HINT, UserWarning, stacklevel=3)
+            + (_FLAT_MODEL_HINT if dead.all() else _DEAD_COLUMN_HINT), UserWarning, stacklevel=3)
     return dead
 
 
@@ -2746,13 +2755,29 @@ def _estimate_uncertainties(
         _plain_residuals, data=data, model_wrapper=model_wrapper, param_handler=param_handler,
         options=_replace(options, progress=None, stop_when=None, callback=None))
 
-    # Compute Jacobian via finite differences (probes concurrent with n_workers > 1)
-    J_all = _jacobian_finite_diff(residuals_fn, pfit, n_workers=options.n_workers, workers=options.workers)
+    # Compute Jacobian via finite differences (probes concurrent with n_workers > 1).
+    # The probes stay inside the bounds: a parameter on a bound gets a one-sided
+    # difference into the interior instead of a probe the model may reject.
+    lb, ub = param_handler.get_bounds()
+    J_all = _jacobian_finite_diff(residuals_fn, pfit, n_workers=options.n_workers, workers=options.workers,
+                                  lb=lb, ub=ub)
     # A parameter the residuals do not depend on would get sigma = 0 from pinv,
     # which reads as perfectly determined. Report it as undetermined (nan)
     # instead and leave it out of the covariance of the others.
-    dead = _warn_dead_jacobian_columns(J_all, 'uncertainties', param_handler.get_names())
-    live = ~dead
+    names = param_handler.get_names()
+    dead = _warn_dead_jacobian_columns(J_all, 'uncertainties', names)
+    # A parameter that ended on a bound is not at a minimum of the objective in
+    # that direction, so the curvature-based error bar does not apply to it: report
+    # nan and treat it as fixed for the covariance of the others.
+    on_bound = _at_bounds(pfit, lb, ub) & ~dead
+    if on_bound.any():
+        label = ', '.join(str(names[i]) for i in np.flatnonzero(on_bound))
+        warnings.warn(
+            f"esfit (uncertainties): parameter(s) {label} ended on a bound, so their "
+            "uncertainty is not defined (pstd = nan) and they are held fixed in the "
+            "covariance of the others. Widen the bound if the value is not a physical limit.",
+            UserWarning, stacklevel=3)
+    live = ~(dead | on_bound)
     if not live.any():
         nan = np.full(len(pfit), np.nan)
         return {'pstd': nan, 'ci95': np.column_stack([nan, nan]),
@@ -2821,33 +2846,71 @@ def _jacobian_finite_diff(
     eps: float = 1e-7,
     n_workers=1,
     workers: str = 'auto',
+    lb: Optional[np.ndarray] = None,
+    ub: Optional[np.ndarray] = None,
+    f0: Optional[np.ndarray] = None,
 ) -> np.ndarray:
-    """Compute Jacobian via central finite differences.
+    """Compute Jacobian via finite differences that stay inside the bounds.
+
+    Central differences where ``x ± step`` lies inside ``[lb, ub]``; where
+    one probe would leave the bounds, the second-order one-sided difference
+    into the interior, ``(-3 f(x) + 4 f(x + h) - f(x + 2h)) / 2h`` (and its
+    mirror at an upper bound). The model is never evaluated outside the
+    bounds, which a model may reject (a negative line width, say). ``f0`` is
+    ``fn(x)`` if the caller has it; it is evaluated only when a one-sided
+    difference needs it.
 
     The 2n probes are independent; with ``n_workers > 1`` they are evaluated
     concurrently (see :func:`_map_points`).
     """
+    x = np.asarray(x, dtype=float)
     n_params = len(x)
-    steps, plus, minus = [], [], []
+    lb = np.full(n_params, -np.inf) if lb is None else np.asarray(lb, dtype=float)
+    ub = np.full(n_params, np.inf) if ub is None else np.asarray(ub, dtype=float)
+    steps, sides, probes_a, probes_b = [], [], [], []
     for i in range(n_params):
-        x_plus = x.copy()
-        x_minus = x.copy()
         step = eps * max(abs(x[i]), 1.0)
-        x_plus[i] += step
-        x_minus[i] -= step
-        steps.append(step); plus.append(x_plus); minus.append(x_minus)
+        up_ok = x[i] + step <= ub[i]
+        down_ok = x[i] - step >= lb[i]
+        if up_ok and down_ok:
+            side = 0                     # central: probes x + h, x - h
+        elif up_ok and x[i] + 2 * step <= ub[i]:
+            side = 1                     # forward: probes x + h, x + 2h
+        elif down_ok and x[i] - 2 * step >= lb[i]:
+            side = -1                    # backward: probes x - h, x - 2h
+        else:
+            side = 0                     # bounds narrower than the step: central as before
+        a, b = x.copy(), x.copy()
+        if side == 0:
+            a[i] += step; b[i] -= step
+        else:
+            a[i] += side * step; b[i] += side * 2 * step
+        steps.append(step); sides.append(side); probes_a.append(a); probes_b.append(b)
+    if f0 is None and any(sides):
+        f0 = fn(x)
     if _resolve_workers(n_workers, 2 * n_params) > 1:
-        R = _map_points(fn, plus + minus, n_workers, workers, size_hint=2 * n_params)
-        fp, fm = R[:n_params], R[n_params:]
+        R = _map_points(fn, probes_a + probes_b, n_workers, workers, size_hint=2 * n_params)
+        fa, fb = R[:n_params], R[n_params:]
     else:
-        fp, fm = [], []
+        fa, fb = [], []
         for i in range(n_params):
-            fp.append(fn(plus[i])); fm.append(fn(minus[i]))
-    n_data = len(np.asarray(fp[0]).ravel())
+            fa.append(fn(probes_a[i])); fb.append(fn(probes_b[i]))
+    n_data = len(np.asarray(fa[0]).ravel())
     J = np.zeros((n_data, n_params))
     for i in range(n_params):
-        J[:, i] = (np.asarray(fp[i]) - np.asarray(fm[i])) / (2 * steps[i])
+        ra, rb = np.asarray(fa[i]), np.asarray(fb[i])
+        if sides[i] == 0:
+            J[:, i] = (ra - rb) / (2 * steps[i])
+        else:
+            J[:, i] = sides[i] * (-3.0 * np.asarray(f0) + 4.0 * ra - rb) / (2 * steps[i])
     return J
+
+
+def _at_bounds(x: np.ndarray, lb: np.ndarray, ub: np.ndarray, eps: float = 1e-7) -> np.ndarray:
+    """Boolean mask of parameters within one finite-difference step of a bound."""
+    x = np.asarray(x, dtype=float)
+    step = eps * np.maximum(np.abs(x), 1.0)
+    return (x - np.asarray(lb, dtype=float) <= step) | (np.asarray(ub, dtype=float) - x <= step)
 
 
 def _compute_fit_diagnostics(

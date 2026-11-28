@@ -115,6 +115,9 @@ def sys_from_mat(S, init_state=None) -> SpinSystem:
         v = _get(S, name)
         if v is not None:
             kw[name] = _axial3(v)
+    ds = _get(S, 'DStrain')
+    if ds is not None:
+        kw['DStrain'] = np.atleast_1d(np.asarray(ds, dtype=float)).tolist()
     gs = _get(S, 'gStrain')
     if gs is not None:
         gs = np.asarray(gs, dtype=float)
